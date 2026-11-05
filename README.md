@@ -58,7 +58,7 @@ Graphics installs under `/Library` and rebuilds AuxKC without patching System fi
 
 ## Configuration
 
-For firmware that requests EDID-based panel selection, the optional iGPU Data property `xelp-panel-edid` accepts a validated 128-byte digital EDID base block without extensions. It selects a unique matching modern VBT panel profile; it does not override an explicit profile, set display timings, or bypass display-state checks.
+For firmware that requests EDID-based panel selection, the optional iGPU Data property `xelp-panel-edid` accepts a validated 128-byte digital EDID base block without extensions. It selects a unique matching modern VBT panel profile; it does not override an explicit profile, set display timings, or bypass display-state checks. A single internal eDP-A display can retain an enabled firmware common timing generator; its source state must remain unchanged during bootstrap.
 
 ### Required boot arguments
 

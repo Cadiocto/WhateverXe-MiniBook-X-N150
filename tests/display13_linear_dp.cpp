@@ -89,4 +89,5 @@ int main() {
     r=reinitializeLinear(lost,readDisplay(lost,true),true,0,GOPProtocol::DP);
     assert(r.status==LinearStatus::StateChanged && !r.restored && r.writes==12);
     printf("PASS DP plane bootstrap: %u route/lane/framing/geometry cases, source/power drift and bounded rollback\n",cases);
+    return 0;
 }

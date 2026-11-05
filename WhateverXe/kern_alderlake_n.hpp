@@ -193,7 +193,7 @@ template<class IO> void readDisplay(IO &io, bool admitted, DisplayReadout &r) {
     // Display13+ firmware may retain CMTG secondary mode on a single eDP A
     // source. Observe its control only while the already-captured source,
     // port clock and buffer remain enabled and unchanged. No CMTG programming
-    // or admission follows from this diagnostic; dpSource still rejects it.
+    // occurs here; downstream admission requires the full source certificate.
     // Linux intel_cmtg_sanitize requires the supplying port PLL to remain on.
     if(r.status==ReadoutStatus::Complete && r.activePipes==1 && (r.poweredPipes&1)) {
         const auto saved=[&](uint32_t offset,uint32_t &out) {
@@ -256,6 +256,13 @@ inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi,const
        !value(boot,0x78004+pipe*0x200,dss2) || !value(boot,0x60030+bank,dm) ||
        !value(boot,0x60034+bank,dn) || !value(boot,0x60040+bank,lm) ||
        !value(boot,0x60044+bank,ln))return false;
+    // Preserve an already-running firmware CMTG secondary only for the
+    // single internal A source. Do not treat bit3 as reserved or clear it.
+    // Linux intel_cmtg_regs.h: ENABLE31, STATE23; other configurations require
+    // a separate contract. Native cache/enable writers preserve CTL2 verbatim.
+    uint32_t cmtg=0;
+    const bool secondary=ctl2==8 && panel && !pipe && !ddi && boot.activePipes==1 &&
+        value(boot,0x6FA88,cmtg) && cmtg==((1U<<31)|(1U<<23));
     const unsigned lanes=((trans>>1)&7)+1;
     // Linux v6.12 i915_reg.h: SST, normal training, scrambling, no FEC/MST,
     // port sync, HDCP, DSC or joined pipes. Enhanced framing may be on or off.
@@ -264,7 +271,7 @@ inline bool dpSource(const DisplayReadout &boot,unsigned pipe,unsigned ddi,const
     // preserve it and include it in the unchanged-source check, never clear it
     // on an enabled transcoder or infer an MST transport from that bit alone.
     return (trans&0xFF700000U)==(0x82000000U|((ddi+1)<<27)) &&
-        !(trans&((1U<<15)|(1U<<9))) && !ctl2 &&
+        !(trans&((1U<<15)|(1U<<9))) && (!ctl2 || secondary) &&
         (lanes==1 || lanes==2 || lanes==4) && ((buf>>1)&7)==lanes-1 &&
         (buf&(typeC && tc->ownershipOptional?0x80000080U:0x800000C0U))==
             (typeC && !tc->ownershipOptional?0x80000040U:0x80000000U) &&
@@ -299,6 +306,16 @@ template<class IO> bool dpSourceUnchanged(IO &io,const DisplayReadout &r,unsigne
         if(!io.readable(reg))return false;
         if(reg==Display13Power::AUX)expected|=addedAUXRequest;
         if(io.read(reg)!=expected)return false;
+    }
+    uint32_t ctl2=0;
+    if(!value(r,0x60404+bank,ctl2))return false;
+    if(ctl2==8) {
+        uint32_t cmtg=0,power=0,clock=0,trans=0;
+        if(!value(r,0x6FA88,cmtg) || !value(r,0x45404,power) ||
+           !value(r,0x46140,clock) || !value(r,0x60400,trans) ||
+           !io.readable(0x6FA88) || io.read(0x45404)!=power ||
+           io.read(0x46140)!=clock || io.read(0x6FA88)!=cmtg ||
+           io.read(0x60400)!=trans || io.read(0x46140)!=clock || io.read(0x45404)!=power)return false;
     }
     return true;
 }
