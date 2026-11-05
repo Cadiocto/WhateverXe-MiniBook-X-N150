@@ -8,6 +8,20 @@ static void publishBytes(IOPCIDevice *pci,const char *key,const void *bytes,unsi
     if(data){pci->setProperty(key,data);data->release();}
 }
 
+// Own the optional registry object while copying its fixed-size bytes. No
+// borrowed OSData storage survives release; parsing consumes only this stack copy.
+static XELP::VBT::Ports firmwarePortsWithPanelHint(IOPCIDevice *pci,const void *bytes,
+                                                 size_t length,XELP::Family family) {
+    uint8_t edid[128] {};size_t count=0;
+    auto object=pci->copyProperty("xelp-panel-edid");
+    auto data=OSDynamicCast(OSData,object);
+    if(data && data->getLength()==sizeof(edid)) {
+        memcpy(edid,data->getBytesNoCopy(),sizeof(edid));count=sizeof(edid);
+    }
+    if(object)object->release();
+    return XELP::VBT::parse(bytes,length,family,count?edid:nullptr,count);
+}
+
 // Firmware is read once, before topology/hook selection. No PCI BAR/ROM scan,
 // power acquisition, or MMIO probing occurs here. Explicit properties win later.
 void XE::xelpReadFirmware(IOPCIDevice *pci) {
@@ -30,14 +44,14 @@ void XE::xelpReadFirmware(IOPCIDevice *pci) {
                     auto vbtMap=vbtMemory ? vbtMemory->map(kIOMapReadOnly) : nullptr;
                     if(vbtMap && vbtMap->getVirtualAddress() && vbtMap->getLength()>=region.bytes) {
                         const auto data=reinterpret_cast<const void *>(vbtMap->getVirtualAddress());
-                        firmwarePorts=XELP::VBT::parse(data,region.bytes,xeProfile.family);
+                        firmwarePorts=firmwarePortsWithPanelHint(pci,data,region.bytes,xeProfile.family);
                         if(firmwarePorts.valid()){source=2;publishBytes(pci,"TGLVBT",data,firmwarePorts.bytes);}
                     }
                     if(vbtMap)vbtMap->release();
                     if(vbtMemory)vbtMemory->release();
                 }
                 if(!firmwarePorts.valid()) {
-                    const auto embedded=XELP::VBT::parse(bytes+0x400,region.inlineBytes,xeProfile.family);
+                    const auto embedded=firmwarePortsWithPanelHint(pci,bytes+0x400,region.inlineBytes,xeProfile.family);
                     if(embedded.valid()) {
                         firmwarePorts=embedded;source=1;
                         publishBytes(pci,"TGLVBT",bytes+0x400,firmwarePorts.bytes);
@@ -55,6 +69,8 @@ void XE::xelpReadFirmware(IOPCIDevice *pci) {
     pci->setProperty("WhateverXeFirmwarePorts",summary,sizeof(summary));
     pci->setProperty("WhateverXeFirmwareChecksum",firmwarePorts.checksum,32);
     pci->setProperty("WhateverXeFirmwarePortRecords",firmwarePorts.port,sizeof(firmwarePorts.port));
+    uint32_t identity[]={1,static_cast<uint32_t>(firmwarePorts.panelIdentity.status),firmwarePorts.panelIdentity.index};
+    pci->setProperty("WhateverXeFirmwarePanelIdentity",identity,sizeof(identity));
     const auto &panel=firmwarePorts.panel;
     uint32_t panelFacts[]={panel.valid,panel.type,panel.ddi,panel.lowSwing,panel.hobl};
     pci->setProperty("WhateverXeFirmwarePanel",panelFacts,sizeof(panelFacts));

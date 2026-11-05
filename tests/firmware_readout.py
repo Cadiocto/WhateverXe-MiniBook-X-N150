@@ -16,13 +16,14 @@ code=r'''
 #include "kern_vbt.hpp"
 #include "kern_dsi_math.hpp"
 bool auditEnabled=false;
+unsigned ownedCopies=0,releasedCopies=0;
 bool checkKernelArgument(const char *arg){assert(!strcmp(arg,"-wex-dsi-audit"));return auditEnabled;}
 #define OSDynamicCast(type,ptr) (ptr)
 constexpr unsigned kIODirectionIn=1,kIOMapReadOnly=2;
 struct OSData {
  std::vector<uint8_t> bytes;
  static OSData *withBytes(const void *p,unsigned n){auto d=new OSData;d->bytes.assign((const uint8_t*)p,(const uint8_t*)p+n);return d;}
- void release(){delete this;}const void *getBytesNoCopy(){return bytes.data();}unsigned getLength(){return bytes.size();}
+ void release(){++releasedCopies;delete this;}const void *getBytesNoCopy(){return bytes.data();}unsigned getLength(){return bytes.size();}
 };
 struct IOMemoryDescriptor {
  struct Map {uintptr_t getVirtualAddress(){return 0;}unsigned getLength(){return 0;}void release(){}};
@@ -32,12 +33,22 @@ struct IOMemoryDescriptor {
 struct IOPCIDevice {unsigned reads=0,publications=0;uint32_t configRead32(unsigned off){assert(off==0xfc);++reads;return 0;}
  std::map<std::string,OSData> properties;
  OSData *getProperty(const char *key){auto i=properties.find(key);return i==properties.end()?nullptr:&i->second;}
+ OSData *copyProperty(const char *key){auto p=getProperty(key);if(!p)return nullptr;++ownedCopies;return new OSData(*p);}
  void setProperty(const char*,uint32_t,unsigned){++publications;}void setProperty(const char*,const void*,unsigned){++publications;}
  void setProperty(const char *key,OSData *d){++publications;properties[key]=*d;}
 };
 struct XE {XELP::Profile xeProfile;XELP::VBT::Ports firmwarePorts;void xelpReadFirmware(IOPCIDevice*);};
 BODY
 int main(int argc,char **argv){
+ // Exercise the production property ownership adapter, including malformed
+ // extents. Objects are actually deleted before the parser consumes its copy.
+ for(unsigned size:{0U,127U,128U,129U}) {
+  IOPCIDevice pci;pci.properties["xelp-panel-edid"].bytes.resize(size,0);
+  const auto before=ownedCopies,releaseBefore=releasedCopies;
+  auto q=firmwarePortsWithPanelHint(&pci,nullptr,0,XELP::Family::RaptorLakeP);
+  assert(!q.valid() && ownedCopies==before+1 && releasedCopies==releaseBefore+1);
+ }
+
  for(unsigned kind=0;kind<5;++kind){XE x;IOPCIDevice pci;
   x.xeProfile=kind==0?XELP::identify(0x46a68086,12,0x9a498086):kind==1?XELP::identify(0x46a68086,12):kind==2?XELP::identify(0x9a498086,1):kind==3?XELP::identify(0x46d18086,0):XELP::identify(0x4c8a8086,0);
   const bool expected=kind!=4;

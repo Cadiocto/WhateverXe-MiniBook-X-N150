@@ -58,6 +58,8 @@ Graphics installs under `/Library` and rebuilds AuxKC without patching System fi
 
 ## Configuration
 
+For firmware that requests EDID-based panel selection, the optional iGPU Data property `xelp-panel-edid` accepts a validated 128-byte digital EDID base block without extensions. It selects a unique matching modern VBT panel profile; it does not override an explicit profile, set display timings, or bypass display-state checks.
+
 ### Required boot arguments
 
 Add to OpenCore's `boot-args`:

@@ -8,6 +8,7 @@
 #include <string.h>
 #include "kern_xelp_platform.hpp"
 #include "kern_tgl_hdmi_wiring.hpp"
+#include "kern_panel_identity.hpp"
 namespace XELP { namespace VBT {
 inline uint16_t u16(const uint8_t *p) {return uint16_t(uint16_t(p[0]) | uint16_t(p[1])<<8);}
 inline uint32_t u32(const uint8_t *p) {return uint32_t(u16(p)) | uint32_t(u16(p+2))<<16;}
@@ -28,6 +29,7 @@ struct Ports {
     Status status {Status::Missing};
     uint32_t version {},bytes {},present {},unmapped {},ambiguous {};
     uint32_t checksum {};
+    PanelIdentity::Result panelIdentity {};
     struct Panel {
         bool valid {},lowSwing {},hobl {};
         uint32_t type {},ddi {PortCount};
@@ -88,7 +90,7 @@ struct Ports {
 };
 // Optional panel facts must never weaken General Definitions admission or
 // make an unrelated malformed firmware tail reject usable connector facts.
-inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) {
+inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports,unsigned selected=UINT32_MAX) {
     const uint8_t *options=nullptr,*edp=nullptr,*power=nullptr,*backlight=nullptr;
     size_t optionsSize=0,edpSize=0,powerSize=0,backlightSize=0;
     bool duplicate=false,backlightDuplicate=false;
@@ -107,7 +109,8 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
         if(b[at]==44){duplicate|=power!=nullptr;power=block;powerSize=n;}
         at+=3+n;
     }
-    if(duplicate || !options || optionsSize<1 || options[0]>=16 ||
+    if(duplicate || !options || optionsSize<1 ||
+       (options[0]>=16 && !(options[0]==255 && selected<16)) ||
        !edp || edpSize<212 || (ports.version>=232 && (!power || powerSize<56)))return;
     unsigned internal=PortCount;
     for(unsigned d=0;d<PortCount;++d)if((ports.present&(1U<<d)) &&
@@ -117,7 +120,7 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
     }
     if(internal==PortCount)return;
     auto &p=ports.panel;
-    p.type=options[0];p.ddi=internal;
+    p.type=options[0]==255 ? selected : options[0];p.ddi=internal;
     p.lowSwing=((u64(edp+204)>>(4*p.type))&15)==0;
     p.hobl=ports.version>=232 && (u16(power+54)&(1U<<p.type));
     p.valid=true;
@@ -144,7 +147,8 @@ inline uint32_t ddi(Family family,uint32_t dvo) {
     }
     return PortCount;
 }
-inline Ports parse(const void *data,size_t length,Family family) {
+inline Ports parse(const void *data,size_t length,Family family,
+                   const void *panelEDID=nullptr,size_t panelEDIDBytes=0) {
     Ports r;
     if(!data || !length)return r;
     if(displayAdapter(family)==DisplayAdapter::Unknown){r.status=Status::Platform;return r;}
@@ -192,7 +196,13 @@ inline Ports parse(const void *data,size_t length,Family family) {
         r.present|=1U<<d;
         if(!q.fixedTMDS())r.ambiguous|=1U<<d;
     }
-    r.status=Status::Valid;panelFacts(b,bh,bs,r);return r;
+    r.status=Status::Valid;
+    // EDID identifies a panel policy profile only. It never supplies a mode,
+    // rewrites VBT bytes, or overrides an explicit firmware profile index.
+    if(panelEDID || panelEDIDBytes)r.panelIdentity=PanelIdentity::select(data,length,panelEDID,panelEDIDBytes);
+    const bool selected=r.panelIdentity.status==PanelIdentity::Status::Exact ||
+        r.panelIdentity.status==PanelIdentity::Status::DateFree;
+    panelFacts(b,bh,bs,r,selected?r.panelIdentity.index:UINT32_MAX);return r;
 }
 // OpRegion acquisition descriptor, kept pure for malformed/overflow testing.
 struct Region {uint64_t address {};uint32_t bytes {},inlineBytes {};bool valid {};};

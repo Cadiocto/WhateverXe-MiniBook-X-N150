@@ -58,6 +58,8 @@ Graphicsは`/Library`への配置とAuxKC生成を行い、Systemファイルや
 
 ## 設定
 
+EDIDによるパネル選択を要求するfirmwareでは、iGPUの任意のDataプロパティ`xelp-panel-edid`に、拡張ブロックのない有効な128バイトのデジタルEDID基本ブロックを指定できます。対応するmodern VBTパネルプロファイルが一意な場合だけ選択します。明示されたプロファイル、表示タイミング、表示状態の検証は変更しません。
+
 ### 必須ブート引数
 
 OpenCoreの`boot-args`に追加します。
