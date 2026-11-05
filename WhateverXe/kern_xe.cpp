@@ -7629,8 +7629,27 @@ uint8_t *XE::display13SSTPort(void *port) {
  auto p=static_cast<uint8_t *>(port);auto config=Display13FBMemory::field<uint32_t *>(p,0x548);
  if(!Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring) ||
     !(s->adlnOutputWiring.links()&(1U<<config[0])) || p[0x117] ||
-    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] || Display13FBMemory::field<uint32_t>(p,0x550)!=(config[0]>=3?((s->adlnOutputWiring.typeC&(1U<<config[0]))?3U:4U):1U) ||
+    Display13FBMemory::field<uint32_t>(p,0x120)!=config[0] ||
     Display13FBMemory::field<void *>(p,0x578)!=c.access)return nullptr;
+ const auto ddi=config[0],mode=Display13FBMemory::field<uint32_t>(p,0x550);
+ const auto expected=ddi>=3?((s->adlnOutputWiring.typeC&(1U<<ddi))?3U:4U):1U;
+ if(mode!=expected) {
+    // A native port can still have its zero-initialized software mode when
+    // adopting the running firmware eDP A. Do not write a guessed mode or
+    // admit other mode0 ports: require the pending protected boot AUX lease,
+    // or the very same port already bound to that lease after path adoption.
+    if(mode || ddi || !(s->adlnOutputWiring.panel&1) || !s->firmwarePorts.panel.valid ||
+       s->firmwarePorts.panel.ddi || !c.bridge.begun || c.bridge.bootPort ||
+       c.bridge.state.faulted || c.bridge.state.suspended)return nullptr;
+    const auto &link=c.mainLink[0];
+    const bool pending=link.bootPending && !link.owner && !c.bridge.bootAdopted &&
+        c.bridge.bootPGProtected && c.bridge.bootDDIProtected;
+    const bool adopted=!link.bootPending && link.owner==reinterpret_cast<uintptr_t>(port) &&
+        c.bridge.bootAdopted && c.bridge.bootPath;
+    if((!pending && !adopted) || link.port || link.lease.owner!=&c.bridge.state ||
+       link.lease.domains!=Display13Power::dependencies(Display13Power::auxDomain(0)) ||
+       !c.bridge.state.refs[0] || !c.bridge.state.refs[8])return nullptr;
+ }
  return p;
 }
 

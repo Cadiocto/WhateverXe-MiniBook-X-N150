@@ -186,6 +186,33 @@ int main(int argc,char **argv){
   assert(!XE::wrapDisplay13EnablePort(f.port));assert(!XE::wrapDisplay13DisablePort(f.port));assert(objectRefs.empty());
   display13FBPower.panelFaulted=true;assert(!XE::display13SSTPort(f.port));
  }
+ // Actual startup can leave eDP A mode0 with a protected pending AUX lease.
+ // This does not admit unowned zero-mode ports or mutate the software mode.
+ for(unsigned stage=0;stage<2;++stage)for(unsigned fault=0;fault<14;++fault) {
+  Fixture f(0,0,0);Map map;setup(f,map,0,0,4,20,true);auto &c=display13FBPower;
+  state.firmwarePorts.panel.valid=true;state.firmwarePorts.panel.ddi=0;
+  c.bridge.bootPort=0;c.bridge.bootAdopted=stage;c.bridge.bootPath=stage?99:0;
+  c.bridge.bootPGProtected=c.bridge.bootDDIProtected=!stage;
+  auto &link=c.mainLink[0];Display13FBPowerIO power{&map};
+  assert(Display13Power::acquire(power,c.bridge.state,link.lease,Display13Power::auxDomain(0)).status==Display13Power::Status::Complete);
+  link.port=0;link.bootPending=!stage;link.owner=stage?reinterpret_cast<uintptr_t>(f.port):0;
+  put(f.port,0x550,0U);map.reads.clear();map.writes.clear();
+  if(fault==1)state.firmwarePorts.panel.valid=false;
+  if(fault==2)state.firmwarePorts.panel.ddi=1;
+  if(fault==3)c.bridge.bootPort=1;
+  if(fault==4)link.lease.owner=nullptr;
+  if(fault==5)link.lease.domains=1;
+  if(fault==6)link.port=1;
+  if(fault==7)link.owner=123;
+  if(fault==8)link.bootPending=stage;
+  if(fault==9)c.bridge.state.suspended=true;
+  if(fault==10)c.bridge.state.faulted=true;
+  if(fault==11)c.bridge.state.refs[8]=0;
+  if(fault==12)state.adlnOutputWiring.panel=0;
+  if(fault==13){if(stage)c.bridge.bootPath=0;else c.bridge.bootPGProtected=false;}
+  assert(bool(XE::display13SSTPort(f.port))==!fault);
+  assert(Display13FBMemory::field<uint32_t>(f.port,0x550)==0 && map.reads.empty() && map.writes.empty());
+ }
  unsigned count=0,replays=0;
  for(unsigned ddi=0;ddi<2;++ddi)for(unsigned pipe=0;pipe<3;++pipe)for(unsigned lanes:{1U,2U,4U})
  for(unsigned rate:{6U,10U,20U,30U})for(unsigned swing=0;swing<4;++swing)for(unsigned emphasis=0;emphasis<4-swing;++emphasis){
