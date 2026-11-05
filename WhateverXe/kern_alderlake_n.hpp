@@ -190,6 +190,30 @@ template<class IO> void readDisplay(IO &io, bool admitted, DisplayReadout &r) {
         // Display13 DSC/joiner belongs to the corresponding pipe well.
         add(0x78000 + 0x200 * pipe);add(0x78004 + 0x200 * pipe);
     }
+    // Display13+ firmware may retain CMTG secondary mode on a single eDP A
+    // source. Observe its control only while the already-captured source,
+    // port clock and buffer remain enabled and unchanged. No CMTG programming
+    // or admission follows from this diagnostic; dpSource still rejects it.
+    // Linux intel_cmtg_sanitize requires the supplying port PLL to remain on.
+    if(r.status==ReadoutStatus::Complete && r.activePipes==1 && (r.poweredPipes&1)) {
+        const auto saved=[&](uint32_t offset,uint32_t &out) {
+            for(unsigned i=0;i<r.count;++i)if(r.registers[i].offset==offset) {
+                out=r.registers[i].value;return out!=UINT32_MAX;
+            }
+            return false;
+        };
+        uint32_t trans=0,secondary=0,clock=0,buffer=0;
+        if(saved(0x60400,trans) && saved(0x60404,secondary) &&
+           saved(0x46140,clock) && saved(0x64000,buffer) &&
+           secondary==8 && (trans&0xFF700000U)==0x8A000000U &&
+           (clock>>28)==1 && (buffer&0x80000000U) &&
+           io.read(0x45404)==power && io.read(0x60400)==trans &&
+           io.read(0x46140)==clock && io.read(0x64000)==buffer) {
+            add(0x6FA88); // CMTG A control; unchanged-source adoption NOT implied.
+            if(io.read(0x60400)!=trans || io.read(0x46140)!=clock || io.read(0x64000)!=buffer)
+                r.status=ReadoutStatus::PowerChanged;
+        }
+    }
     const auto after = add(0x45404);
     if (r.status == ReadoutStatus::Complete && after != power)
         r.status = ReadoutStatus::PowerChanged;
