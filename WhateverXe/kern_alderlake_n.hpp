@@ -343,15 +343,24 @@ template<class IO> Display13Power::Result holdDPBootAUX(IO &io,const DisplayRead
 // The caller retains that object on success and then adopts the boot path.
 // No hardware request or native AUX transaction counter changes at handoff.
 template<class IO> Display13Power::Result adoptDPBootAUX(IO &io,const DisplayReadout &boot,
-    Display13Power::NativeBridge &bridge,Display13Power::MainLinkAUX &link,uintptr_t target,unsigned ddi,bool panel=false) {
+    Display13Power::NativeBridge &bridge,Display13Power::MainLinkAUX &link,uintptr_t target,unsigned ddi,bool panel=false,
+    uint32_t *refusal=nullptr) {
     using namespace Display13Power;Result r;
-    if(!target || ddi>=2 || boot.activePipes!=1 || !dpSource(boot,0,ddi,nullptr,panel) || !dpSourceUnchanged(io,boot,0,ddi,0,nullptr,panel) ||
-       bridge.bootPort!=ddi || bridge.bootAdopted || !bridge.bootPGProtected || !bridge.bootDDIProtected ||
-       !bridge.outputHeld(io,ddi,0) || !link.bootPending || link.owner || link.port!=ddi ||
-       link.lease.owner!=&bridge.state || link.lease.domains!=dependencies(auxDomain(ddi)) ||
-       !held(io,bridge.state,link.lease.domains))return r;
+    if(refusal)*refusal=0;
+    const auto fail=[&](uint32_t reason) {if(refusal)*refusal=reason;return r;};
+    // Preserve the original short-circuit order, including all IO. Optional
+    // refusal is a caller-owned CPU scalar, not another observation route.
+    if(!target || ddi>=2 || boot.activePipes!=1)return fail(1);
+    if(!dpSource(boot,0,ddi,nullptr,panel))return fail(2);
+    if(!dpSourceUnchanged(io,boot,0,ddi,0,nullptr,panel))return fail(3);
+    if(bridge.bootPort!=ddi || bridge.bootAdopted || !bridge.bootPGProtected || !bridge.bootDDIProtected)return fail(4);
+    if(!bridge.outputHeld(io,ddi,0))return fail(5);
+    if(!link.bootPending || link.owner || link.port!=ddi)return fail(6);
+    if(link.lease.owner!=&bridge.state || link.lease.domains!=dependencies(auxDomain(ddi)))return fail(7);
+    if(!held(io,bridge.state,link.lease.domains))return fail(8);
     link.owner=target;link.bootPending=false;r.status=Status::Complete;return r;
 }
+
 enum class LinearStatus : uint32_t {
     NotAdmitted, Ready, Success, NotSingleHDMI, NotLinearFHD, OtherPlaneActive,
     StateChanged, NoVblank, DisableTimeout, EnableTimeout, RollbackFailed, InvalidDPSource, InvalidTCSource

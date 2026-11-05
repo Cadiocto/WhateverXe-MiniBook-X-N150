@@ -8464,7 +8464,7 @@ void XE::wrapAlderLakeNSetupWorkLoop(IOService *controller,IOWorkLoop *workLoop)
 	// Controller start can publish PCI-backed FB children before the controller
 	// itself becomes a registered service. Publish only copied CPU evidence at
 	// the root so a rejected handoff remains observable through SSH.
-	uint64_t check[38] {3,sourceBound,adlnIRQOwner(controller),irqSource!=nullptr};
+	uint64_t check[57] {4,sourceBound,adlnIRQOwner(controller),irqSource!=nullptr};
 	if(irqSource) {
 		check[4]=irqSource->getProvider()==pci;check[5]=irqSource->getIntIndex();
 		check[6]=irqSource->getWorkLoop()==workLoop;check[7]=irqSource->isEnabled();
@@ -8557,15 +8557,38 @@ void XE::wrapAlderLakeNSetupWorkLoop(IOService *controller,IOWorkLoop *workLoop)
                 const auto ddi=c.bridge.bootPort;
                 const bool dp=ddi<7 && (callbackXE->adlnOutputWiring.links()&(1U<<ddi));
                 bool linked=!dp;
-                if(dp && display13SSTPort(port)) {
+                const bool sst=dp && display13SSTPort(port);
+                check[38]=sst;
+                // Port lifetime/association was admitted above. Read only
+                // bounded scalar fields already used by the SST admission.
+                check[39]=port->getMetaClass()->getClassSize();
+                if(check[39]>=0x624) {
+                    check[40]=Display13FBMemory::field<uint8_t>(port,0x117);
+                    check[41]=Display13FBMemory::field<uint32_t>(port,0x550);
+                    check[42]=Display13FBMemory::field<void *>(port,0x578)==c.access;
+                }
+                check[43]=c.clockStopped | (uint64_t(c.panelFaulted)<<1);
+                if(ddi<2) {
+                    const auto &link=c.mainLink[ddi];check[44]=link.bootPending;check[45]=link.owner!=0;
+                    check[46]=link.port;check[47]=link.lease.owner==&c.bridge.state;check[48]=link.lease.domains;
+                }
+                check[49]=c.bridge.bootAdopted;
+                check[50]=adlnWriterMappingBound();
+                if(sst) {
                     Display13FBBootIO io{c.map};auto &boot=c.displayScratch;AlderLakeN::readDisplay(io,true,boot);
+                    check[51]=static_cast<uint32_t>(boot.status);
+                    uint32_t cmtg=0,ctl2=0;check[52]=AlderLakeN::value(boot,0x6FA88,cmtg);check[53]=cmtg;
+                    check[54]=AlderLakeN::dpSource(boot,0,ddi,nullptr,(callbackXE->adlnOutputWiring.panel&(1U<<ddi))!=0);
+                    AlderLakeN::value(boot,0x60404,ctl2);check[56]=ctl2;
                     if(ddi>=3) {
                         const auto source=Display13TC::Boot::capture(io,true,ddi,0);
                         Display13FBTCIO tc{port,ddi-3};
                         linked=tc.owned(ddi) && tc.linkHeld() && boot.activePipes==1 &&
                             AlderLakeN::dpSourceUnchanged(io,boot,0,ddi,0,&source);
                     } else if(ddi<2) {
-                        result=AlderLakeN::adoptDPBootAUX(io,boot,c.bridge,c.mainLink[ddi],reinterpret_cast<uintptr_t>(port),ddi,(callbackXE->adlnOutputWiring.panel&(1U<<ddi))!=0);
+                        uint32_t refusal=0;
+                        result=AlderLakeN::adoptDPBootAUX(io,boot,c.bridge,c.mainLink[ddi],reinterpret_cast<uintptr_t>(port),ddi,(callbackXE->adlnOutputWiring.panel&(1U<<ddi))!=0,&refusal);
+                        check[55]=refusal;
                         linked=result.status==Display13Power::Status::Complete;
                         if(linked)port->retain(); // Released only after real buffer stop/idle.
                     }

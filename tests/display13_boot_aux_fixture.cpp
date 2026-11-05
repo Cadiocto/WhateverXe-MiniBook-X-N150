@@ -49,7 +49,7 @@ int main() {
         assert(bridge.getAUX(io,ddi).status==Status::Complete && bridge.putAUX(io,ddi).status==Status::Complete);
         assert(bridge.state.refs[ddi?6:8]==1 && !bridge.nativeAUXRefs(ddi));
         const auto after=readDisplay(io,true);const auto requestBefore=map.at(AUX);
-        assert(adoptDPBootAUX(io,after,bridge,link,7,ddi,panel).status==Status::Complete);
+        uint32_t refusal=99;assert(adoptDPBootAUX(io,after,bridge,link,7,ddi,panel,&refusal).status==Status::Complete && refusal==0);
         assert(link.owner==7 && !link.bootPending && !bridge.nativeAUXRefs(ddi) && map.at(AUX)==requestBefore);
         assert(adoptDPBootAUX(io,after,bridge,link,8,ddi,panel).status==Status::NotReady);
         assert(bridge.adoptBootPath(9,0,ddi).status==Status::Complete);
@@ -85,7 +85,8 @@ int main() {
         if(fault==0)target=0;if(fault==1)port=1;if(fault==2)map.at(AUX)=0;
         if(fault==3)map.at(0x60540)^=1;if(fault==4)b.bootPGProtected=false;
         if(fault==5)b.bootAdopted=true;if(fault==6)b.state.suspended=true;
-        assert(adoptDPBootAUX(io,boot,b,l,target,port).status==Status::NotReady && l.bootPending && !l.owner && l.lease.owner);
+        uint32_t refusal=99;const uint32_t expected[]={1,2,3,3,4,4,5};
+        assert(adoptDPBootAUX(io,boot,b,l,target,port,false,&refusal).status==Status::NotReady && l.bootPending && !l.owner && l.lease.owner && refusal==expected[fault]);
     }
     {IOMemoryMap map;firmware(map,0,false);FaultIO io{&map};NativeBridge b;MainLinkAUX l;
      assert(b.begin(io,0,3).status==Status::Complete);io.loseSource=true;
