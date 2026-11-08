@@ -4792,6 +4792,9 @@ struct Display13FBIRQContext {
 	IOService *controller {};
 	Display13FBIRQ::State state;
 	unsigned handlers {},softwareHandlers {};bool quiescing {},powerLost {};uint32_t blockedPipes {};
+	// Set after a hibernation resume park left no running pipe at native
+	// enableIRQ; the power-loss restore is retried at the pipe's VBL enable.
+	bool parkRearm {};uint32_t parkRearmRecord[8] {};
 	uintptr_t softwareThread {};
 	Display13FBIRQ::HandlerScopes scopes;
 	volatile uint32_t admittedPipes {}; // Release-published after actual path/backing proof.
@@ -6170,6 +6173,16 @@ void XE::wrapDisplay13FBConfigureVBL(IOService *controller,IOService *fb,OSObjec
 		if(getLock)IOSimpleLockUnlockEnableInterrupt(c.lock,saved);return;
 	}
 	if(valid && pipe<3 && !(c.blockedPipes&(1U<<pipe))) {
+		// Hibernation resume park: native enableIRQ ran with no pipe running,
+		// so restoreAfterPowerLoss refused and both masters stayed off. Retry
+		// it at this real activation boundary, once the pipe is running.
+		if(c.parkRearm && c.powerLost && enabled && !c.quiescing && !c.state.faulted &&
+		   Display13FBIRQ::powered(io.read(Display13FBIRQ::Driver),pipe) && Display13Transcoder::running(io,pipe,c.state.transcoders)) {
+			const auto rearm=Display13FBIRQ::restoreAfterPowerLoss(io,c.state,__atomic_load_n(&c.admittedPipes,__ATOMIC_ACQUIRE));
+			auto &r=c.parkRearmRecord;r[1]++;r[2]=static_cast<uint32_t>(rearm);r[3]=pipe;
+			r[4]=io.read(Display13FBIRQ::Master);r[5]=io.read(Display13FBIRQ::GfxMaster);r[6]=c.state.active;r[7]=c.state.enabled;
+			if(rearm==Display13FBIRQ::Status::Complete) {c.powerLost=false;c.parkRearm=false;}
+		}
 		if(Display13FBTopology::multiOutputWiring(callbackXE->adlnOutputWiring) && enabled && !c.quiescing) {
 			const auto admitted=__atomic_load_n(&c.admittedPipes,__ATOMIC_ACQUIRE);
 			c.status=(admitted&(1U<<pipe)) ? Display13FBIRQ::extendActivePipes(io,c.state,admitted) : Display13FBIRQ::Status::Topology;
@@ -10410,6 +10423,12 @@ bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
                 park.lastReg,park.expected,park.observed,park.conf,park.trans,park.buffer,park.clock,park.transport,
                 park.planes,static_cast<uint32_t>(c.restoreEpoch),0};
             IORegistryEntry::getRegistryRoot()->setProperty("WEXResumeFirmwarePark",parkRecord,sizeof(parkRecord));
+            if(park.status==Display13ResumePark::Status::Complete) {
+                auto &irq=display13FBIRQ;
+                const auto saved=IOSimpleLockLockDisableInterrupt(irq.lock);
+                irq.parkRearm=true;irq.parkRearmRecord[0]=1;irq.parkRearmRecord[1]=0;
+                IOSimpleLockUnlockEnableInterrupt(irq.lock,saved);
+            }
         }
         if(!Display13FBIRQ::consumersStopped(io,7,c.transcoders))result.status=Display13Power::Status::NotReady;
         else {
