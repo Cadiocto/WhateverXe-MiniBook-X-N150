@@ -23,6 +23,7 @@
 #include "kern_xelp_device.hpp"
 #include "kern_xelp_memory_layout.hpp"
 #include "kern_xelp_forcewake_irq.hpp"
+#include "kern_display13_resume_park.hpp"
 #include "kern_display13_boot.hpp"
 #include "kern_display13_dsi_trial.hpp"
 #include "kern_dsi_readout.hpp"
@@ -5034,6 +5035,17 @@ struct Display13FBBootIO : Display13FBPowerIO {
     bool readable(uint32_t r) const {
         return map && map->getVirtualAddress() && map->getLength()==0x1000000 && r<=0x1000000-4;
     }
+};
+// S4 resume park: exactly the pipe A / transcoder A / combo DDI registers that
+// Display13ResumePark::park writes. Reads are unrestricted within the BAR.
+struct Display13FBResumeParkIO : Display13FBBootIO {
+    explicit Display13FBResumeParkIO(IOMemoryMap *m):Display13FBBootIO{m} {}
+    void write(uint32_t r,uint32_t v) {
+        static constexpr uint32_t allowed[] {0x70180,0x7019C,0x70008,0x68170,0x68174,0x68180,0x68270,0x68274,0x68280,
+            0x60404,0x60400,0x64000,0x64100,0x64200,0x60540,0x46140,0x7027C,0x7037C,0x7017C};
+        for(auto a:allowed)if(a==r) {*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+r)=v;return;}
+    }
+    void delay(){IODelay(100);}
 };
 struct Display13FBTCIO : Display13FBTCAuxIO {
     OSObject *object;Display13Power::Result linkResult;
@@ -10388,6 +10400,17 @@ bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
     result=Display13Power::restore(io,c.bridge.state,c.restorePending,selectDSI);
     if(result.status==Display13Power::Status::Complete && c.restorePending) {
         // No clock/MBUS writes after any output starts scanning out.
+        // Hibernation resume: firmware/boot.efi relit the internal eDP on pipe
+        // A for the resume preview. Opt-in: park only that scanout, then
+        // require every consumer stopped exactly as after an S3 power loss.
+        if(!Display13FBIRQ::consumersStopped(io,7,c.transcoders) && checkKernelArgument("-wex-resume-park")) {
+            Display13FBResumeParkIO parkIO{c.map};
+            const auto park=Display13ResumePark::park(parkIO,c.transcoders,callbackXE->adlnOutputWiring.panel);
+            uint32_t parkRecord[16] {1,static_cast<uint32_t>(park.status),park.stage,park.writes,park.port,
+                park.lastReg,park.expected,park.observed,park.conf,park.trans,park.buffer,park.clock,park.transport,
+                park.planes,static_cast<uint32_t>(c.restoreEpoch),0};
+            IORegistryEntry::getRegistryRoot()->setProperty("WEXResumeFirmwarePark",parkRecord,sizeof(parkRecord));
+        }
         if(!Display13FBIRQ::consumersStopped(io,7,c.transcoders))result.status=Display13Power::Status::NotReady;
         else {
             cold[4]=io.read(0x4438C);
