@@ -5045,7 +5045,7 @@ struct Display13FBResumeParkIO : Display13FBBootIO {
     explicit Display13FBResumeParkIO(IOMemoryMap *m):Display13FBBootIO{m} {}
     void write(uint32_t r,uint32_t v) {
         static constexpr uint32_t allowed[] {0x70180,0x7019C,0x70008,0x68170,0x68174,0x68180,0x68270,0x68274,0x68280,
-            0x60404,0x60400,0x64000,0x64100,0x64200,0x60540,0x46140,0x7027C,0x7037C,0x7017C};
+            0x60404,0x60400,0x64000,0x64100,0x64200,0x60540,0x46140,0x7027C,0x7037C,0x7017C,0x42084};
         for(auto a:allowed)if(a==r) {*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+r)=v;return;}
     }
     void delay(){IODelay(100);}
@@ -10421,7 +10421,7 @@ bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
             const auto park=Display13ResumePark::park(parkIO,c.transcoders,callbackXE->adlnOutputWiring.panel);
             uint32_t parkRecord[16] {1,static_cast<uint32_t>(park.status),park.stage,park.writes,park.port,
                 park.lastReg,park.expected,park.observed,park.conf,park.trans,park.buffer,park.clock,park.transport,
-                park.planes,static_cast<uint32_t>(c.restoreEpoch),park.cmtgSecondary?park.ctl2|0x100U:park.ctl2};
+                park.planes,park.chicken,park.cmtgSecondary?park.ctl2|0x100U:park.ctl2};
             IORegistryEntry::getRegistryRoot()->setProperty("WEXResumeFirmwarePark",parkRecord,sizeof(parkRecord));
             if(park.status==Display13ResumePark::Status::Complete) {
                 auto &irq=display13FBIRQ;

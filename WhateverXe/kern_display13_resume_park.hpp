@@ -18,8 +18,9 @@ struct Result {
     Status status {Status::Topology};
     uint32_t stage {},writes {},port {UINT32_MAX},lastReg {},expected {},observed {};
     uint32_t conf {},trans {},buffer {},clock {},transport {},planes {};
-    uint32_t ctl2 {},cmtg {};bool cmtgSecondary {};
+    uint32_t ctl2 {},cmtg {};bool cmtgSecondary {};uint32_t chicken {};
 };
+constexpr uint32_t GGTTMode=1U<<30; // CHICKEN_MISC_2 (0x42084): planes use GGTT, not DPT
 // Firmware (normal boot and the hibernation cold boot alike) runs eDP A as a
 // CMTG secondary: TRANS_DDI_FUNC_CTL2 bit3 with CMTG_A_CTL ENABLE|STATE. The
 // boot handoff preserves it and the native enable path never rewrites CTL2,
@@ -110,7 +111,18 @@ template<class IO> Result park(IO &io,const Display13Transcoder::Bindings &t,uin
     // 7. Release pipe A DDB allocations (shared DBUF resume rebuilds them).
     r.stage=7;write(0x7027C,0);write(0x7037C,0);write(0x7017C,0);
     if(!wait(0x7027C,UINT32_MAX,0) || !wait(0x7037C,UINT32_MAX,0) || !wait(0x7017C,UINT32_MAX,0))return r;
-    r.stage=8;r.status=Status::Complete;return r;
+    // 8. Display 13 DPT: tiled planes fetch through a Display Page Table
+    // unless CHICKEN_MISC_2 bit30 selects GGTT (Linux intel_dpt_configure /
+    // Wa_22012358565). The boot handoff sets it while the plane is off; the
+    // hibernation cold boot's firmware leaves it clear, so tiled scanout reads
+    // a nonexistent DPT (black) while linear planes still use the GGTT.
+    r.stage=8;r.chicken=io.read(0x42084);
+    if(r.chicken==UINT32_MAX){r.status=Status::Readback;return r;}
+    if(!(r.chicken&GGTTMode)) {
+        write(0x42084,r.chicken|GGTTMode);
+        if(!wait(0x42084,GGTTMode,GGTTMode))return r;
+    }
+    r.stage=9;r.status=Status::Complete;return r;
 }
 }
 #endif

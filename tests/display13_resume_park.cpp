@@ -34,9 +34,9 @@ int main() {
     const Display13Transcoder::Bindings edp {};
     auto io=live();
     auto res=park(io,edp,1);
-    assert(res.status==Status::Complete && res.stage==8 && res.port==0);
+    assert(res.status==Status::Complete && res.stage==9 && res.port==0 && (io.r[0x42084]&GGTTMode));
     // Linux order: plane, pipe, scaler, transcoder function, DP transport/buffer, clock, DDB.
-    const std::vector<uint32_t> want {0x70180,0x7019C,0x70008,0x68180,0x68170,0x68174,0x60404,0x60400,0x64000,0x60540,0x46140,0x7027C,0x7037C,0x7017C};
+    const std::vector<uint32_t> want {0x70180,0x7019C,0x70008,0x68180,0x68170,0x68174,0x60404,0x60400,0x64000,0x60540,0x46140,0x7027C,0x7037C,0x7017C,0x42084};
     assert(io.order==want && res.writes==want.size());
     assert(!(io.r[0x70180]&Enable) && !(io.r[0x70008]&0xC0000000U) && !(io.r[0x60400]&Enable) &&
            ((io.r[0x60400]>>27)&15)==0 && !(io.r[0x64000]&Enable) && (io.r[0x64000]&0x80) && !(io.r[0x46140]>>28) &&
@@ -60,6 +60,9 @@ int main() {
     {auto x=live();x.r[0x70008]=0;refuse(x,1);}                    // nothing scanning out
     {auto x=live();x.r[0x64000]=0x80U;refuse(x,1);}                // buffer already off
     {auto x=live();x.r[0x70008]=UINT32_MAX;refuse(x,1);}           // unreadable
+    // An already set GGTT mode bit is not rewritten; unrelated chicken bits survive.
+    {auto x=live();x.r[0x42084]=GGTTMode|0x5;auto r=park(x,edp,1);assert(r.status==Status::Complete && x.r[0x42084]==(GGTTMode|0x5) && x.order.back()==0x7017C);}
+    {auto x=live();x.r[0x42084]=0x5;park(x,edp,1);assert(x.r[0x42084]==(GGTTMode|0x5));}
     // CMTG secondary (firmware eDP A): CTL2 is preserved, nothing else changes.
     {auto x=live();x.r[0x60404]=8;x.r[0x6FA88]=0x80800000U;auto r=park(x,edp,1);
      assert(r.status==Status::Complete && r.cmtgSecondary && x.r[0x60404]==8);
