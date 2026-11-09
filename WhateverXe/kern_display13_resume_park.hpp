@@ -18,7 +18,14 @@ struct Result {
     Status status {Status::Topology};
     uint32_t stage {},writes {},port {UINT32_MAX},lastReg {},expected {},observed {};
     uint32_t conf {},trans {},buffer {},clock {},transport {},planes {};
+    uint32_t ctl2 {},cmtg {};bool cmtgSecondary {};
 };
+// Firmware (normal boot and the hibernation cold boot alike) runs eDP A as a
+// CMTG secondary: TRANS_DDI_FUNC_CTL2 bit3 with CMTG_A_CTL ENABLE|STATE. The
+// boot handoff preserves it and the native enable path never rewrites CTL2,
+// so clearing CTL2 here leaves CMTG running against a non-secondary
+// transcoder. Keep CTL2 for exactly that configuration.
+constexpr uint32_t CMTGSecondaryCTL2=8,CMTGRunning=(1U<<31)|(1U<<23);
 constexpr uint32_t Enable=0x80000000U;
 inline uint32_t planeCtl(unsigned n){return 0x70180+0x100*n;}
 inline uint32_t planeSurf(unsigned n){return 0x7019C+0x100*n;}
@@ -37,6 +44,10 @@ template<class IO> bool qualify(IO &io,const Display13Transcoder::Bindings &t,ui
     r.port=selector-1;
     if(!(panelPorts&(1U<<r.port)))return false;
     r.buffer=io.read(0x64000+0x100*r.port);r.clock=io.read(0x46140);r.transport=io.read(0x60540);
+    r.ctl2=io.read(0x60404);r.cmtg=io.read(0x6FA88);
+    if(r.ctl2==UINT32_MAX || r.cmtg==UINT32_MAX)return false;
+    r.cmtgSecondary=r.port==0 && r.ctl2==CMTGSecondaryCTL2 && r.cmtg==CMTGRunning;
+    if(r.ctl2 && !r.cmtgSecondary)return false; // unknown CTL2 use: refuse
     if(r.buffer==UINT32_MAX || !(r.buffer&Enable) || r.clock==UINT32_MAX || (r.clock>>28)!=r.port+1 ||
        r.transport==UINT32_MAX)return false;
     const auto cursor=io.read(0x70080);
@@ -88,7 +99,7 @@ template<class IO> Result park(IO &io,const Display13Transcoder::Bindings &t,uin
         }
     }
     // 4. Transcoder function off (DDI select, mode cleared).
-    r.stage=4;write(0x60404,0);write(0x60400,r.trans&~(Enable|(15U<<27)|(7U<<24)));
+    r.stage=4;if(!r.cmtgSecondary)write(0x60404,0);write(0x60400,r.trans&~(Enable|(15U<<27)|(7U<<24)));
     if(!wait(0x60400,Enable,0))return r;
     // 5. DP transport and DDI buffer off, buffer idle.
     r.stage=5;

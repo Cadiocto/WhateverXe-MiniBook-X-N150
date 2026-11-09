@@ -2,6 +2,7 @@
 #include "kern_display13_fb_irq.hpp"
 #include <cassert>
 #include <map>
+#include <algorithm>
 #include <vector>
 // Register model: status bits follow their enables after a write; the frame
 // counter advances on every read.
@@ -59,6 +60,13 @@ int main() {
     {auto x=live();x.r[0x70008]=0;refuse(x,1);}                    // nothing scanning out
     {auto x=live();x.r[0x64000]=0x80U;refuse(x,1);}                // buffer already off
     {auto x=live();x.r[0x70008]=UINT32_MAX;refuse(x,1);}           // unreadable
+    // CMTG secondary (firmware eDP A): CTL2 is preserved, nothing else changes.
+    {auto x=live();x.r[0x60404]=8;x.r[0x6FA88]=0x80800000U;auto r=park(x,edp,1);
+     assert(r.status==Status::Complete && r.cmtgSecondary && x.r[0x60404]==8);
+     std::vector<uint32_t> w2=want;w2.erase(std::find(w2.begin(),w2.end(),0x60404));assert(x.order==w2);}
+    // CTL2 set without a running CMTG, or any other CTL2 use: refuse, no writes.
+    {auto x=live();x.r[0x60404]=8;refuse(x,1);}
+    {auto x=live();x.r[0x60404]=0x10;x.r[0x6FA88]=0x80800000U;refuse(x,1);}
     // A pipe that never reports off stops at stage 2 with the timeout witness.
     {auto x=live();x.stuckPipe=true;auto r=park(x,edp,1);
      assert(r.status==Status::Timeout && r.stage==2 && r.lastReg==0x70008);}

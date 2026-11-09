@@ -10421,7 +10421,7 @@ bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
             const auto park=Display13ResumePark::park(parkIO,c.transcoders,callbackXE->adlnOutputWiring.panel);
             uint32_t parkRecord[16] {1,static_cast<uint32_t>(park.status),park.stage,park.writes,park.port,
                 park.lastReg,park.expected,park.observed,park.conf,park.trans,park.buffer,park.clock,park.transport,
-                park.planes,static_cast<uint32_t>(c.restoreEpoch),0};
+                park.planes,static_cast<uint32_t>(c.restoreEpoch),park.cmtgSecondary?park.ctl2|0x100U:park.ctl2};
             IORegistryEntry::getRegistryRoot()->setProperty("WEXResumeFirmwarePark",parkRecord,sizeof(parkRecord));
             if(park.status==Display13ResumePark::Status::Complete) {
                 auto &irq=display13FBIRQ;
