@@ -24,6 +24,7 @@
 #include "kern_xelp_memory_layout.hpp"
 #include "kern_xelp_forcewake_irq.hpp"
 #include "kern_display13_resume_park.hpp"
+#include "kern_display13_scanout_readout.hpp"
 #include "kern_display13_boot.hpp"
 #include "kern_display13_dsi_trial.hpp"
 #include "kern_dsi_readout.hpp"
@@ -9785,6 +9786,20 @@ void XE::adlnWMEnable(OSObject *plane,bool arm,bool cursor) {
 	auto key=cursor ? "N97FBCursorWMEnableFirstInputs" : "N97FBPrimaryWMEnableFirstInputs";
 	inputs[21]=static_cast<uint32_t>(r.status);
 	if(!root->getProperty(key))root->setProperty(key,inputs,sizeof(inputs));
+	// Read-only pipe A scanout snapshot for "running pipe, black panel"
+	// reports: first and latest of the first 32 primary-plane enables. No
+	// lock is held here; the BAR mapping stays retained once published.
+	static uint32_t scanoutSnapshots=0;
+	if(!cursor && pipe==0 && scanoutSnapshots<32) {
+		IOLockLock(c.lock);auto map=c.map;IOLockUnlock(c.lock);
+		if(map && map->getLength()==0x1000000 && map->getVirtualAddress()) {
+			const auto base=map->getVirtualAddress();uint32_t snapshot[Display13ScanoutReadout::Size] {};
+			Display13ScanoutReadout::capture([&](uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);},
+				[](uint32_t us){IOSleep(us/1000);},++scanoutSnapshots,snapshot);
+			root->setProperty("WEXDisplay13Scanout",snapshot,sizeof(snapshot));
+			if(!root->getProperty("WEXDisplay13ScanoutFirst"))root->setProperty("WEXDisplay13ScanoutFirst",snapshot,sizeof(snapshot));
+		}
+	}
 }
 void XE::wrapAlderLakeNPlaneWMEnable(OSObject *plane,bool arm) {adlnWMEnable(plane,arm,false);}
 void XE::wrapDisplay13CursorWMEnable(OSObject *plane,bool arm) {adlnWMEnable(plane,arm,true);}
