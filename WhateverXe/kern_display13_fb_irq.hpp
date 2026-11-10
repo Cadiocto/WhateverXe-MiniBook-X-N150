@@ -275,6 +275,17 @@ template<class IO> Status restoreAfterPowerLoss(IO &io,State &s,uint32_t allowed
     s.enabled=false;s.active=0;
     return enable(io,s,s.excludedPCH,NativeGT,actual.active,s.ports,s.typeC);
 }
+// Native enableIRQ after a display off/on or a power loss can run before any
+// pipe's transcoder is enabled again (eDP-A display wake, hibernation resume).
+// enable() would then fail permanently (Topology/Power -> faulted) and
+// restoreAfterPowerLoss() refuses. Report that case so the caller defers the
+// (re)arm to the pipe's native VBL enable instead. DSI is excluded: its
+// power-off state is a hard refusal, and its wake already finds the pipe running.
+template<class IO> bool deferRearm(IO &io,const State &s) {
+    if(!s.begun || s.faulted || s.transcoders.dsi0Pipe<3)return false;
+    const auto r=readActivePipes(io,7,s.transcoders);
+    return r.status==Status::Topology && !r.active;
+}
 template<class IO> Status disable(IO &io,State &s) {
     if(!s.begun || !io.readable(Master))return Status::Unavailable;
     io.write(Master,0);s.enabled=false;

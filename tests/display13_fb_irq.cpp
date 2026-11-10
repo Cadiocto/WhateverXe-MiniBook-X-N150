@@ -48,6 +48,26 @@ struct IO {
     }
 };
 int main() {
+    // eDP-A display wake: native disableIRQ at display off, then enableIRQ
+    // before the transcoder runs again. A plain enable() would fault for good;
+    // deferRearm() reports the case, and enable() succeeds once the pipe runs.
+    {IO io;State s;
+     assert(enable(io,s,0,NativeGT,1,3,0)==Status::Complete && s.enabled && s.active==1);
+     assert(!deferRearm(io,s));                                   // pipe A running: no deferral
+     assert(disable(io,s)==Status::Complete && !s.enabled);
+     io.r[0x70008]=0;                                             // display off: transcoder stopped
+     assert(deferRearm(io,s));
+     {IO probe=io;State t=s;assert(enable(probe,t,0,NativeGT,1,3,0)==Status::Topology && t.faulted);} // the old fault
+     io.wells=0xFC03;assert(deferRearm(io,s));                    // pipe well also down
+     io.wells=0xFC0F;io.r[0x70008]=0xC0000000;                     // VBL enable: pipe running again
+     assert(!deferRearm(io,s) && enable(io,s,0,NativeGT,1,3,0)==Status::Complete && s.enabled && !s.faulted);
+     // Power loss: restore refuses without faulting while nothing runs, then completes.
+     io.r[0x70008]=0;assert(restoreAfterPowerLoss(io,s,1)==Status::Topology && !s.faulted && deferRearm(io,s));
+     io.r[0x70008]=0xC0000000;assert(restoreAfterPowerLoss(io,s,1)==Status::Complete && s.enabled);
+     // Never before the first enable, never after a fault, never for DSI.
+     State fresh;assert(!deferRearm(io,fresh));
+     State faulted=s;faulted.faulted=true;io.r[0x70008]=0;assert(!deferRearm(io,faulted));
+     State dsi=s;dsi.transcoders.dsi0Pipe=0;assert(!deferRearm(io,dsi));}
     // Cold wake erased both peer IRQ banks and HPD programming. Restore only
     // actually restarted pipes, while re-enabling both selected connectors.
     {IO io;State s;s.transcoders.dsi0Pipe=0;

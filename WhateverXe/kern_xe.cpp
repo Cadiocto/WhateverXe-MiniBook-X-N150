@@ -4792,9 +4792,9 @@ struct Display13FBIRQContext {
 	IOService *controller {};
 	Display13FBIRQ::State state;
 	unsigned handlers {},softwareHandlers {};bool quiescing {},powerLost {};uint32_t blockedPipes {};
-	// Set after a hibernation resume park left no running pipe at native
-	// enableIRQ; the power-loss restore is retried at the pipe's VBL enable.
-	bool parkRearm {};
+	// Set when native enableIRQ ran with no pipe running yet (display wake,
+	// hibernation resume park): the (re)arm is completed at that pipe's VBL enable.
+	bool rearmPending {};
 	uintptr_t softwareThread {};
 	Display13FBIRQ::HandlerScopes scopes;
 	volatile uint32_t admittedPipes {}; // Release-published after actual path/backing proof.
@@ -6127,7 +6127,11 @@ IOReturn XE::wrapDisplay13FBEnableIRQ(IOService *controller) {
 	for(unsigned i=0;i<4;++i)check[19+i]=io.read(otherBanks[i]+4)&~io.read(otherBanks[i]-4);
     if(c.powerLost && !c.quiescing) {
         c.status=Display13FBIRQ::restoreAfterPowerLoss(io,c.state,c.admittedPipes);
-        if(c.status==Display13FBIRQ::Status::Complete)c.powerLost=false;
+        if(c.status==Display13FBIRQ::Status::Complete) {c.powerLost=false;c.rearmPending=false;}
+        else if(Display13FBIRQ::deferRearm(io,c.state))c.rearmPending=true;
+    } else if(!c.quiescing && !c.state.enabled && Display13FBIRQ::deferRearm(io,c.state)) {
+        // Display wake: no pipe runs yet. enable() would fault permanently.
+        c.status=Display13FBIRQ::Status::Topology;c.rearmPending=true;
     } else if(Display13FBTopology::multiOutputWiring(callbackXE->adlnOutputWiring)) {
         const auto admitted=__atomic_load_n(&c.admittedPipes,__ATOMIC_ACQUIRE);
 		const auto actual=Display13FBIRQ::readActivePipes(io,admitted,c.state.transcoders);
@@ -6175,13 +6179,25 @@ void XE::wrapDisplay13FBConfigureVBL(IOService *controller,IOService *fb,OSObjec
 		if(getLock)IOSimpleLockUnlockEnableInterrupt(c.lock,saved);return;
 	}
 	if(valid && pipe<3 && !(c.blockedPipes&(1U<<pipe))) {
-		// Hibernation resume park: native enableIRQ ran with no pipe running,
-		// so restoreAfterPowerLoss refused and both masters stayed off. Retry
-		// it at this real activation boundary, once the pipe is running.
-		if(c.parkRearm && c.powerLost && enabled && !c.quiescing && !c.state.faulted &&
+		// Native enableIRQ ran with no pipe running (display wake, hibernation
+		// resume park), so the restore/enable was deferred and both masters
+		// stayed off. Complete it at this real activation boundary, once the
+		// pipe is running: a power-loss restore, else a normal enable.
+		if(c.rearmPending && enabled && !c.quiescing && !c.state.faulted && (c.powerLost || !c.state.enabled) &&
 		   Display13FBIRQ::powered(io.read(Display13FBIRQ::Driver),pipe) && Display13Transcoder::running(io,pipe,c.state.transcoders)) {
-			const auto rearm=Display13FBIRQ::restoreAfterPowerLoss(io,c.state,__atomic_load_n(&c.admittedPipes,__ATOMIC_ACQUIRE));
-			if(rearm==Display13FBIRQ::Status::Complete) {c.powerLost=false;c.parkRearm=false;}
+			const auto admitted=__atomic_load_n(&c.admittedPipes,__ATOMIC_ACQUIRE);
+			Display13FBIRQ::Status rearm;
+			if(c.powerLost)rearm=Display13FBIRQ::restoreAfterPowerLoss(io,c.state,admitted);
+			else {
+				const auto excluded=controller==callbackXE->adlnTopologyController ?
+					Display13FBTopology::excludedHotplug(callbackXE->adlnPlatform,sizeof(callbackXE->adlnPlatform),callbackXE->adlnOutputWiring) : 0;
+				const auto actual=Display13FBIRQ::readActivePipes(io,admitted,c.state.transcoders);
+				rearm=actual.status!=Display13FBIRQ::Status::Complete ? actual.status :
+					Display13FBIRQ::enable(io,c.state,excluded,adlnSharedGT(controller),
+						Display13FBTopology::multiOutputWiring(callbackXE->adlnOutputWiring) ? actual.active : 1U,
+						callbackXE->adlnOutputWiring.hotplug(),callbackXE->adlnOutputWiring.typeC);
+			}
+			if(rearm==Display13FBIRQ::Status::Complete) {c.powerLost=false;c.rearmPending=false;}
 		}
 		if(Display13FBTopology::multiOutputWiring(callbackXE->adlnOutputWiring) && enabled && !c.quiescing) {
 			const auto admitted=__atomic_load_n(&c.admittedPipes,__ATOMIC_ACQUIRE);
@@ -10426,7 +10442,7 @@ bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
             if(park.status==Display13ResumePark::Status::Complete) {
                 auto &irq=display13FBIRQ;
                 const auto saved=IOSimpleLockLockDisableInterrupt(irq.lock);
-                irq.parkRearm=true;
+                irq.rearmPending=true;
                 IOSimpleLockUnlockEnableInterrupt(irq.lock,saved);
             }
         }
