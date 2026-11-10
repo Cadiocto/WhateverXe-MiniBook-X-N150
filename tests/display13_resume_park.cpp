@@ -4,19 +4,21 @@
 #include <map>
 #include <algorithm>
 #include <vector>
+#include <set>
 // Register model: status bits follow their enables after a write; the frame
 // counter advances on every read.
 struct IO {
-    std::map<uint32_t,uint32_t> r;std::vector<uint32_t> order;uint32_t frames=100;bool stuckPipe=false;
+    std::map<uint32_t,uint32_t> r;std::vector<uint32_t> order;std::set<uint32_t> deny;uint32_t frames=100;bool stuckPipe=false;
     uint32_t read(uint32_t reg) {
         if(reg==0x70040)return frames++;
         auto it=r.find(reg);return it==r.end()?0:it->second;
     }
-    void write(uint32_t reg,uint32_t v) {
+    bool write(uint32_t reg,uint32_t v) {
+        if(deny.count(reg))return false;
         order.push_back(reg);
         if(reg==0x70008 && !stuckPipe)v=(v&0x80000000U)?(v|0x40000000U):(v&~0x40000000U);
         if(reg>=0x64000 && reg<=0x64200)v=(v&0x80000000U)?(v&~0x80U):(v|0x80U);
-        r[reg]=v;
+        r[reg]=v;return true;
     }
     void delay(){}
 };
@@ -34,9 +36,9 @@ int main() {
     const Display13Transcoder::Bindings edp {};
     auto io=live();
     auto res=park(io,edp,1);
-    assert(res.status==Status::Complete && res.stage==9 && res.port==0 && (io.r[0x42084]&GGTTMode));
+    assert(res.status==Status::Complete && res.stage==9 && res.port==0 && res.chicken==0);
     // Linux order: plane, pipe, scaler, transcoder function, DP transport/buffer, clock, DDB.
-    const std::vector<uint32_t> want {0x70180,0x7019C,0x70008,0x68180,0x68170,0x68174,0x60404,0x60400,0x64000,0x60540,0x46140,0x7027C,0x7037C,0x7017C,0x42084};
+    const std::vector<uint32_t> want {0x70180,0x7019C,0x70008,0x68180,0x68170,0x68174,0x60404,0x60400,0x64000,0x60540,0x46140,0x7027C,0x7037C,0x7017C};
     assert(io.order==want && res.writes==want.size());
     assert(!(io.r[0x70180]&Enable) && !(io.r[0x70008]&0xC0000000U) && !(io.r[0x60400]&Enable) &&
            ((io.r[0x60400]>>27)&15)==0 && !(io.r[0x64000]&Enable) && (io.r[0x64000]&0x80) && !(io.r[0x46140]>>28) &&
@@ -60,9 +62,32 @@ int main() {
     {auto x=live();x.r[0x70008]=0;refuse(x,1);}                    // nothing scanning out
     {auto x=live();x.r[0x64000]=0x80U;refuse(x,1);}                // buffer already off
     {auto x=live();x.r[0x70008]=UINT32_MAX;refuse(x,1);}           // unreadable
-    // An already set GGTT mode bit is not rewritten; unrelated chicken bits survive.
-    {auto x=live();x.r[0x42084]=GGTTMode|0x5;auto r=park(x,edp,1);assert(r.status==Status::Complete && x.r[0x42084]==(GGTTMode|0x5) && x.order.back()==0x7017C);}
-    {auto x=live();x.r[0x42084]=0x5;park(x,edp,1);assert(x.r[0x42084]==(GGTTMode|0x5));}
+    // Stage 8 is a read-only witness: the park never writes CHICKEN_MISC_2.
+    {auto x=live();x.r[0x42084]=0x5;auto r=park(x,edp,1);
+     assert(r.status==Status::Complete && r.chicken==0x5 && x.r[0x42084]==0x5 && x.order.back()==0x7017C);}
+    {auto x=live();x.r[0x42084]=UINT32_MAX;auto r=park(x,edp,1);assert(r.status==Status::Readback && r.stage==8);}
+    // Shared resume GGTT restore (with or without a park): set once, other bits kept.
+    {IO x;x.r[0x42084]=0x5;uint32_t b=0,a=0;
+     auto rd=[&](uint32_t g){return x.read(g);};auto wr=[&](uint32_t g,uint32_t v){x.write(g,v);};
+     assert(restoreGGTTMode(rd,wr,b,a) && b==0x5 && a==(GGTTMode|0x5) && x.order==std::vector<uint32_t>{0x42084});
+     assert(restoreGGTTMode(rd,wr,b,a) && b==(GGTTMode|0x5) && x.order.size()==1);}   // already set: no write
+    {IO x;x.r[0x42084]=UINT32_MAX;uint32_t b=0,a=0;
+     assert(!restoreGGTTMode([&](uint32_t g){return x.read(g);},[&](uint32_t g,uint32_t v){x.write(g,v);},b,a) && x.order.empty());}
+    {IO x;x.deny.insert(0x42084);uint32_t b=0,a=0;   // write did not land: readback reports failure
+     assert(!restoreGGTTMode([&](uint32_t g){return x.read(g);},[&](uint32_t g,uint32_t v){x.write(g,v);},b,a) && a==0);}
+    // PSR or PSR2 enabled (or unreadable) on transcoder A: refuse without writes.
+    {auto x=live();x.r[0x60800]=0x80100001U;refuse(x,1);}
+    {auto x=live();x.r[0x60900]=0x80004811U;refuse(x,1);}
+    {auto x=live();x.r[0x60800]=UINT32_MAX;refuse(x,1);}
+    {auto x=live();x.r[0x60900]=UINT32_MAX;refuse(x,1);}
+    // The firmware values seen on the XPS 13 Plus 9320 (PSR configured, not enabled) still park.
+    {auto x=live();x.r[0x60800]=0x00100001U;x.r[0x60900]=0x00004811U;assert(park(x,edp,1).status==Status::Complete);}
+    // A register outside the IO allowlist stops the park at its stage, counting only real writes.
+    {auto x=live();x.deny.insert(0x60400);auto r=park(x,edp,1);
+     assert(r.status==Status::Denied && r.stage==4 && r.lastReg==0x60400 && r.writes==x.order.size() && r.writes==7 &&
+            std::find(x.order.begin(),x.order.end(),0x64000)==x.order.end());}
+    {auto x=live();x.deny.insert(0x7019C);auto r=park(x,edp,1);
+     assert(r.status==Status::Denied && r.stage==1 && r.writes==1);}
     // CMTG secondary (firmware eDP A): CTL2 is preserved, nothing else changes.
     {auto x=live();x.r[0x60404]=8;x.r[0x6FA88]=0x80800000U;auto r=park(x,edp,1);
      assert(r.status==Status::Complete && r.cmtgSecondary && x.r[0x60404]==8);

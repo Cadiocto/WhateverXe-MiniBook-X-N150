@@ -310,6 +310,9 @@ template<class IO> bool dpSourceUnchanged(IO &io,const DisplayReadout &r,unsigne
     uint32_t ctl2=0;
     if(!value(r,0x60404+bank,ctl2))return false;
     if(ctl2==8) {
+        // Deliberate sandwich: power-well state (0x45404) and the transcoder
+        // clock (0x46140) are read again after CMTG and the transcoder, so a
+        // change in either while CMTG was sampled refuses the capture.
         uint32_t cmtg=0,power=0,clock=0,trans=0;
         if(!value(r,0x6FA88,cmtg) || !value(r,0x45404,power) ||
            !value(r,0x46140,clock) || !value(r,0x60400,trans) ||

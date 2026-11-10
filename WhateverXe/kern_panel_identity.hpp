@@ -10,10 +10,13 @@ inline uint32_t u32(const uint8_t*p){return uint32_t(u16(p))|(uint32_t(u16(p+2))
 // Pure, immutable CPU core. No runtime/OS object, pointer publication or hardware access.
 // Initial qualification covers modern VBTs with missing block41 (Linux generated
 // layout: FP38 + DTD18 + PNP10). Explicit pointer-table support is refused.
+// Only the 128-byte base block is passed and only its PnP bytes 8-17 are used,
+// so its extension count (byte 126) is not required to be zero: an EDID copied
+// from a panel with extensions can be truncated without re-editing byte 126.
 inline Result select(const void*vb,size_t vn,const void*ed,size_t en){
  Result r;auto v=static_cast<const uint8_t*>(vb),e=static_cast<const uint8_t*>(ed);
  static const uint8_t header[]{0,255,255,255,255,255,255,0};
- if(!v||!e||vn<48||vn>65536||en!=128||memcmp(e,header,8)||e[18]!=1||e[126])return r;
+ if(!v||!e||vn<48||vn>65536||en!=128||memcmp(e,header,8)||e[18]!=1)return r;
  unsigned sum=0;for(size_t i=0;i<128;++i)sum+=e[i];if((sum&255)||!(e[20]&128))return r;
  const auto m=(uint16_t(e[8])<<8)|e[9];if((m&0x8000)||!((m>>10)&31)||((m>>10)&31)>26||!((m>>5)&31)||((m>>5)&31)>26||!(m&31)||(m&31)>26)return r;
  if(memcmp(v,"$VBT",4))return r;size_t h=u16(v+22),n=u16(v+24),bo=u32(v+28);

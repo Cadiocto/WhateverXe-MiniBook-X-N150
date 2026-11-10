@@ -4794,7 +4794,7 @@ struct Display13FBIRQContext {
 	unsigned handlers {},softwareHandlers {};bool quiescing {},powerLost {};uint32_t blockedPipes {};
 	// Set after a hibernation resume park left no running pipe at native
 	// enableIRQ; the power-loss restore is retried at the pipe's VBL enable.
-	bool parkRearm {};uint32_t parkRearmRecord[8] {};
+	bool parkRearm {};
 	uintptr_t softwareThread {};
 	Display13FBIRQ::HandlerScopes scopes;
 	volatile uint32_t admittedPipes {}; // Release-published after actual path/backing proof.
@@ -5040,13 +5040,15 @@ struct Display13FBBootIO : Display13FBPowerIO {
     }
 };
 // S4 resume park: exactly the pipe A / transcoder A / combo DDI registers that
-// Display13ResumePark::park writes. Reads are unrestricted within the BAR.
+// Display13ResumePark::park writes. Reads are unrestricted within the BAR. A
+// register outside the list is not written and the park stops (Denied).
 struct Display13FBResumeParkIO : Display13FBBootIO {
     explicit Display13FBResumeParkIO(IOMemoryMap *m):Display13FBBootIO{m} {}
-    void write(uint32_t r,uint32_t v) {
+    bool write(uint32_t r,uint32_t v) {
         static constexpr uint32_t allowed[] {0x70180,0x7019C,0x70008,0x68170,0x68174,0x68180,0x68270,0x68274,0x68280,
-            0x60404,0x60400,0x64000,0x64100,0x64200,0x60540,0x46140,0x7027C,0x7037C,0x7017C,0x42084};
-        for(auto a:allowed)if(a==r) {*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+r)=v;return;}
+            0x60404,0x60400,0x64000,0x64100,0x64200,0x60540,0x46140,0x7027C,0x7037C,0x7017C};
+        for(auto a:allowed)if(a==r) {*reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress()+r)=v;return true;}
+        return false;
     }
     void delay(){IODelay(100);}
 };
@@ -6179,8 +6181,6 @@ void XE::wrapDisplay13FBConfigureVBL(IOService *controller,IOService *fb,OSObjec
 		if(c.parkRearm && c.powerLost && enabled && !c.quiescing && !c.state.faulted &&
 		   Display13FBIRQ::powered(io.read(Display13FBIRQ::Driver),pipe) && Display13Transcoder::running(io,pipe,c.state.transcoders)) {
 			const auto rearm=Display13FBIRQ::restoreAfterPowerLoss(io,c.state,__atomic_load_n(&c.admittedPipes,__ATOMIC_ACQUIRE));
-			auto &r=c.parkRearmRecord;r[1]++;r[2]=static_cast<uint32_t>(rearm);r[3]=pipe;
-			r[4]=io.read(Display13FBIRQ::Master);r[5]=io.read(Display13FBIRQ::GfxMaster);r[6]=c.state.active;r[7]=c.state.enabled;
 			if(rearm==Display13FBIRQ::Status::Complete) {c.powerLost=false;c.parkRearm=false;}
 		}
 		if(Display13FBTopology::multiOutputWiring(callbackXE->adlnOutputWiring) && enabled && !c.quiescing) {
@@ -10358,7 +10358,7 @@ void XE::wrapAlderLakeNPowerOverride(void *power,bool enable) {
 // both enter here; a second caller must not reset an already running peer.
 bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
     auto &c=display13FBPower;
-    uint64_t record[32] {},cold[12] {};Display13Power::Result result;
+    uint64_t record[32] {},cold[14] {};Display13Power::Result result;
     if(power!=c.power || !c.controller || !callbackXE->display13FBLifecycleHooksReady ||
        !c.bridge.begun || c.bridge.state.faulted || c.clockFaulted ||
        !Display13Power::objectAssociations(power,0x80,c.controller,0x1C20))return false;
@@ -10426,7 +10426,7 @@ bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
             if(park.status==Display13ResumePark::Status::Complete) {
                 auto &irq=display13FBIRQ;
                 const auto saved=IOSimpleLockLockDisableInterrupt(irq.lock);
-                irq.parkRearm=true;irq.parkRearmRecord[0]=1;irq.parkRearmRecord[1]=0;
+                irq.parkRearm=true;
                 IOSimpleLockUnlockEnableInterrupt(irq.lock,saved);
             }
         }
@@ -10437,8 +10437,17 @@ bool XE::restoreDisplay13ResourcesLocked(void *power,bool waking) {
                 *reinterpret_cast<volatile uint32_t *>(c.map->getVirtualAddress()+0x4438C)=c.dbuf.mbus;
             cold[5]=io.read(0x4438C);
             if(cold[5]!=c.dbuf.mbus)result.status=Display13Power::Status::NotReady;
-            else for(unsigned i=0;i<4;++i)
-                if(!(io.read(Display13DBUF::regs[i])&Display13DBUF::Request))c.dbuf.owned&=~(1U<<i);
+            else {
+                for(unsigned i=0;i<4;++i)
+                    if(!(io.read(Display13DBUF::regs[i])&Display13DBUF::Request))c.dbuf.owned&=~(1U<<i);
+                // Every consumer is stopped and no plane is enabled yet: restore
+                // the GGTT scanout mode the hibernation cold boot leaves clear.
+                // A failed readback is recorded only; it does not block resume.
+                uint32_t before=0,after=0;
+                Display13ResumePark::restoreGGTTMode([&](uint32_t r){return io.read(r);},
+                    [&](uint32_t r,uint32_t v){*reinterpret_cast<volatile uint32_t *>(c.map->getVirtualAddress()+r)=v;},before,after);
+                cold[12]=before;cold[13]=after;
+            }
         }
     }
     if(result.status==Display13Power::Status::Complete &&

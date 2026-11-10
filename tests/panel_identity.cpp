@@ -26,5 +26,15 @@ int main(){
   auto duplicate=v;const size_t rowStart=v.size()-rows.size();memcpy(duplicate.data()+rowStart+((index+1)%16)*66+56,e.data()+8,10);
   p=VBT::parse(duplicate.data(),duplicate.size(),Family::RaptorLakeP,e.data(),e.size());assert(p.valid()&&!p.panel.valid&&p.panelIdentity.status==PanelIdentity::Status::Ambiguous);++cases;
  }
+ // A base block whose extension count is non-zero (checksum still valid) is accepted.
+ {auto ext=e;ext[126]=1;edidChecksum(ext);
+  std::vector<uint8_t> v(70);memcpy(v.data(),"$VBT",4);w16(v,22,48);v[28]=48;
+  memcpy(v.data()+48,"BIOS_DATA_BLOCK ",16);w16(v,64,251);w16(v,66,22);
+  std::vector<uint8_t> child(44);child[4]=39;child[7]=6;child[8]=0x18;child[21]=10;block(v,2,child);
+  block(v,40,{255});block(v,27,std::vector<uint8_t>(212));block(v,44,std::vector<uint8_t>(56));
+  std::vector<uint8_t> rows(16*66);memcpy(rows.data()+3*66+56,ext.data()+8,10);block(v,42,rows);
+  w16(v,24,v.size());w16(v,68,v.size()-48);
+  auto p=VBT::parse(v.data(),v.size(),Family::RaptorLakeP,ext.data(),ext.size());assert(p.valid()&&p.panel.valid&&p.panel.type==3);++cases;
+  ext[126]=2;auto q=VBT::parse(v.data(),v.size(),Family::RaptorLakeP,ext.data(),ext.size());assert(!q.panel.valid);++cases;}   // checksum broken
  printf("PASS integrated panel identity: %u synthetic selection/truncation/mutation controls; VBT immutable\n",cases);
 }
