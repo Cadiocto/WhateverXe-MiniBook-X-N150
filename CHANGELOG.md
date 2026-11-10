@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add experimental hibernation resume for a firmware-lit internal eDP on Raptor Lake-P (`-wex-resume-park`): park the firmware scanout before the shared display resume and re-enable display interrupts when the pipe starts. Tested on a Dell XPS 13 Plus 9320.
+- Accept an optional `xelp-panel-edid` EDID base block to select the panel profile when the firmware's VBT requests EDID-based selection.
+
+### Fixed
+
+- Preserve a validated firmware eDP-A boot source, including a firmware CMTG secondary, while binding its protected AUX lease to the native port before software mode selection.
+- Restore the Display 13 GGTT scanout mode on every power-loss resume, so tiled surfaces are not black after hibernation.
+
 ## 0.8.0
 
 Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphics/releases) package with this update.
@@ -27,8 +39,6 @@ Use the latest [WhateverXe Graphics](https://github.com/b00t0x/WhateverXe-Graphi
 - Add experimental MIPI DSI display support with graphics acceleration, brightness control, display off/on, rotation, HiDPI and external-display coexistence. Tested on GPD MicroPC 2 and CHUWI MiniBook X N100 only; do not expect it to work on other devices. System sleep/wake remains unsupported.
 
 ### Fixed
-
-- Preserve a validated firmware eDP-A boot source while binding its protected AUX lease to the native port before software mode selection.
 
 - Fix graphics initialization and acceleration on additional supported Tiger Lake and Alder/Raptor Lake GPU variants, including single-channel configurations.
 - Fix graphics initialization on compatible Sequoia and Tahoe updates without requiring an exact OS build match.

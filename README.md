@@ -58,7 +58,7 @@ Graphics installs under `/Library` and rebuilds AuxKC without patching System fi
 
 ## Configuration
 
-For firmware that requests EDID-based panel selection, the optional iGPU Data property `xelp-panel-edid` accepts a validated 128-byte digital EDID base block without extensions. It selects a unique matching modern VBT panel profile; it does not override an explicit profile, set display timings, or bypass display-state checks. A single internal eDP-A display can retain an enabled firmware common timing generator; its source state must remain unchanged during bootstrap. The native port can adopt that protected boot lease before software mode selection.
+For firmware that requests EDID-based panel selection, the optional iGPU Data property `xelp-panel-edid` accepts a validated 128-byte digital EDID base block (only the base block; its extension-count byte is ignored). It selects a unique matching modern VBT panel profile; it does not override an explicit profile, set display timings, or bypass display-state checks. A single internal eDP-A display can retain an enabled firmware common timing generator; its source state must remain unchanged during bootstrap. The native port can adopt that protected boot lease before software mode selection.
 
 ### Required boot arguments
 
@@ -85,6 +85,13 @@ These settings are unnecessary at 96MB and do not increase firmware-allocated me
 - Add `SSDT-PNLF` for internal-display brightness control.
 - GPU selection is automatic; a `device-id` override is normally unnecessary.
 - Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U select tiling automatically. Do not use `-yTileDisable`; `AAPL,GfxYTile` is unnecessary.
+
+### Optional: hibernation resume (`-wex-resume-park`)
+
+Experimental, opt-in, and tested only on a Dell XPS 13 Plus 9320 (Raptor Lake-P, internal eDP) with `hibernatemode 25`. After hibernation the firmware lights the internal panel for the resume preview, which blocks the shared display resume and leaves the panel blank. With `-wex-resume-park`, WEX turns off exactly that one firmware scanout (internal eDP on pipe A, no PSR) before the shared resume, then re-enables display interrupts when the pipe starts. Any other display configuration is left untouched. The GGTT scanout mode that the hibernation cold boot clears is restored on every power-loss resume, with or without this option.
+
+- That machine's firmware also needs OpenCore `UEFI > ReservedMemory`: `Address` `0x8B000`, `Size` `4096`, `Type` `RuntimeCode`, or the hibernation image fails to restore.
+- The firmware runs eDP A as a secondary of its common timing generator (CMTG), which WEX keeps, so pipe A stays on the firmware's timing. That suits a single-mode internal panel; changing the internal panel's mode or refresh rate is not supported in this configuration.
 
 ## Tested features and known issues
 
