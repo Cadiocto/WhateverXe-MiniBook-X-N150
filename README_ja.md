@@ -86,12 +86,10 @@ BIOS/UEFIで設定できる場合は、**DVMT Pre-Allocatedを96MB**にします
 - GPUは自動選択するため、通常は`device-id`上書きは不要です。
 - Alder Lake-N / Twin LakeとAlder Lake-H/P/U / Raptor Lake-H/P/Uではタイル形式を自動選択します。`-yTileDisable`は使わないでください。`AAPL,GfxYTile`は不要です。
 
-### 任意: ハイバネーションからの復帰 (`-wex-resume-park`)
+### 任意: ハイバネーションからの復帰
 
-実験的な任意機能で、Dell XPS 13 Plus 9320 (Raptor Lake-P、内蔵eDP) の `hibernatemode 25` でのみ確認しています。ハイバネーション後、firmwareは復帰プレビューのために内蔵パネルを点灯させるため、共有ディスプレイ復帰が拒否されパネルが真っ暗になります。`-wex-resume-park` を指定すると、共有復帰の前にこのfirmwareの表示 (pipe A上の内蔵eDP、PSRなし) だけを停止し、pipeの開始時にディスプレイ割り込みを再有効化します。それ以外のディスプレイ構成には何もしません。ハイバネーションのコールドブートで解除されるGGTTスキャンアウトモードは、このオプションの有無にかかわらず電源喪失からの復帰時に毎回復元します。
+実験的な任意機能です。ハイバネーション (`hibernatemode 25`) からの復帰時にfirmwareが内蔵eDPパネルを点灯させ、その後パネルが真っ暗のままになる場合は `-wex-resume-park` を追加します。WEXはディスプレイの復帰前にそのfirmwareの出力だけを停止し、それ以外のディスプレイ構成は変更しません。firmwareによっては、ハイバネーションイメージを復元するためにOpenCoreの `UEFI > ReservedMemory` の設定も必要です。内蔵パネルはfirmwareが設定したモードのままになります。
 
-- この機種のfirmwareでは、OpenCoreの `UEFI > ReservedMemory` に `Address` `0x8B000`、`Size` `4096`、`Type` `RuntimeCode` も必要です。設定しないとハイバネーションイメージを復元できません。
-- firmwareはeDP Aを共通タイミングジェネレーター (CMTG) のセカンダリとして動作させ、WEXはそれを維持するため、pipe Aはfirmwareのタイミングのままです。単一モードの内蔵パネルでは問題ありませんが、この構成では内蔵パネルのモードやリフレッシュレートの変更には対応しません。
 
 ## 動作確認済みの機能と既知の問題
 

@@ -86,12 +86,10 @@ These settings are unnecessary at 96MB and do not increase firmware-allocated me
 - GPU selection is automatic; a `device-id` override is normally unnecessary.
 - Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P/U select tiling automatically. Do not use `-yTileDisable`; `AAPL,GfxYTile` is unnecessary.
 
-### Optional: hibernation resume (`-wex-resume-park`)
+### Optional: hibernation resume
 
-Experimental, opt-in, and tested only on a Dell XPS 13 Plus 9320 (Raptor Lake-P, internal eDP) with `hibernatemode 25`. After hibernation the firmware lights the internal panel for the resume preview, which blocks the shared display resume and leaves the panel blank. With `-wex-resume-park`, WEX turns off exactly that one firmware scanout (internal eDP on pipe A, no PSR) before the shared resume, then re-enables display interrupts when the pipe starts. Any other display configuration is left untouched. The GGTT scanout mode that the hibernation cold boot clears is restored on every power-loss resume, with or without this option.
+Experimental and opt-in. Add `-wex-resume-park` when firmware lights the internal eDP panel during a hibernation (`hibernatemode 25`) resume and the panel stays blank afterwards. WEX turns off only that firmware output before the display resume; other display configurations are left unchanged. Some firmware also needs an OpenCore `UEFI > ReservedMemory` entry for the hibernation image to restore. The internal panel keeps the mode the firmware programmed.
 
-- That machine's firmware also needs OpenCore `UEFI > ReservedMemory`: `Address` `0x8B000`, `Size` `4096`, `Type` `RuntimeCode`, or the hibernation image fails to restore.
-- The firmware runs eDP A as a secondary of its common timing generator (CMTG), which WEX keeps, so pipe A stays on the firmware's timing. That suits a single-mode internal panel; changing the internal panel's mode or refresh rate is not supported in this configuration.
 
 ## Tested features and known issues
 
