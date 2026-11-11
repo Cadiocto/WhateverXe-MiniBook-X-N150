@@ -9304,6 +9304,33 @@ void XE::wrapAlderLakeNClockSet(IOService *controller,uint64_t nativeHz) {
 // A shared crawl needs real WM certificates for every active native pipe.
 // Never wait for the controller gate or a peer FB mutex while a caller may
 // already own its own FB mutex. Single-output retains its established path.
+// Busy-gate diagnostic for adlnSetDualClock(), kept out of line so its
+// buffers never count against the caller's kernel stack frame. Caller holds
+// display13FBPower.lock. Published as N97FBClockGateBusy{,First}: [1] current
+// thread, [2] work-loop thread, [3] caller on work-loop thread, [4] gate lock,
+// [5..9] its first 40 bytes (owner thread and count live there), [10..12]
+// pipe 0-2 FB mutex (bit1 exists, bit0 held by caller), [13] donor
+// framebuffer image base, [14] frames, [15..30] caller backtrace.
+static __attribute__((noinline)) void recordDisplay13GateBusy(IOWorkLoop *loop,uint64_t donorImage) {
+    auto &c=display13FBPower;
+    uint64_t g[32] {1,reinterpret_cast<uint64_t>(current_thread()),
+        reinterpret_cast<uint64_t>(loop->getThread()),loop->onThread()};
+    if(auto lock=Display13WorkLoopPeek::gate(loop)) {
+        g[4]=reinterpret_cast<uint64_t>(lock);
+        for(unsigned i=0;i<5;++i)g[5+i]=reinterpret_cast<const volatile uint64_t *>(lock)[i];
+    }
+    for(unsigned p=0;p<3;++p) {
+        auto fb=c.pipe[p].memoryFramebuffer;
+        auto mutex=fb && fb->getMetaClass()->getClassSize()>=0x4B90 ? Display13FBMemory::field<IORecursiveLock *>(fb,0x4220) : nullptr;
+        if(mutex)g[10+p]=2|(IORecursiveLockHaveLock(mutex) ? 1 : 0);
+    }
+    g[13]=donorImage;
+    void *trace[16] {};g[14]=OSBacktrace(trace,16);
+    for(unsigned i=0;i<16;++i)g[15+i]=reinterpret_cast<uint64_t>(trace[i]);
+    auto root=IORegistryEntry::getRegistryRoot();
+    root->setProperty("N97FBClockGateBusy",g,sizeof(g));
+    if(!root->getProperty("N97FBClockGateBusyFirst"))root->setProperty("N97FBClockGateBusyFirst",g,sizeof(g));
+}
 void XE::adlnSetDualClock(IOService *controller,uint64_t nativeHz) {
     auto &c=display13FBPower;if(!c.lock)return;
     Display13Clock::Change result;result.requestedHz=nativeHz;
@@ -9353,29 +9380,7 @@ void XE::adlnSetDualClock(IOService *controller,uint64_t nativeHz) {
                 if(ready) {acquired=loop;evidence[8]=1;}
                 else {
                     gateBusy=true;
-                    // Who holds the gate, and what does this caller hold? Published
-                    // as N97FBClockGateBusy{,First}: [1] current thread, [2] work-loop
-                    // thread, [3] caller on work-loop thread, [4] gate lock, [5..9] its
-                    // first 40 bytes (owner thread and count live there), [10..12]
-                    // pipe 0-2 FB mutex (bit1 exists, bit0 held by caller), [13] donor
-                    // framebuffer image base, [14] frames, [15..30] caller backtrace.
-                    uint64_t g[32] {1,reinterpret_cast<uint64_t>(current_thread()),
-                        reinterpret_cast<uint64_t>(loop->getThread()),loop->onThread()};
-                    if(auto lock=Display13WorkLoopPeek::gate(loop)) {
-                        g[4]=reinterpret_cast<uint64_t>(lock);
-                        for(unsigned i=0;i<5;++i)g[5+i]=reinterpret_cast<const volatile uint64_t *>(lock)[i];
-                    }
-                    for(unsigned p=0;p<3;++p) {
-                        auto fb=c.pipe[p].memoryFramebuffer;
-                        auto mutex=fb && fb->getMetaClass()->getClassSize()>=0x4B90 ? Display13FBMemory::field<IORecursiveLock *>(fb,0x4220) : nullptr;
-                        if(mutex)g[10+p]=2|(IORecursiveLockHaveLock(mutex) ? 1 : 0);
-                    }
-                    g[13]=callbackXE->display13DPImage;
-                    void *trace[16] {};g[14]=OSBacktrace(trace,16);
-                    for(unsigned i=0;i<16;++i)g[15+i]=reinterpret_cast<uint64_t>(trace[i]);
-                    auto root=IORegistryEntry::getRegistryRoot();
-                    root->setProperty("N97FBClockGateBusy",g,sizeof(g));
-                    if(!root->getProperty("N97FBClockGateBusyFirst"))root->setProperty("N97FBClockGateBusyFirst",g,sizeof(g));
+                    recordDisplay13GateBusy(loop,callbackXE->display13DPImage);
                 }
             }
         }
