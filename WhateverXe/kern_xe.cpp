@@ -25,6 +25,7 @@
 #include "kern_xelp_forcewake_irq.hpp"
 #include "kern_display13_resume_park.hpp"
 #include "kern_display13_scanout_readout.hpp"
+#include <kern/thread_call.h>
 #include "kern_display13_boot.hpp"
 #include "kern_display13_dsi_trial.hpp"
 #include "kern_dsi_readout.hpp"
@@ -4723,6 +4724,27 @@ struct Display13FBPowerContext {
     uint64_t powerContext[24] {1}; // Bounded CPU-only execution-context evidence.
 };
 static Display13FBPowerContext display13FBPower;
+// Read-only pipe A scanout snapshot for "running pipe, black panel" reports.
+// Independent of the watermark/IRQ paths: a thread call fires about 10, 20,
+// 40 and 80 s after the display BAR mapping is published. Only reads.
+static thread_call_t display13ScanoutCall;
+static uint32_t display13ScanoutShots;
+static void display13ScanoutSnapshot(thread_call_param_t,thread_call_param_t) {
+    auto &c=display13FBPower;if(!c.lock)return;
+    IOLockLock(c.lock);auto map=c.map;IOLockUnlock(c.lock);
+    if(map && map->getLength()==0x1000000 && map->getVirtualAddress()) {
+        const auto base=map->getVirtualAddress();uint32_t snapshot[Display13ScanoutReadout::Size] {};
+        Display13ScanoutReadout::capture([&](uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);},
+            [](uint32_t us){IOSleep(us/1000);},++display13ScanoutShots,snapshot);
+        auto root=IORegistryEntry::getRegistryRoot();
+        root->setProperty("WEXDisplay13Scanout",snapshot,sizeof(snapshot));
+        if(!root->getProperty("WEXDisplay13ScanoutFirst"))root->setProperty("WEXDisplay13ScanoutFirst",snapshot,sizeof(snapshot));
+    }
+    if(display13ScanoutShots<4) {
+        uint64_t deadline;clock_interval_to_deadline(10U<<display13ScanoutShots,kSecondScale,&deadline);
+        thread_call_enter_delayed(display13ScanoutCall,deadline);
+    }
+}
 #include "kern_dsi_adapter_state.inc"
 
 // AlderLakeN start bypasses the generic TGL framebuffer path and its power sampler.
@@ -9280,7 +9302,7 @@ void XE::adlnSetDualClock(IOService *controller,uint64_t nativeHz) {
     Display13WM::Latch before[3],after[3];
     IOService *frames[3] {};IORecursiveLock *mutexes[3] {};bool locked[3] {};
     IOWorkLoop *loop=nullptr,*acquired=nullptr;uint32_t active=0;
-    uint64_t evidence[28] {1,nativeHz};
+    uint64_t evidence[28] {1,nativeHz};bool gateBusy=false; // [27]: gate retries, |0x100 if still busy
     IOLockLock(c.lock);
     const bool valid=callbackXE->display13FBClockSetHookReady && controller==c.controller && c.map && c.bridge.begun &&
         !c.bridge.state.faulted && !c.clockFaulted && !c.watermarkFaulted &&
@@ -9312,7 +9334,16 @@ void XE::adlnSetDualClock(IOService *controller,uint64_t nativeHz) {
             evidence[7]=reinterpret_cast<bool (*)(const IOWorkLoop *)>(callbackXE->adlnWorkLoopInGate)(loop);
             if(!evidence[7]) {
                 ready=reinterpret_cast<bool (*)(IOWorkLoop *)>(callbackXE->adlnWorkLoopTryClose)(loop);
+                // Another thread can hold the gate for a moment (seen on eDP +
+                // TC HDMI cold boots). Retry briefly without the owner lock;
+                // the active-pipe set is re-validated after the relock below.
+                for(unsigned retry=0;!ready && retry<20;++retry) {
+                    IOLockUnlock(c.lock);IOSleep(5);
+                    ready=reinterpret_cast<bool (*)(IOWorkLoop *)>(callbackXE->adlnWorkLoopTryClose)(loop);
+                    IOLockLock(c.lock);evidence[27]=retry+1;
+                }
                 if(ready) {acquired=loop;evidence[8]=1;}
+                else gateBusy=true;
             }
         }
         if(ready)for(unsigned p=0;p<3;++p)if(active&(1U<<p)) {
@@ -9382,6 +9413,11 @@ void XE::adlnSetDualClock(IOService *controller,uint64_t nativeHz) {
     if(result.status==Display13Clock::ChangeStatus::Complete) {
         c.clock=result.after;c.clockStopped=false;c.resumeClockHz=result.after.nativeHz();
         *reinterpret_cast<uint64_t *>(reinterpret_cast<uint8_t *>(controller)+0xE98)=result.after.nativeHz();
+    } else if(gateBusy && !result.writes) {
+        // Nothing was written: the clock is unchanged and still valid. Leave
+        // the lifecycle open so a later request can succeed instead of
+        // refusing every watermark program for the rest of the boot.
+        evidence[27]|=0x100;
     } else adlnFault(c.clockFaulted,__LINE__);
     evidence[16]=static_cast<uint32_t>(result.status);evidence[17]=result.writes;
     for(unsigned p=0;p<3;++p) {
@@ -9786,20 +9822,6 @@ void XE::adlnWMEnable(OSObject *plane,bool arm,bool cursor) {
 	auto key=cursor ? "N97FBCursorWMEnableFirstInputs" : "N97FBPrimaryWMEnableFirstInputs";
 	inputs[21]=static_cast<uint32_t>(r.status);
 	if(!root->getProperty(key))root->setProperty(key,inputs,sizeof(inputs));
-	// Read-only pipe A scanout snapshot for "running pipe, black panel"
-	// reports: first and latest of the first 32 primary-plane enables. No
-	// lock is held here; the BAR mapping stays retained once published.
-	static uint32_t scanoutSnapshots=0;
-	if(!cursor && pipe==0 && scanoutSnapshots<32) {
-		IOLockLock(c.lock);auto map=c.map;IOLockUnlock(c.lock);
-		if(map && map->getLength()==0x1000000 && map->getVirtualAddress()) {
-			const auto base=map->getVirtualAddress();uint32_t snapshot[Display13ScanoutReadout::Size] {};
-			Display13ScanoutReadout::capture([&](uint32_t reg){return *reinterpret_cast<volatile uint32_t *>(base+reg);},
-				[](uint32_t us){IOSleep(us/1000);},++scanoutSnapshots,snapshot);
-			root->setProperty("WEXDisplay13Scanout",snapshot,sizeof(snapshot));
-			if(!root->getProperty("WEXDisplay13ScanoutFirst"))root->setProperty("WEXDisplay13ScanoutFirst",snapshot,sizeof(snapshot));
-		}
-	}
 }
 void XE::wrapAlderLakeNPlaneWMEnable(OSObject *plane,bool arm) {adlnWMEnable(plane,arm,false);}
 void XE::wrapDisplay13CursorWMEnable(OSObject *plane,bool arm) {adlnWMEnable(plane,arm,true);}
@@ -10818,6 +10840,10 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 			pci->mapDeviceMemoryWithRegister(0x10,kIOMapInhibitCache) : nullptr;
 		if(map && map->getLength()==0x1000000 && map->getPhysicalAddress()==physical && map->getVirtualAddress()) {
 			c.controller=controller;c.power=power;c.map=map;
+			if(!display13ScanoutCall && (display13ScanoutCall=thread_call_allocate(display13ScanoutSnapshot,nullptr))) {
+				uint64_t deadline;clock_interval_to_deadline(10,kSecondScale,&deadline);
+				thread_call_enter_delayed(display13ScanoutCall,deadline);
+			}
 			c.access=*reinterpret_cast<void **>(static_cast<uint8_t *>(controller)+0xC40);
 			// Reference failures retain mappings/objects for diagnosis until reboot.
 			service->retain();static_cast<OSObject *>(power)->retain();static_cast<OSObject *>(c.access)->retain();
