@@ -26,6 +26,7 @@
 #include "kern_display13_resume_park.hpp"
 #include "kern_display13_scanout_readout.hpp"
 #include <kern/thread_call.h>
+#include <libkern/OSDebug.h>
 #include "kern_display13_boot.hpp"
 #include "kern_display13_dsi_trial.hpp"
 #include "kern_dsi_readout.hpp"
@@ -4724,6 +4725,11 @@ struct Display13FBPowerContext {
     uint64_t powerContext[24] {1}; // Bounded CPU-only execution-context evidence.
 };
 static Display13FBPowerContext display13FBPower;
+// Read-only view of IOWorkLoop's protected gate lock and work thread for the
+// busy-gate diagnostic below; never instantiated.
+struct Display13WorkLoopPeek : IOWorkLoop {
+    static IORecursiveLock *gate(const IOWorkLoop *w){return static_cast<const Display13WorkLoopPeek *>(w)->gateLock;}
+};
 // Read-only pipe A scanout snapshot for "running pipe, black panel" reports.
 // Independent of the watermark/IRQ paths: a thread call fires about 10, 20,
 // 40 and 80 s after the display BAR mapping is published. Only reads.
@@ -4738,6 +4744,8 @@ static void display13ScanoutSnapshot(thread_call_param_t,thread_call_param_t) {
             [](uint32_t us){IOSleep(us/1000);},++display13ScanoutShots,snapshot);
         auto root=IORegistryEntry::getRegistryRoot();
         root->setProperty("WEXDisplay13Scanout",snapshot,sizeof(snapshot));
+        char key[32];snprintf(key,sizeof(key),"WEXDisplay13Scanout%u",display13ScanoutShots);
+        root->setProperty(key,snapshot,sizeof(snapshot));
         if(!root->getProperty("WEXDisplay13ScanoutFirst"))root->setProperty("WEXDisplay13ScanoutFirst",snapshot,sizeof(snapshot));
     }
     if(display13ScanoutShots<4) {
@@ -9343,7 +9351,32 @@ void XE::adlnSetDualClock(IOService *controller,uint64_t nativeHz) {
                     IOLockLock(c.lock);evidence[27]=retry+1;
                 }
                 if(ready) {acquired=loop;evidence[8]=1;}
-                else gateBusy=true;
+                else {
+                    gateBusy=true;
+                    // Who holds the gate, and what does this caller hold? Published
+                    // as N97FBClockGateBusy{,First}: [1] current thread, [2] work-loop
+                    // thread, [3] caller on work-loop thread, [4] gate lock, [5..9] its
+                    // first 40 bytes (owner thread and count live there), [10..12]
+                    // pipe 0-2 FB mutex (bit1 exists, bit0 held by caller), [13] donor
+                    // framebuffer image base, [14] frames, [15..30] caller backtrace.
+                    uint64_t g[32] {1,reinterpret_cast<uint64_t>(current_thread()),
+                        reinterpret_cast<uint64_t>(loop->getThread()),loop->onThread()};
+                    if(auto lock=Display13WorkLoopPeek::gate(loop)) {
+                        g[4]=reinterpret_cast<uint64_t>(lock);
+                        for(unsigned i=0;i<5;++i)g[5+i]=reinterpret_cast<const volatile uint64_t *>(lock)[i];
+                    }
+                    for(unsigned p=0;p<3;++p) {
+                        auto fb=c.pipe[p].memoryFramebuffer;
+                        auto mutex=fb && fb->getMetaClass()->getClassSize()>=0x4B90 ? Display13FBMemory::field<IORecursiveLock *>(fb,0x4220) : nullptr;
+                        if(mutex)g[10+p]=2|(IORecursiveLockHaveLock(mutex) ? 1 : 0);
+                    }
+                    g[13]=callbackXE->display13DPImage;
+                    void *trace[16] {};g[14]=OSBacktrace(trace,16);
+                    for(unsigned i=0;i<16;++i)g[15+i]=reinterpret_cast<uint64_t>(trace[i]);
+                    auto root=IORegistryEntry::getRegistryRoot();
+                    root->setProperty("N97FBClockGateBusy",g,sizeof(g));
+                    if(!root->getProperty("N97FBClockGateBusyFirst"))root->setProperty("N97FBClockGateBusyFirst",g,sizeof(g));
+                }
             }
         }
         if(ready)for(unsigned p=0;p<3;++p)if(active&(1U<<p)) {
