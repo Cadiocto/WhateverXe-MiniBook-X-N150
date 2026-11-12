@@ -149,7 +149,7 @@ jobs:
       - name: Build DEBUG kexts
         if: steps.prerequisites.outputs.ready == 'true' && steps.builder.outputs.supports_dsi_diagnostics == 'true'
         env:
-          DSI_ROTATION_DIAGNOSTICS: ${{ inputs.dsi_rotation_diagnostics }}
+          DSI_ROTATION_DIAGNOSTICS: ${{ inputs.dsi_rotation_diagnostics || '1' }}
         shell: bash
         run: |
           set -euo pipefail
