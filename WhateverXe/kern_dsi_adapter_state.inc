@@ -68,70 +68,40 @@ static const XELP::DSI::AppleAdapter::Timing *dsiPresentation(uint32_t mode) {
     // landscape logical buffer here changes the compositor's target geometry.
     return selected;
 }
-// Record the three separate rotation gates: framebuffer scaler capability,
-// IOFramebuffer's request-probe capability, and its current transform. Apple
-// IOGraphics uses kIOFBSetTransform (0x400) in IOFBProbeOptions before issuing
-// IOServiceRequestProbe; scalerFeatures alone does not prove that path is exposed.
-#if WEX_DSI_ROTATION_DIAGNOSTICS
-static void dsiTraceRotationCapability(IOService *fb) {
-    static uint64_t sequence=0;
-    uint64_t record[16] {1,__sync_add_and_fetch(&sequence,1),0,UINT32_MAX,UINT32_MAX,UINT32_MAX,
-        0,UINT32_MAX,0,UINT32_MAX};
-    if(fb) {
-        OSObject *object=fb->copyProperty("IOFBScalerInfo");
-        auto data=OSDynamicCast(OSData,object);
-        if(data) {
-            record[2]=data->getLength();
-            if(record[2]>=7*sizeof(uint32_t)) {
-                const auto raw=data->getBytesNoCopy();
-                if(raw) {
-                    const auto words=static_cast<const uint32_t *>(raw);
-                    record[3]=words[4];record[4]=words[5];record[5]=words[6];
-                } else record[15]|=1U;
-            }
-        } else if(object)record[15]|=2U;
-        OSSafeReleaseNULL(object);
-
-        object=fb->copyProperty("IOFBProbeOptions");
-        auto probe=OSDynamicCast(OSNumber,object);
-        if(probe){record[6]=1;record[7]=probe->unsigned64BitValue();}
-        else if(object)record[15]|=4U;
-        OSSafeReleaseNULL(object);
-
-        object=fb->copyProperty("IOFBTransform");
-        auto transform=OSDynamicCast(OSNumber,object);
-        if(transform){record[8]=1;record[9]=transform->unsigned64BitValue();}
-        else if(object)record[15]|=8U;
-        OSSafeReleaseNULL(object);
-    }
-    record[10]=record[3]!=UINT32_MAX && (record[3]&0x20U);
-    record[11]=record[6] && (record[7]&0x400U);
-    record[12]=record[8] && (record[9]&0xF0U);
-    record[13]=dsiModeTarget(fb);record[14]=dsiFixedMode.ready;
-    auto root=IORegistryEntry::getRegistryRoot();
-    if(root)root->setProperty("WEXDSIRotationCapability",record,sizeof(record));
-}
-#endif
-
-// The DSI adapter now accepts actual OS quarter-turn timings and allocates
-// their scaled GPU source. Expose that support when CoreDisplay builds modes.
+// Mirror IONDRVFramebuffer::setInfoProperties: once the scaler advertises
+// kIOScaleCanRotate, IOFramebuffer must also expose kIOFBSetTransform through
+// IOFBProbeOptions. Without this bit CoreDisplay sees only a generic probe and
+// never requests a quarter-turn transform.
 static void dsiAdvertisePresentation(IOService *fb) {
-    OSObject *object=fb ? fb->copyProperty("IOFBScalerInfo") : nullptr;
+    if(!fb)return;
+    constexpr uint32_t dsiCanRotate=0x20U;
+    constexpr uint32_t userRequestProbe=0x1U;
+    constexpr uint32_t setTransform=0x400U;
+    bool canRotate=false;
+
+    OSObject *object=fb->copyProperty("IOFBScalerInfo");
     auto data=OSDynamicCast(OSData,object);
     if(data && data->getLength()==48) {
         const auto raw=data->getBytesNoCopy();
         if(raw) {
             uint32_t scaler[12];memcpy(scaler,raw,sizeof(scaler));
-            if(!(scaler[4]&0x20U)) {
-                scaler[4]|=0x20U;
-                fb->setProperty("IOFBScalerInfo",scaler,sizeof(scaler));
+            if(scaler[4]&dsiCanRotate)canRotate=true;
+            else {
+                scaler[4]|=dsiCanRotate;
+                canRotate=fb->setProperty("IOFBScalerInfo",scaler,sizeof(scaler));
             }
         }
     }
     OSSafeReleaseNULL(object);
-#if WEX_DSI_ROTATION_DIAGNOSTICS
-    dsiTraceRotationCapability(fb);
-#endif
+    if(!canRotate)return;
+
+    object=fb->copyProperty("IOFBProbeOptions");
+    auto probe=OSDynamicCast(OSNumber,object);
+    if(object && !probe) { OSSafeReleaseNULL(object);return; }
+    uint32_t options=probe ? static_cast<uint32_t>(probe->unsigned64BitValue()) : userRequestProbe;
+    OSSafeReleaseNULL(object);
+    options|=userRequestProbe|setTransform;
+    fb->setProperty("IOFBProbeOptions",static_cast<uint64_t>(options),32);
 }
 struct DSIModeScope {
     IORecursiveLock *lock;
