@@ -1,6 +1,9 @@
 name: DSI diagnostics (macOS)
 
 on:
+  push:
+    branches:
+      - dsi-diagnostics-macos
   workflow_dispatch:
     inputs:
       dsi_rotation_diagnostics:
