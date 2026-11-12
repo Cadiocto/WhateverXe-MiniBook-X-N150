@@ -104,6 +104,7 @@ struct IORegistryEntry {
   else if(!strcmp(key,"WEXDSITimingList"))assert(!(n%160));
   else if(!strcmp(key,"WEXDSITimingRejected"))assert(n==160);
   else if(!strncmp(key,"WEXDSIScalerCall",16))assert(n==29*sizeof(uint64_t));
+  else if(!strncmp(key,"WEXPeer",7))assert(n==20*sizeof(uint64_t));
   else if(!strcmp(key,"WEXDSITimingOffer"))assert(n==128);
   else {assert(n==128);const auto w=static_cast<const uint64_t *>(p);assert(w[0]==1 && w[1]<13 && w[2]);}
   auto d=OSData::withBytes(p,n);if(!d)return false;const auto ok=setProperty(key,d);d->release();return ok;}
