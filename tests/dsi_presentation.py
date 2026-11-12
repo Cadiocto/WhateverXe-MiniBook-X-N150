@@ -73,18 +73,24 @@ void initial(IOService *,uint32_t){}void capabilities(IOService *){++caps;}
 int main(){
  IOService fb,path,pipe,other;IOLock lock;display13FBPower.lock=&lock;dsiPendingBacking.pipe=&pipe;
  auto &o=dsiFixedMode;o.framebuffer=&fb;xe.dsiProfile.status=XELP::DSI::ProfileStatus::Valid;
- xe.dsiProfile.mode={135255,1080,46,22,2,1920,82,40,2,86,154};o.mode=xe.dsiProfile.mode;
+ xe.dsiProfile.mode={135255,1200,46,22,2,1920,82,40,2,86,154};o.mode=xe.dsiProfile.mode;
  assert(XELP::DSI::AppleAdapter::makeTiming(xe.dsiProfile,o.timing));
  put(&fb,0x3FD8,0U);put(&fb,0x4A00,1U);put(&fb,0x4A08,&path);put(&fb,0x4348,uintptr_t(0x100000));
  compute(&fb,&o.timing);xe.dsiComputeGeometry=reinterpret_cast<uintptr_t>(compute);
  xe.dsiModeCPU[0]=reinterpret_cast<uintptr_t>(allocate);xe.dsiModeCPU[1]=reinterpret_cast<uintptr_t>(initial);
  xe.dsiModeCPU[2]=reinterpret_cast<uintptr_t>(capabilities);xe.dsiModeCPU[3]=reinterpret_cast<uintptr_t>(release);
- auto turn=o.timing;turn.scalerFlags=0x30;turn.horizontalScaled=1920;turn.verticalScaled=1080;
+ auto turn=o.timing;turn.scalerFlags=0x30;turn.horizontalScaled=1920;turn.verticalScaled=1200;
  assert(xe.setDSIPresentation(&other,2,turn)==kIOReturnNotReady && !allocations);
  display13FBPower.pipe[0].wmPending=1;assert(xe.setDSIPresentation(&fb,2,turn)==kIOReturnNotReady && !allocations);
  display13FBPower.pipe[0].wmPending=0;
  assert(!xe.setDSIPresentation(&fb,2,turn) && o.logical && o.activeMode==2 && !o.changingThread);
  assert(field<uint32_t>(&fb,0x4338)==0x30 && dsiPublishedTarget(&fb));
+ // CHUWI MiniBook X N150 target: physical 1200x1920, logical 1920x1200,
+ // using Apple's 90-degree (clockwise) scaler transform.
+ assert(field<uint32_t>(&fb,0x430C)==1920 && field<uint32_t>(&fb,0x4310)==1200);
+ assert(o.presentation.scalerFlags==0x30 && o.presentation.horizontalScaled==1920 &&
+        o.presentation.verticalScaled==1200);
+ assert(field<Record *>(&fb,0x4340)->bytes==uint64_t(field<uint32_t>(&fb,0x4334))*1200);
  turn.scalerFlags=0x50;assert(!xe.setDSIPresentation(&fb,3,turn) && allocations==2 && frees==1);
  auto scaled=turn;scaled.horizontalScaled=2880;scaled.verticalScaled=1620;
  assert(!xe.setDSIPresentation(&fb,8,scaled) && allocations==3 && frees==2);
