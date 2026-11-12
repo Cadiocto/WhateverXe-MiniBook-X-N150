@@ -261,6 +261,10 @@ int main(){
  assert(nullScalerWords[1]==271 && nullScalerWords[14]==UINT32_MAX && !nullScalerWords[15]);
  for(unsigned i=16;i<28;++i)assert(!nullScalerWords[i]);
 #endif
+ // Restore the valid scaler property after the null-bytes regression case.
+ // The later timing trace snapshots the framebuffer's current IOFBScalerInfo.
+ auto restoredScalerInfo=OSData::withBytes(expectedScalerInfo,sizeof(expectedScalerInfo));assert(restoredScalerInfo);
+ assert(fb->setProperty("IOFBScalerInfo",restoredScalerInfo));restoredScalerInfo->release();
  alignas(8) uint8_t peerScaler[0x20]{};Display13FBMemory::field<IOService*>(peerScaler,0x10)=peer;
  const auto scalerRecordsBefore=registryRoot->countPrefix("WEXDSIScalerCall");
  assert(XE::wrapDSIScalerSupport(peerScaler,1920,1080,1080,1920,135260000,0x1234,true));
