@@ -80,6 +80,7 @@ struct IOService:OSObject {
  void removeProperty(const char *k){std::lock_guard<std::mutex> guard(propertiesMutex);auto i=properties.find(k);if(i!=properties.end()){i->second->release();properties.erase(i);}}
  ~IOService(){for(auto i:properties)i.second->release();}
 };
+#define OSDynamicCast(T,p) dynamic_cast<T*>(p)
 struct IORegistryEntry {
  std::map<std::string,OSObject*> properties;std::mutex propertiesMutex;
  bool setProperty(const char *key,OSObject *object){if(!object)return false;
@@ -122,7 +123,6 @@ struct IORegistryEntry {
 struct IORecursiveLock {std::recursive_mutex mutex;unsigned depth=0;};struct IOLock {unsigned depth=0;};
 void IORecursiveLockLock(IORecursiveLock *l){l->mutex.lock();++l->depth;}void IORecursiveLockUnlock(IORecursiveLock *l){assert(l->depth);--l->depth;l->mutex.unlock();}
 void IOLockLock(IOLock *l){++l->depth;}void IOLockUnlock(IOLock *l){assert(l->depth);--l->depth;}
-#define OSDynamicCast(T,p) dynamic_cast<T*>(p)
 #define OSSafeReleaseNULL(p) do{if(p){p->release();p=nullptr;}}while(0)
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 OSObject *testPath=nullptr;
@@ -544,7 +544,7 @@ int main(){
  const auto cleanup=[&]{
   assert(!xe.releaseDSIFixedMode(peer));dsiFixedMode.ready=true;
   assert(!xe.releaseDSIFixedMode(fb));dsiFixedMode.ready=false;
-  const auto refs=dsiFixedMode.array->refs;clearOK=false;
+  const auto refs=dsiFixedMode.array->refs.load();clearOK=false;
   assert(!xe.releaseDSIFixedMode(fb) && dsiModeTarget(fb) && dsiFixedMode.array->refs==refs && fb->refs==2);
   clearOK=true;
   assert(xe.releaseDSIFixedMode(fb) && !dsiModeTarget(fb) && fb->refs==1);
