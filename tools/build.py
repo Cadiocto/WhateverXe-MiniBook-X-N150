@@ -12,6 +12,8 @@ def main():
  p.add_argument('--lilu',type=Path,default=ROOT/'Lilu.kext')
  p.add_argument('--output',type=Path,default=ROOT/'build')
  p.add_argument('--release',action='store_true')
+ p.add_argument('--dsi-rotation-diagnostics',choices=('0','1'),default=None,
+                help='override WEX_DSI_ROTATION_DIAGNOSTICS for the WhateverXe kext')
  a=p.parse_args();out=a.output.resolve();out.mkdir(parents=True,exist_ok=True)
  sdk=a.sdk.resolve();lilu=a.lilu.resolve()/'Contents/Resources'
  base=['xcrun','clang++','-arch','x86_64','-std=c++17',('-O2' if a.release else '-O0'),'-g','-mkernel','-fapple-kext','-fno-exceptions','-fno-rtti','-fno-stack-protector','-fno-builtin','-fno-asynchronous-unwind-tables','-mno-red-zone','-fstack-usage','-nostdinc','-DKERNEL','-DKERNEL_PRIVATE','-D__APPLE__','-D__MACH__','-I'+str(sdk/'Headers'),'-I'+str(lilu),'-I'+str(ROOT/'WhateverXe'),'-mmacosx-version-min=10.15','-Wall','-Wextra','-Wno-unused-parameter','-Wno-deprecated-declarations','-Wno-vla','-Wno-ossharedptr-misuse']
@@ -24,6 +26,8 @@ def main():
   objects=[]
   for source in sources:
    obj=objdir/(source.stem+'.o');cmd=base+['-DPRODUCT_NAME='+name,'-DMODULE_VERSION='+version]
+   if name=='WhateverXe' and a.dsi_rotation_diagnostics is not None:
+    cmd+=['-DWEX_DSI_ROTATION_DIAGNOSTICS='+a.dsi_rotation_diagnostics]
    if name=='WhateverXe':
     # Preserve the known WEG/Lilu kernel C++ ABI. A modern deployment target
     # introduces DriverKit vtable slots and userspace stack/fortify imports.

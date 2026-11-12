@@ -1,0 +1,204 @@
+name: DSI diagnostics (macOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dsi_rotation_diagnostics:
+        description: Enable DSI rotation diagnostics in the DEBUG build
+        required: true
+        type: choice
+        options:
+          - "1"
+          - "0"
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsi-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Source checks, DSI harness, DEBUG build
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Initialize result directories
+        run: mkdir -p build/workflow-logs
+
+      - name: Checkout MacKernelSDK (pinned)
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 05094e5e88cec7caedbfb35e8449ed0db94bf95b
+          path: MacKernelSDK
+          persist-credentials: false
+
+      - name: Checkout Lilu 1.7.2
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/Lilu
+          ref: 1.7.2
+          path: build/dependencies/Lilu
+          persist-credentials: false
+
+      - name: Prepare Lilu development files
+        shell: bash
+        run: |
+          set -euo pipefail
+          lilu="$GITHUB_WORKSPACE/build/dependencies/Lilu/Lilu"
+          resources="$GITHUB_WORKSPACE/Lilu.kext/Contents/Resources"
+          mkdir -p "$resources"
+          for item in Headers Library; do
+            if [[ -e "$lilu/$item" ]]; then
+              ln -sfn "$lilu/$item" "$resources/$item"
+            fi
+          done
+
+      - name: Check build prerequisites
+        id: prerequisites
+        shell: bash
+        run: |
+          set -uo pipefail
+          log=build/workflow-logs/dependencies.log
+          missing=()
+
+          for command in python3 clang++ xcrun; do
+            if ! command -v "$command" >/dev/null 2>&1; then
+              missing+=("command:$command")
+            fi
+          done
+
+          if command -v xcrun >/dev/null 2>&1; then
+            for tool in clang++ ld dsymutil strip nm; do
+              if ! xcrun --find "$tool" >/dev/null 2>&1; then
+                missing+=("xcrun:$tool")
+              fi
+            done
+            sdk_path="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+            if [[ -z "$sdk_path" || ! -d "$sdk_path" ]]; then
+              missing+=("macOS SDK selected by xcrun")
+            fi
+          else
+            sdk_path="unavailable: xcrun missing"
+          fi
+
+          [[ -d MacKernelSDK/Headers ]] || missing+=("MacKernelSDK/Headers")
+          [[ -f MacKernelSDK/Library/x86_64/libkmod.a ]] || missing+=("MacKernelSDK/Library/x86_64/libkmod.a")
+          [[ -d Lilu.kext/Contents/Resources/Headers ]] || missing+=("Lilu development headers")
+          [[ -f Lilu.kext/Contents/Resources/Library/plugin_start.cpp ]] || missing+=("Lilu Library/plugin_start.cpp")
+
+          {
+            echo "xcode-select: $(xcode-select -p 2>&1 || true)"
+            echo "macOS SDK: $sdk_path"
+            if ((${#missing[@]})); then
+              printf 'Missing: %s\n' "${missing[*]}"
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "All build prerequisites are available."
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+            fi
+          } | tee "$log"
+
+      - name: Check builder diagnostics option
+        id: builder
+        shell: bash
+        run: |
+          set -uo pipefail
+          log=build/workflow-logs/build-help.log
+          if python3 tools/build.py --help > "$log" 2>&1 && grep -Fq -- '--dsi-rotation-diagnostics' "$log"; then
+            echo "Builder supports --dsi-rotation-diagnostics."
+            echo "supports_dsi_diagnostics=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Builder from this checkout does not support --dsi-rotation-diagnostics."
+            echo "supports_dsi_diagnostics=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Python source syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q tests tools 2>&1 | tee build/workflow-logs/python-syntax.log
+
+      - name: CPU and source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/test.py 2>&1 | tee build/workflow-logs/cpu-tests.log
+
+      - name: DSI diagnostic harness
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B tests/dsi_apple_adapter.py 2>&1 | tee build/workflow-logs/dsi-harness.log
+
+      - name: Build DEBUG kexts
+        if: steps.prerequisites.outputs.ready == 'true' && steps.builder.outputs.supports_dsi_diagnostics == 'true'
+        env:
+          DSI_ROTATION_DIAGNOSTICS: ${{ inputs.dsi_rotation_diagnostics }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build.py \
+            --output build/DEBUG \
+            --dsi-rotation-diagnostics "$DSI_ROTATION_DIAGNOSTICS" \
+            2>&1 | tee build/workflow-logs/debug-build.log
+
+      - name: Verify DEBUG build outputs
+        if: success() && steps.prerequisites.outputs.ready == 'true' && steps.builder.outputs.supports_dsi_diagnostics == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in \
+            build/DEBUG/WhateverXe.kext/Contents/MacOS/WhateverXe \
+            build/DEBUG/WhateverXe.kext.dSYM/Contents/Resources/DWARF/WhateverXe \
+            build/DEBUG/AppleIntelTGLCompat.kext/Contents/MacOS/AppleIntelTGLCompat \
+            build/DEBUG/build-manifest.json; do
+            if [[ ! -f "$path" ]]; then
+              echo "Required build output is missing: $path" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload test results and build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsi-diagnostics-${{ github.run_id }}
+          path: |
+            build/workflow-logs/**
+            build/tests/*.log
+            build/tests/results.json
+            build/DEBUG/WhateverXe.kext/**
+            build/DEBUG/WhateverXe.kext.dSYM/**
+            build/DEBUG/AppleIntelTGLCompat.kext/**
+            build/DEBUG/build-manifest.json
+            build/DEBUG/boot-stack.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail when build prerequisites are missing
+        if: always() && (steps.prerequisites.outputs.ready != 'true' || steps.builder.outputs.supports_dsi_diagnostics != 'true')
+        env:
+          BUILD_PREREQUISITES_READY: ${{ steps.prerequisites.outputs.ready }}
+          BUILDER_HAS_DSI_OPTION: ${{ steps.builder.outputs.supports_dsi_diagnostics }}
+        shell: bash
+        run: |
+          if [[ "$BUILD_PREREQUISITES_READY" != "true" ]]; then
+            echo "DEBUG build skipped: required macOS, MacKernelSDK, or Lilu dependencies are unavailable." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "$BUILDER_HAS_DSI_OPTION" != "true" ]]; then
+            echo "DEBUG build skipped: tools/build.py from the checked-out revision lacks --dsi-rotation-diagnostics." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 1

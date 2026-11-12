@@ -2,6 +2,157 @@
 // Rotation/scaling remain Apple operations; this is their DSI attachment.
 // Included only by kern_xe.cpp; retains its private owners and lock ordering.
 
+// Diagnostic-only capture is opt-in; a build must explicitly define this to 1.
+#ifndef WEX_DSI_ROTATION_DIAGNOSTICS
+#define WEX_DSI_ROTATION_DIAGNOSTICS 0
+#endif
+
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+static constexpr uint32_t DSIScalerTraceSlots=64;
+static constexpr uint32_t DSITimingTraceSlots=16;
+static constexpr uint32_t DSITimingTraceMaxEntries=64;
+static constexpr uint32_t DSITimingTraceBytes=sizeof(XELP::DSI::AppleAdapter::Timing);
+static uint64_t dsiNextTimingTraceSequence() {
+    static uint64_t sequence=0;
+    return __sync_add_and_fetch(&sequence,1ULL);
+}
+
+static uint32_t dsiTraceScalerInfo(IOService *fb,uint32_t words[12]) {
+    bzero(words,12*sizeof(words[0]));
+    if(!fb)return 0;
+    // Hold the property object across replacement. OSData does not lock bytes,
+    // so the publisher must not mutate this property's buffer in place.
+    OSObject *property=fb->copyProperty("IOFBScalerInfo");
+    auto data=OSDynamicCast(OSData,property);
+    if(!data) { OSSafeReleaseNULL(property);return 0; }
+    const auto length=data->getLength();
+    if(length) {
+        const auto raw=data->getBytesNoCopy();
+        if(!raw) { property->release();return UINT32_MAX; }
+        const auto copyLength=length<12*sizeof(words[0]) ? length : 12*sizeof(words[0]);
+        memcpy(words,raw,copyLength);
+    }
+    property->release();
+    return length;
+}
+
+static void dsiTraceScalerCall(void *scaler,IOService *fb,uint32_t outputW,uint32_t outputH,
+    uint32_t sourceW,uint32_t sourceH,uint64_t clock,uint32_t flags,bool format,
+    bool result,uintptr_t caller) {
+    static uint64_t sequence=0;
+    const auto serial=__sync_add_and_fetch(&sequence,1ULL);
+    const auto slot=static_cast<uint32_t>((serial-1)%DSIScalerTraceSlots);
+    uint32_t scalerInfo[12];
+    const auto scalerInfoLength=dsiTraceScalerInfo(fb,scalerInfo);
+    // Words: version, sequence, scaler/fb, dimensions, clock, flags, format,
+    // DSI/result, caller IP, IOFBScalerInfo length/exact-size, 12 words, capacity.
+    // Only DSI calls are published. IORegistry serializes each key update, but
+    // concurrent calls that wrap to one slot may overwrite out of sequence.
+    uint64_t record[29] {1,serial,reinterpret_cast<uintptr_t>(scaler),reinterpret_cast<uintptr_t>(fb),
+        outputW,outputH,sourceW,sourceH,clock,flags,format,1,result,caller,scalerInfoLength,
+        scalerInfoLength==sizeof(scalerInfo)};
+    for(unsigned i=0;i<12;++i)record[16+i]=scalerInfo[i];
+    record[28]=DSIScalerTraceSlots;
+    char key[40];snprintf(key,sizeof(key),"WEXDSIScalerCall%u",slot);
+    auto root=IORegistryEntry::getRegistryRoot();
+    if(root)root->setProperty(key,record,sizeof(record));
+}
+
+struct DSITimingTraceHeader {
+    uint32_t version {},arrayCount {},capturedEntries {},timingSize {},flags {},scalerInfoLength {};
+    uint64_t sequence {},framebuffer {},array {},caller {},ringSlots {};
+    uint32_t scalerInfo[12] {};
+};
+struct DSITimingTraceEntry {
+    uint32_t index {},kind {};
+    uint64_t length {};
+    uint32_t storedBytes {},reserved {};
+};
+static_assert(sizeof(DSITimingTraceHeader)==112 && sizeof(DSITimingTraceEntry)==24,
+              "DSI diagnostic snapshot ABI");
+
+// Header flags: null array, entry cap reached, non-48-byte scaler info.
+// Entry kind 0 is non-OSData, 1 is an exact ABI timing, and 2 is malformed
+// OSData (length is retained, payload omitted). Valid payload bytes come from
+// the local Timing copy already consumed by the policy loop; this helper never
+// traverses or dereferences the input OSArray.
+//
+// Both rings are best-effort under concurrency. Sequence allocation is atomic
+// and IORegistry serializes each property update, but same-slot writers can
+// finish out of order; readers compare per-slot snapshot/error sequences and
+// tolerate overwritten/missing entries. Error records use matching fixed slots.
+struct DSITimingTrace {
+    IORegistryEntry *root {};
+    OSData *snapshot {};
+    DSITimingTraceHeader header {};
+    uint64_t sequence {};
+    uint32_t slot {},failure {};
+    bool active {};
+
+    void begin(IOService *fb,OSArray *array,uint32_t count,uintptr_t caller) {
+        sequence=dsiNextTimingTraceSequence();
+        slot=static_cast<uint32_t>((sequence-1)%DSITimingTraceSlots);
+        const auto captured=count<DSITimingTraceMaxEntries ? count : DSITimingTraceMaxEntries;
+        header.version=2;header.arrayCount=count;header.capturedEntries=captured;
+        header.timingSize=DSITimingTraceBytes;header.sequence=sequence;
+        header.framebuffer=reinterpret_cast<uintptr_t>(fb);header.array=reinterpret_cast<uintptr_t>(array);
+        header.caller=caller;header.ringSlots=DSITimingTraceSlots;
+        header.scalerInfoLength=dsiTraceScalerInfo(fb,header.scalerInfo);
+        if(!array)header.flags|=1U;
+        if(count>captured)header.flags|=2U;
+        if(header.scalerInfoLength!=sizeof(header.scalerInfo))header.flags|=4U;
+        root=IORegistryEntry::getRegistryRoot();
+        const auto capacity=static_cast<uint32_t>(sizeof(header)+captured*(sizeof(DSITimingTraceEntry)+DSITimingTraceBytes));
+        snapshot=OSData::withCapacity(capacity);
+        if(!root || !snapshot) { failure=1;return; }
+        if(!snapshot->appendBytes(&header,sizeof(header))) { failure=2;return; }
+        active=true;
+    }
+
+    void failBeforeTraversal(IOService *fb,OSArray *array,uintptr_t caller,uint32_t reason) {
+        sequence=dsiNextTimingTraceSequence();
+        slot=static_cast<uint32_t>((sequence-1)%DSITimingTraceSlots);
+        header.version=2;header.arrayCount=UINT32_MAX;header.timingSize=DSITimingTraceBytes;
+        header.sequence=sequence;header.framebuffer=reinterpret_cast<uintptr_t>(fb);
+        header.array=reinterpret_cast<uintptr_t>(array);header.caller=caller;header.ringSlots=DSITimingTraceSlots;
+        root=IORegistryEntry::getRegistryRoot();failure=reason;
+    }
+
+    void append(uint32_t index,bool isData,uint32_t length,const XELP::DSI::AppleAdapter::Timing *timing) {
+        if(!active || index>=header.capturedEntries)return;
+        DSITimingTraceEntry entry {};
+        entry.index=index;entry.length=length;
+        entry.kind=!isData ? 0U : (timing ? 1U : 2U);
+        entry.storedBytes=timing ? DSITimingTraceBytes : 0;
+        bool ok=snapshot->appendBytes(&entry,sizeof(entry));
+        if(ok && timing)ok=snapshot->appendBytes(timing,DSITimingTraceBytes);
+        if(!ok) { active=false;failure=2; }
+    }
+
+    // Reasons: 1 allocation/root failure, 2 append failure, 3 snapshot
+    // publication failure, 4 mode lock/coherence rejected traversal.
+    void publishError(uint32_t reason) {
+        uint64_t error[6] {2,sequence,header.arrayCount,header.capturedEntries,header.caller,reason};
+        char key[48];snprintf(key,sizeof(key),"WEXDSITimingInputError%u",slot);
+        if(root)root->setProperty(key,error,sizeof(error));
+    }
+
+    void finish() {
+        if(!sequence)return;
+        if(active && root) {
+            char key[40];snprintf(key,sizeof(key),"WEXDSITimingInput%u",slot);
+            if(!root->setProperty(key,snapshot))failure=3;
+        } else if(!failure)failure=2;
+        OSSafeReleaseNULL(snapshot);
+        active=false;
+        if(failure)publishError(failure);
+        sequence=0;
+    }
+
+    ~DSITimingTrace() { finish(); }
+};
+#endif
+
 // Pipe A belongs to DSI for this adoption phase. Malformed/ambiguous objects
 // must not fall into a normal-transcoder read or the donor PWM calculation.
 static bool dsiCachePath(OSObject *path) {
@@ -277,16 +428,74 @@ uint32_t XE::wrapDSIGetCurrentMode(IOService *fb,int32_t *mode,int32_t *depth) {
 
 uint32_t XE::wrapDSISetDetailedTimings(IOService *fb,OSArray *array) {
     recordDSIClient(fb,1,array!=nullptr,UINT32_MAX);
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+    const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+#endif
     const auto result=[&]() -> uint32_t {
         if(!dsiModeTarget(fb))return FunctionCast(wrapDSISetDetailedTimings,callbackXE->orgDSIMode[0])(fb,array);
-        DSIModeScope scope(fb);if(!scope.lock || !dsiModeCoherent(fb))return kIOReturnNotReady;
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+        DSITimingTrace trace;
+#endif
+        DSIModeScope scope(fb);
+        if(!scope.lock || !dsiModeCoherent(fb)) {
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+            trace.failBeforeTraversal(fb,array,caller,4);
+#endif
+            return kIOReturnNotReady;
+        }
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+        // No source/API evidence here says the caller keeps the array and its
+        // entries immutable during this callback. The preexisting policy path
+        // already assumes stable input. Retain the container and piggyback on
+        // that traversal; diagnostics add no separate array traversal.
+        // OSArray/OSData provide no mutation lock here.
+        struct ArrayHold {
+            OSArray *value;
+            explicit ArrayHold(OSArray *array):value(array) { if(value)value->retain(); }
+            ~ArrayHold() { if(value)value->release(); }
+        } arrayHold(array);
+#endif
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+        const auto arrayCount=array ? array->getCount() : 0;
+        trace.begin(fb,array,arrayCount,caller);
+        uint32_t client=0;unsigned count=0;
+        uint64_t offer[16] {3,arrayCount,UINT32_MAX};
+#else
         uint32_t client=0;unsigned count=0;
         uint64_t offer[16] {3,array ? array->getCount() : 0,UINT32_MAX};
+#endif
         if(array)for(unsigned i=0;i<array->getCount();++i) {
             auto bytes=OSDynamicCast(OSData,array->getObject(i));
-            if(!bytes || bytes->getLength()!=sizeof(dsiFixedMode.timing))continue;
+            if(!bytes) {
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+                trace.append(i,false,0,nullptr);
+#endif
+                continue;
+            }
+            const auto length=bytes->getLength();
+            if(length!=sizeof(dsiFixedMode.timing)) {
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+                trace.append(i,true,length,nullptr);
+#endif
+                continue;
+            }
+            const auto raw=bytes->getBytesNoCopy();
+            if(!raw) {
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+                trace.append(i,true,length,nullptr);
+#endif
+                continue;
+            }
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+            XELP::DSI::AppleAdapter::Timing input {};
+            memcpy(&input,raw,sizeof(input));
+            trace.append(i,true,length,&input);
             const auto t=XELP::DSI::AppleAdapter::panelOffer(
-                *static_cast<const XELP::DSI::AppleAdapter::Timing *>(bytes->getBytesNoCopy()),dsiFixedMode.timing);
+                input,dsiFixedMode.timing);
+#else
+            const auto t=XELP::DSI::AppleAdapter::panelOffer(
+                *static_cast<const XELP::DSI::AppleAdapter::Timing *>(raw),dsiFixedMode.timing);
+#endif
             const bool native=XELP::DSI::AppleAdapter::clientTiming(dsiFixedMode.timing,t,i);
             if(!native && !XELP::DSI::AppleAdapter::presentationTiming(dsiFixedMode.timing,t,i)) {
                 // Keep the last rejected OS request across later successful
@@ -308,8 +517,10 @@ uint32_t XE::wrapDSISetDetailedTimings(IOService *fb,OSArray *array) {
         }
         IORegistryEntry::getRegistryRoot()->setProperty("WEXDSITimingOffer",offer,sizeof(offer));
         auto data=array && array->getCount()==1 ? OSDynamicCast(OSData,array->getObject(0)) : nullptr;
-        const bool canonical=data && data->getLength()==sizeof(dsiFixedMode.timing) &&
-            !memcmp(data->getBytesNoCopy(),&dsiFixedMode.timing,sizeof(dsiFixedMode.timing));
+        const auto canonicalBytes=data && data->getLength()==sizeof(dsiFixedMode.timing) ?
+            data->getBytesNoCopy() : nullptr;
+        const bool canonical=canonicalBytes &&
+            !memcmp(canonicalBytes,&dsiFixedMode.timing,sizeof(dsiFixedMode.timing));
         if(!count && !canonical)return kIOReturnUnsupported;
         // Size storage from the accepted OS list, not a fixed number of modes.
         // Prepare the complete replacement before touching native state so an
@@ -322,8 +533,10 @@ uint32_t XE::wrapDSISetDetailedTimings(IOService *fb,OSArray *array) {
             for(unsigned i=0;i<array->getCount();++i) {
                 auto bytes=OSDynamicCast(OSData,array->getObject(i));
                 if(!bytes || bytes->getLength()!=sizeof(dsiFixedMode.timing))continue;
+                const auto raw=bytes->getBytesNoCopy();
+                if(!raw)continue;
                 const auto t=XELP::DSI::AppleAdapter::panelOffer(
-                    *static_cast<const XELP::DSI::AppleAdapter::Timing *>(bytes->getBytesNoCopy()),dsiFixedMode.timing);
+                    *static_cast<const XELP::DSI::AppleAdapter::Timing *>(raw),dsiFixedMode.timing);
                 if(XELP::DSI::AppleAdapter::clientTiming(dsiFixedMode.timing,t,i) ||
                    XELP::DSI::AppleAdapter::presentationTiming(dsiFixedMode.timing,t,i)) {
                     if(!replacement->appendBytes(&t,sizeof(t))) {
@@ -445,9 +658,15 @@ bool XE::wrapDSIValidateSource(IOService *fb,void *raw) {
 bool XE::wrapDSIScalerSupport(void *scaler,uint32_t outputW,uint32_t outputH,
     uint32_t sourceW,uint32_t sourceH,uint64_t clock,uint32_t flags,bool format) {
     auto fb=scaler ? Display13FBMemory::field<IOService *>(scaler,0x10) : nullptr;
-    if(dsiModeTarget(fb))return false;
-    return FunctionCast(wrapDSIScalerSupport,callbackXE->orgDSIScalerSupport)(
+    const bool dsi=dsiModeTarget(fb);
+    if(!dsi)return FunctionCast(wrapDSIScalerSupport,callbackXE->orgDSIScalerSupport)(
         scaler,outputW,outputH,sourceW,sourceH,clock,flags,format);
+    const bool result=false;
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+    dsiTraceScalerCall(scaler,fb,outputW,outputH,sourceW,sourceH,clock,flags,format,result,
+        reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
+#endif
+    return result;
 }
 
 uint32_t XE::wrapDSIGetModeInformation(IOService *fb,int32_t mode,void *raw) {
