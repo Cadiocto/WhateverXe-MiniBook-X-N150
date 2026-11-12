@@ -94,6 +94,7 @@ struct IORegistryEntry {
   else if(!strncmp(key,"WEXDSIScalerCall",16))assert(d->getLength()==29*sizeof(uint64_t));
   else if(!strncmp(key,"WEXDSIClient",12))assert(d->getLength()==16*sizeof(uint64_t));
   else if(!strncmp(key,"WEXPeer",7))assert(d->getLength()==20*sizeof(uint64_t));
+  else if(!strcmp(key,"WEXDSITimingOffer"))assert(d->getLength()==128);
   else {fprintf(stderr,"UNEXPECTED OSObject property: %s length=%u\\n",key,(unsigned)d->getLength());assert(false);}
   object->retain();std::lock_guard<std::mutex> guard(propertiesMutex);auto i=properties.find(key);
   if(i!=properties.end()){i->second->release();i->second=object;}else properties.emplace(key,object);return true;}
