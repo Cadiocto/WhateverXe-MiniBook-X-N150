@@ -108,6 +108,8 @@ struct IORegistryEntry {
   else if(!strncmp(key,"WEXDSIScalerCall",16))assert(n==29*sizeof(uint64_t));
   else if(!strncmp(key,"WEXPeer",7))assert(n==20*sizeof(uint64_t));
   else if(!strcmp(key,"WEXDSITimingOffer"))assert(n==128);
+  else if(!strcmp(key,"WEXDSIRotationCapability")){assert(n==16*sizeof(uint64_t));
+   const auto w=static_cast<const uint64_t *>(p);assert(w[0]==1 && w[1] && w[2]==48);}
   else {assert(n==128);const auto w=static_cast<const uint64_t *>(p);assert(w[0]==1 && w[1]<13 && w[2]);}
   auto d=OSData::withBytes(p,n);if(!d)return false;const auto ok=setProperty(key,d);d->release();return ok;}
  OSObject *getProperty(const char *key){std::lock_guard<std::mutex> guard(propertiesMutex);auto i=properties.find(key);return i==properties.end()?nullptr:i->second;}
@@ -312,6 +314,26 @@ int main(){
  auto advertisedScalerInfo=OSDynamicCast(OSData,fb->getProperty("IOFBScalerInfo"));
  assert(advertisedScalerInfo && advertisedScalerInfo->getLength()==sizeof(expectedAdvertisedScalerInfo));
  assert(!memcmp(advertisedScalerInfo->getBytesNoCopy(),expectedAdvertisedScalerInfo,sizeof(expectedAdvertisedScalerInfo)));
+#if WEX_DSI_ROTATION_DIAGNOSTICS
+ auto rotationCapability=OSDynamicCast(OSData,registryRoot->getProperty("WEXDSIRotationCapability"));
+ assert(rotationCapability && rotationCapability->getLength()==16*sizeof(uint64_t));
+ auto rotationWords=static_cast<const uint64_t *>(rotationCapability->getBytesNoCopy());
+ assert(rotationWords[0]==1 && rotationWords[1] && rotationWords[2]==48);
+ assert(rotationWords[3]==expectedAdvertisedScalerInfo[4] && rotationWords[4]==expectedAdvertisedScalerInfo[5] &&
+        rotationWords[5]==expectedAdvertisedScalerInfo[6]);
+ assert(rotationWords[6]==0 && rotationWords[7]==UINT32_MAX && rotationWords[8]==0 && rotationWords[9]==UINT32_MAX);
+ assert(rotationWords[10]==1 && !rotationWords[11] && !rotationWords[12]);
+ // Also verify the trace when the framebuffer advertises request-probe support.
+ auto probeOptions=new OSNumber;probeOptions->value=0x400;assert(fb->setProperty("IOFBProbeOptions",probeOptions));probeOptions->release();
+ auto currentTransform=new OSNumber;currentTransform->value=0;assert(fb->setProperty("IOFBTransform",currentTransform));currentTransform->release();
+ assert(!XE::wrapDSIGetOnlineInfo(fb,peer,&online,edid) && online==1);
+ rotationCapability=OSDynamicCast(OSData,registryRoot->getProperty("WEXDSIRotationCapability"));
+ assert(rotationCapability && rotationCapability->getLength()==16*sizeof(uint64_t));
+ rotationWords=static_cast<const uint64_t *>(rotationCapability->getBytesNoCopy());
+ assert(rotationWords[6]==1 && rotationWords[7]==0x400 && rotationWords[8]==1 && !rotationWords[9]);
+ assert(rotationWords[10]==1 && rotationWords[11]==1 && !rotationWords[12]);
+ fb->removeProperty("IOFBProbeOptions");fb->removeProperty("IOFBTransform");
+#endif
  assert(XE::wrapDSIGetOnlineInfo(fb,fb,&online,edid)==kIOReturnNotReady && !online);
  assert(XE::wrapDSIGetOnlineInfo(fb,peer,nullptr,edid)==kIOReturnBadArgument);
  int32_t current=-9,depth=-9;
