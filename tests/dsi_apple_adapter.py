@@ -305,6 +305,13 @@ int main(){
  xe.adlnOutputWiring.dsi=0;assert(XE::wrapDSIDDC(fb,2,edid,&length,1,testPath)==9 && nativeDDCCalls==2);xe.adlnOutputWiring.dsi=1;
  assert(!XE::wrapDSIGetOnlineInfo(fb,peer,&online,edid) && online==1 && !nativeOnlineCalls);
  assert(!memcmp(edid,expected,128));
+ // The successful DSI online-info path advertises scaler presentation by
+ // setting bit 0x20 in IOFBScalerInfo[4]; the later timing trace must retain it.
+ uint32_t expectedAdvertisedScalerInfo[12];memcpy(expectedAdvertisedScalerInfo,expectedScalerInfo,sizeof(expectedAdvertisedScalerInfo));
+ expectedAdvertisedScalerInfo[4]|=0x20;
+ auto advertisedScalerInfo=OSDynamicCast(OSData,fb->getProperty("IOFBScalerInfo"));
+ assert(advertisedScalerInfo && advertisedScalerInfo->getLength()==sizeof(expectedAdvertisedScalerInfo));
+ assert(!memcmp(advertisedScalerInfo->getBytesNoCopy(),expectedAdvertisedScalerInfo,sizeof(expectedAdvertisedScalerInfo)));
  assert(XE::wrapDSIGetOnlineInfo(fb,fb,&online,edid)==kIOReturnNotReady && !online);
  assert(XE::wrapDSIGetOnlineInfo(fb,peer,nullptr,edid)==kIOReturnBadArgument);
  int32_t current=-9,depth=-9;
@@ -391,7 +398,7 @@ int main(){
  auto traceHeader=static_cast<const DSITimingTraceHeader *>(timingSnapshot->getBytesNoCopy());
  assert(traceHeader->version==2 && traceHeader->arrayCount==2 && traceHeader->capturedEntries==2);
  assert(traceHeader->timingSize==160 && traceHeader->ringSlots==16 && traceHeader->scalerInfoLength==48 && !traceHeader->flags);
- for(unsigned i=0;i<12;++i)assert(traceHeader->scalerInfo[i]==expectedScalerInfo[i]);
+ for(unsigned i=0;i<12;++i)assert(traceHeader->scalerInfo[i]==expectedAdvertisedScalerInfo[i]);
  auto traceEntry0=reinterpret_cast<const DSITimingTraceEntry *>(static_cast<const uint8_t *>(timingSnapshot->getBytesNoCopy())+sizeof(*traceHeader));
  const auto raw0=reinterpret_cast<const uint8_t *>(traceEntry0+1);
  auto traceEntry1=reinterpret_cast<const DSITimingTraceEntry *>(raw0+traceEntry0->storedBytes);
