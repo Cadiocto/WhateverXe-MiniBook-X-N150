@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: es8326-acpi-\${{ github.ref }}
+  group: es8326-acpi-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,10 +37,8 @@ jobs:
           set -uo pipefail
           mkdir -p build/es8326
           set +e
-          iasl -tc -p build/es8326/SSDT-ES8326-Test \
-            CHUWI-ES8326-DIAGNOSTIC/SSDT-ES8326-Test.dsl \
-            2>&1 | tee build/es8326/compile.log
-          status=\${PIPESTATUS[0]}
+          iasl -tc -p build/es8326/SSDT-ES8326-Test CHUWI-ES8326-DIAGNOSTIC/SSDT-ES8326-Test.dsl 2>&1 | tee build/es8326/compile.log
+          status=${PIPESTATUS[0]}
           set -e
           echo "status=$status" >> "$GITHUB_OUTPUT"
           if [[ "$status" -ne 0 ]]; then
@@ -54,9 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          iasl -d -p build/es8326/SSDT-ES8326-Test-roundtrip \
-            build/es8326/SSDT-ES8326-Test.aml \
-            2>&1 | tee build/es8326/disassemble.log
+          iasl -d -p build/es8326/SSDT-ES8326-Test-roundtrip build/es8326/SSDT-ES8326-Test.aml 2>&1 | tee build/es8326/disassemble.log
           test -s build/es8326/SSDT-ES8326-Test-roundtrip.dsl
 
       - name: Write review summary
@@ -68,6 +64,7 @@ jobs:
             echo
             echo "- Runner: macos-15-intel"
             echo "- Compile/disassemble only; no EFI or device changes."
+            echo "- GPIO resources intentionally omitted pending verification against original ACPI tables."
             echo
             if [[ -s build/es8326/compile.log ]]; then
               echo "IASL compile log:"
@@ -83,7 +80,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: CHUWI-ES8326-ACPI-BUILD-\${{ github.run_number }}
+          name: CHUWI-ES8326-ACPI-BUILD-${{ github.run_number }}
           path: build/es8326/**
           if-no-files-found: warn
           retention-days: 14
