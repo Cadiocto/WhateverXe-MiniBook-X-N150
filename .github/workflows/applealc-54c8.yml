@@ -39,6 +39,12 @@ jobs:
         run: python3 ../audio/54C8/apply_54c8.py
         working-directory: applealc
 
+      - name: Force regeneration of embedded AppleALC resources
+        working-directory: applealc
+        run: |
+          rm -f Resources.md5 AppleALC/kern_resources.cpp
+          echo "Removed cached resource index and generated source; ResourceConverter must rebuild from patched Resources/Controllers.plist."
+
       - name: CI Bootstrap
         working-directory: applealc
         run: |
