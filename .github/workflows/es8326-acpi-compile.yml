@@ -1,0 +1,89 @@
+name: ES8326 ACPI compile (review only)
+
+on:
+  push:
+    branches:
+      - audio-es8326-acpi-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: es8326-acpi-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: Compile and disassemble SSDT with ACPICA
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install ACPICA iasl
+        run: |
+          brew update
+          brew install acpica
+          iasl -v
+
+      - name: Compile diagnostic DSL
+        id: compile
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p build/es8326
+          set +e
+          iasl -tc -p build/es8326/SSDT-ES8326-Test \
+            CHUWI-ES8326-DIAGNOSTIC/SSDT-ES8326-Test.dsl \
+            2>&1 | tee build/es8326/compile.log
+          status=\${PIPESTATUS[0]}
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [[ "$status" -ne 0 ]]; then
+            echo "IASL compilation failed; logs will be uploaded."
+            exit "$status"
+          fi
+          test -s build/es8326/SSDT-ES8326-Test.aml
+
+      - name: Disassemble compiled AML
+        if: steps.compile.outputs.status == '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          iasl -d -p build/es8326/SSDT-ES8326-Test-roundtrip \
+            build/es8326/SSDT-ES8326-Test.aml \
+            2>&1 | tee build/es8326/disassemble.log
+          test -s build/es8326/SSDT-ES8326-Test-roundtrip.dsl
+
+      - name: Write review summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ES8326 ACPI diagnostic compile"
+            echo
+            echo "- Runner: macos-15-intel"
+            echo "- Compile/disassemble only; no EFI or device changes."
+            echo
+            if [[ -s build/es8326/compile.log ]]; then
+              echo "IASL compile log:"
+              cat build/es8326/compile.log
+            fi
+            if [[ -s build/es8326/disassemble.log ]]; then
+              echo "AML disassembly log:"
+              cat build/es8326/disassemble.log
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload compile outputs for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CHUWI-ES8326-ACPI-BUILD-\${{ github.run_number }}
+          path: build/es8326/**
+          if-no-files-found: warn
+          retention-days: 14
