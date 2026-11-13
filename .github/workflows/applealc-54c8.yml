@@ -36,8 +36,8 @@ jobs:
           path: applealc/MacKernelSDK
 
       - name: Apply and validate 0x54C8 source entry
-        run: python3 audio/54C8/apply_54c8.py
-        working-directory: .
+        run: python3 ../audio/54C8/apply_54c8.py
+        working-directory: applealc
 
       - name: CI Bootstrap
         working-directory: applealc
