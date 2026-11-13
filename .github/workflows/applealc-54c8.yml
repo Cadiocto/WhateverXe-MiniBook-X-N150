@@ -1,0 +1,65 @@
+name: Experimental AppleALC 54C8 build
+
+on:
+  push:
+    branches:
+      - audio/applealc-54c8-experiment
+    paths:
+      - "audio/54C8/**"
+      - ".github/workflows/applealc-54c8.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      PROJECT_TYPE: KEXT
+      ACID32: "1"
+      JOB_TYPE: BUILD
+    steps:
+      - name: Checkout this isolated experiment
+        uses: actions/checkout@v5
+
+      - name: Checkout upstream AppleALC
+        uses: actions/checkout@v5
+        with:
+          repository: acidanthera/AppleALC
+          path: applealc
+
+      - name: Checkout MacKernelSDK
+        uses: actions/checkout@v5
+        with:
+          repository: acidanthera/MacKernelSDK
+          path: applealc/MacKernelSDK
+
+      - name: Apply and validate 0x54C8 source entry
+        run: python3 audio/54C8/apply_54c8.py
+        working-directory: .
+
+      - name: CI Bootstrap
+        working-directory: applealc
+        run: |
+          src=$(/usr/bin/curl -Lfs https://raw.githubusercontent.com/acidanthera/ocbuild/master/ci-bootstrap.sh) && eval "$src" || exit 1
+
+      - name: Lilu Bootstrap
+        working-directory: applealc
+        run: |
+          src=$(/usr/bin/curl -Lfs https://raw.githubusercontent.com/acidanthera/Lilu/master/Lilu/Scripts/bootstrap.sh) && eval "$src" || exit 1
+
+      - name: Build AppleALC Debug
+        working-directory: applealc
+        run: xcodebuild -jobs 1 -configuration Debug -arch ACID32 -arch x86_64
+
+      - name: Build AppleALC Release
+        working-directory: applealc
+        run: xcodebuild -jobs 1 -configuration Release -arch ACID32 -arch x86_64
+
+      - name: Upload AppleALC build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: AppleALC-54C8-experimental
+          path: applealc/build/*/*.zip
+          if-no-files-found: error
