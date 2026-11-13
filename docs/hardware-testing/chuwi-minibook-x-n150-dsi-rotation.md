@@ -64,3 +64,8 @@ Expected key values after login:
 **The CHUWI MiniBook X N150 internal MIPI DSI panel orientation issue is resolved for the tested macOS installation.** The 270° IOKit transform gives the correct orientation, and the per-user LaunchAgent reapplies/checks it automatically at login. The result was confirmed after a real reboot on the target laptop.
 
 This report documents the tested machine and OS configuration; it does not claim that every CHUWI N150 unit or every macOS version has been tested.
+
+
+## Detailed reproduction guide
+
+A step-by-step Russian guide covering the two DEBUG kext components, DSI transform detection, DSIRotate helper build/install, LaunchAgent setup, reboot verification, rollback notes, and binary SHA-256 values is available here: [Complete setup guide (Russian)](./chuwi-minibook-x-n150-complete-setup-ru.md).
