@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.whateverxe.chuwi-dsi-rotation</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/wex-dsi-rotate</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/wex-dsi-rotation.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/wex-dsi-rotation.log</string>
+</dict>
+</plist>
