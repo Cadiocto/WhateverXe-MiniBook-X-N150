@@ -14,10 +14,10 @@
 
 - `WhateverXe.kext` — версия 0.8.0, DEBUG build, устанавливался в EFI.
 - `AppleIntelTGLCompat.kext` — версия 0.8.0, DEBUG build, отдельный компонент совместимости WhateverXe в macOS.
-- `DSIRotate.c` — userspace helper для установки/проверки поворота.
-- `org.whateverxe.chuwi-dsi-rotation.plist` — LaunchAgent для запуска helper при входе пользователя.
+- [`DSIRotate.c`](../../tools/dsi-rotation/DSIRotate.c) — userspace helper для установки/проверки поворота.
+- [LaunchAgent plist](../../tools/dsi-rotation/org.whateverxe.chuwi-dsi-rotation.plist) — запуск helper при входе пользователя.
 
-> Важно: эти DEBUG kext bundles взяты из диагностического архива конкретной системы. Они не являются универсальными драйверами для других моделей, поколений Intel или версий macOS. Перед заменой kext обязательно сохраните полную EFI и исходные компоненты, подготовьте резервный способ загрузки. Не заменяйте системные Apple graphics kext.
+> Важно: DEBUG kext bundles взяты из диагностического архива конкретной системы. Они не являются универсальными драйверами для других моделей, поколений Intel или версий macOS. Перед заменой kext обязательно сохраните полную EFI и исходные компоненты, подготовьте резервный способ загрузки. Не заменяйте системные Apple graphics kext.
 
 ## Этап 1. Подготовка и резервное копирование
 
@@ -34,7 +34,7 @@
 1. `WhateverXe.kext` — в EFI (для OpenCore типичный путь: `EFI/OC/Kexts/WhateverXe.kext`).
 2. `AppleIntelTGLCompat.kext` — отдельный compatibility kext, установленный в macOS.
 
-В архиве диагностической сборки оба bundle имеют версию 0.8.0 и DEBUG build. Bundle identifiers:
+Оба bundle в диагностическом архиве имеют версию 0.8.0 и DEBUG build. Bundle identifiers:
 
 - `org.b00t0x.WhateverXe`
 - `org.b00t0x.AppleIntelTGLCompat`
@@ -51,7 +51,7 @@ kmutil showloaded | grep -Ei 'WhateverXe|AppleIntelTGLCompat'
 
 Не переходите к настройке DSI, если графический стек не загружается штатно.
 
-**Ограничение исходных данных:** переданный диагностический ZIP содержит сами DEBUG bundles и диагностические материалы, но не содержит полной истории команд установки AppleIntelTGLCompat. Поэтому точная команда и путь установки на исходной системе документально не подтверждены. Не используйте случайные команды установки из других конфигураций.
+**Ограничение исходных данных:** диагностический ZIP содержит DEBUG bundles и диагностические материалы, но не содержит полной истории команд установки AppleIntelTGLCompat. Поэтому точная команда и путь установки на исходной системе документально не подтверждены. Не используйте случайные команды установки из других конфигураций.
 
 ## Этап 3. Проверка DSI и доступности transform
 
@@ -72,9 +72,7 @@ ioreg -lw0 -p IOService -r -n AppleIntelFramebuffer@0 | grep -E 'IOFBProbeOption
 
 ## Этап 4. Сборка и установка DSIRotate
 
-Исходник: [DSIRotate.c](../tools/dsi-rotation/DSIRotate.c).
-
-Соберите helper на целевой macOS:
+Откройте Terminal в каталоге с [исходником DSIRotate.c](../../tools/dsi-rotation/DSIRotate.c) и соберите helper:
 
 ```bash
 clang -Wall -Wextra -O2 DSIRotate.c -o wex-dsi-rotate \
@@ -94,9 +92,7 @@ Helper не меняет EFI, kext, boot arguments или системные н�
 
 ## Этап 5. Установка LaunchAgent
 
-Файл: [org.whateverxe.chuwi-dsi-rotation.plist](../tools/dsi-rotation/org.whateverxe.chuwi-dsi-rotation.plist).
-
-Скопируйте plist:
+Скопируйте [plist](../../tools/dsi-rotation/org.whateverxe.chuwi-dsi-rotation.plist):
 
 ```bash
 mkdir -p "$HOME/Library/LaunchAgents"
