@@ -720,6 +720,15 @@ uint32_t XE::setDSIPresentation(IOService *fb,uint32_t mode,const XELP::DSI::App
     if(requested.scalerFlags==old.scalerFlags && requested.horizontalScaled==old.horizontalScaled &&
        requested.verticalScaled==old.verticalScaled && requested.horizontalInset==old.horizontalInset &&
        requested.verticalInset==old.verticalInset) {
+        // This is a successful no-op, not a completed geometry/GPU transaction.
+        // Publish a distinct receipt so diagnostics can distinguish an unchanged
+        // CoreDisplay request from a transaction that allocated/published backing.
+        uint64_t skipped[] {1,mode,requested.scalerFlags,oldMode,old.scalerFlags,
+            requested.horizontalScaled,requested.verticalScaled,
+            requested.horizontalInset,requested.verticalInset,
+            field<uint32_t>(fb,0x4250),field<uint32_t>(fb,0x4254),
+            field<uint32_t>(fb,0x4338),field<uintptr_t>(fb,0x4348)!=0};
+        IORegistryEntry::getRegistryRoot()->setProperty("WEXDSIPresentationNoop",skipped,sizeof(skipped));
         o.presentation=requested;o.activeMode=mode;o.presentationReady=true;
         *reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(fb)+0x4250)=mode;
         return kIOReturnSuccess;
