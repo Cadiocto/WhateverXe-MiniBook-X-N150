@@ -44,15 +44,15 @@ jobs:
 
       - name: Validate bundle
         run: |
-          test -d build/Release/CHUWIFanProbe.kext
-          plutil -lint build/Release/CHUWIFanProbe.kext/Contents/Info.plist
-          file build/Release/CHUWIFanProbe.kext/Contents/MacOS/CHUWIFanProbe
-          lipo -info build/Release/CHUWIFanProbe.kext/Contents/MacOS/CHUWIFanProbe
+          test -d build/Build/Products/Release/CHUWIFanProbe.kext
+          plutil -lint build/Build/Products/Release/CHUWIFanProbe.kext/Contents/Info.plist
+          file build/Build/Products/Release/CHUWIFanProbe.kext/Contents/MacOS/CHUWIFanProbe
+          lipo -info build/Build/Products/Release/CHUWIFanProbe.kext/Contents/MacOS/CHUWIFanProbe
 
       - name: Package
         run: |
           mkdir -p dist
-          cp -R build/Release/CHUWIFanProbe.kext dist/
+          cp -R build/Build/Products/Release/CHUWIFanProbe.kext dist/
           cp fanprobe-build.log dist/
           ditto -c -k --sequesterRsrc --keepParent dist/ CHUWIFanProbe-monterey-x86_64.zip
 
