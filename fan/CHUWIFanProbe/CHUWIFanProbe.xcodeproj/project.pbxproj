@@ -1,0 +1,26 @@
+// !$*UTF8*$!
+{
+  archiveVersion = 1;
+  classes = {};
+  objectVersion = 56;
+  objects = {
+    A10000000000000000000001 = {isa = PBXBuildFile; fileRef = A10000000000000000000002; };
+    A10000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = CHUWIFanProbe.cpp; sourceTree = "<group>"; };
+    A10000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+    A10000000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = CHUWIFanProbe.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+    A10000000000000000000005 = {isa = PBXGroup; children = (A10000000000000000000002, A10000000000000000000003, A10000000000000000000006, A10000000000000000000004,); sourceTree = "<group>"; };
+    A10000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = wrapper.pb-project; path = CHUWIFanProbe.xcodeproj; sourceTree = "<group>"; };
+    A10000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+    A10000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    A10000000000000000000009 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    A1000000000000000000000A = {isa = PBXNativeTarget; buildConfigurationList = A1000000000000000000000B; buildPhases = (A10000000000000000000007, A10000000000000000000008, A10000000000000000000009,); buildRules = (); dependencies = (); name = CHUWIFanProbe; productName = CHUWIFanProbe; productReference = A10000000000000000000004; productType = "com.apple.product-type.kernel-extension"; };
+    A1000000000000000000000B = {isa = XCConfigurationList; buildConfigurations = (A1000000000000000000000C, A1000000000000000000000D,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    A1000000000000000000000C = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = Info.plist; KERNEL_EXTENSION = YES; MACOSX_DEPLOYMENT_TARGET = 12.0; PRODUCT_BUNDLE_IDENTIFIER = org.chuwi.CHUWIFanProbe; PRODUCT_NAME = CHUWIFanProbe; SDKROOT = macosx; SKIP_INSTALL = NO;}; name = Debug; };
+    A1000000000000000000000D = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = Info.plist; KERNEL_EXTENSION = YES; MACOSX_DEPLOYMENT_TARGET = 12.0; PRODUCT_BUNDLE_IDENTIFIER = org.chuwi.CHUWIFanProbe; PRODUCT_NAME = CHUWIFanProbe; SDKROOT = macosx; SKIP_INSTALL = NO;}; name = Release; };
+    A1000000000000000000000E = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600;}; buildConfigurationList = A1000000000000000000000F; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; mainGroup = A10000000000000000000005; productRefGroup = A10000000000000000000005; projectDirPath = ""; projectRoot = ""; targets = (A1000000000000000000000A,); };
+    A1000000000000000000000F = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000010, A10000000000000000000011,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    A10000000000000000000010 = {isa = XCBuildConfiguration; buildSettings = {}; name = Debug; };
+    A10000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {}; name = Release; };
+  };
+  rootObject = A1000000000000000000000E;
+}
