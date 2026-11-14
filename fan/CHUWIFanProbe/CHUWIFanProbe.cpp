@@ -1,9 +1,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
 #include <IOKit/acpi/IOACPIPlatformDevice.h>
-#include <libkern/OSArray.h>
-#include <libkern/OSNumber.h>
-#include <libkern/OSData.h>
+#include <libkern/c++/OSContainers.h>
 
 class CHUWIFanProbe : public IOService {
     OSDeclareDefaultStructors(CHUWIFanProbe)
