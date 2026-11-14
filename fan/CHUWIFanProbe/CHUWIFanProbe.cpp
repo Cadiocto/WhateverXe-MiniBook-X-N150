@@ -13,7 +13,7 @@ public:
 OSDefineMetaClassAndStructors(CHUWIFanProbe, IOService)
 
 bool CHUWIFanProbe::start(IOService *provider) {
-    if (!super::start(provider)) return false;
+    if (!IOService::start(provider)) return false;
 
     IOACPIPlatformDevice *ptid = OSDynamicCast(IOACPIPlatformDevice, provider);
     if (!ptid) {
@@ -67,5 +67,5 @@ bool CHUWIFanProbe::start(IOService *provider) {
 
 void CHUWIFanProbe::stop(IOService *provider) {
     IOLog("[CHUWIFanProbe] stopped\n");
-    super::stop(provider);
+    IOService::stop(provider);
 }
