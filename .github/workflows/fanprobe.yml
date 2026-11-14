@@ -1,0 +1,65 @@
+name: CHUWI Fan Probe Build
+
+on:
+  push:
+    branches: [fan/chuwi-ptid-probe-ci]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build CHUWIFanProbe for Monterey x86_64
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout MacKernelSDK
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 05094e5e88cec7caedbfb35e8449ed0db94bf95b
+          path: MacKernelSDK
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          uname -m
+
+      - name: Build kext
+        run: |
+          set -o pipefail
+          xcodebuild -project fan/CHUWIFanProbe/CHUWIFanProbe.xcodeproj \
+            -scheme CHUWIFanProbe -configuration Release \
+            -sdk macosx -arch x86_64 \
+            CODE_SIGNING_ALLOWED=NO \
+            MACOSX_DEPLOYMENT_TARGET=12.0 \
+            build | tee fanprobe-build.log
+
+      - name: Validate bundle
+        run: |
+          test -d build/Release/CHUWIFanProbe.kext
+          plutil -lint build/Release/CHUWIFanProbe.kext/Contents/Info.plist
+          file build/Release/CHUWIFanProbe.kext/Contents/MacOS/CHUWIFanProbe
+          lipo -info build/Release/CHUWIFanProbe.kext/Contents/MacOS/CHUWIFanProbe
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp -R build/Release/CHUWIFanProbe.kext dist/
+          cp fanprobe-build.log dist/
+          ditto -c -k --sequesterRsrc --keepParent dist/ CHUWIFanProbe-monterey-x86_64.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CHUWIFanProbe-monterey-x86_64
+          path: CHUWIFanProbe-monterey-x86_64.zip
+          if-no-files-found: error
+          retention-days: 14
