@@ -55,7 +55,9 @@ jobs:
           set -eo pipefail
           source ./edksetup.sh
           cp -R ../driver-repo/GopRotationHook ./GopRotationHook
-          build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -m GopRotationHook/GopRotationHook.inf -b DEBUG
+          cp OvmfPkg/OvmfPkgX64.dsc OvmfPkg/OvmfPkgX64-GopRotationHook.dsc
+          printf '\n[Components]\n  GopRotationHook/GopRotationHook.inf\n' >> OvmfPkg/OvmfPkgX64-GopRotationHook.dsc
+          build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64-GopRotationHook.dsc -m GopRotationHook/GopRotationHook.inf -b DEBUG
 
       - name: Verify EFI output
         run: |
