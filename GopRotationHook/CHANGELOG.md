@@ -9,3 +9,9 @@
 - Added clockwise 90-degree software transformation for GOP BLT operations.
 - Added checked rectangle and buffer-size calculations.
 - Added an EDK II GitHub Actions build workflow.
+
+## Hardware validation update
+
+- Recorded a user-confirmed visual screen check on the actual CHUWI MiniBook X N150.
+- Confirmed that the displayed screen image/orientation is correct on physical hardware.
+- Clarified that this visual check does not constitute completion of the full GOP BLT, touch-input, boot-application or recovery test matrix.
