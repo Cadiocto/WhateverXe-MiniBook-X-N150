@@ -45,7 +45,13 @@ Test all operations with small rectangles first, then full-screen and edge-touch
 
 ## Target-device acceptance
 
-Record:
+### Confirmed physical-screen check
+
+**Passed — CHUWI MiniBook X N150 (actual hardware).** The user confirmed that the screen was checked on the physical device and that the displayed image/orientation is correct. This is a visual screen-output confirmation, not a claim that the entire test matrix below has passed.
+
+### Additional checks still to perform
+
+Record when available:
 
 - Exact firmware version.
 - Physical GOP mode before loading the driver.
@@ -57,4 +63,4 @@ Record:
 
 ## Not yet claimed
 
-This document does not claim that the driver has passed the above physical-device test matrix. CI compilation and hardware validation are separate milestones.
+The physical-screen visual check is confirmed, but this document does not claim that every GOP BLT operation, pointer/touch input path, boot application, multi-GOP scenario, or unload/recovery path has passed on the target device. CI compilation and full hardware validation are separate milestones.
