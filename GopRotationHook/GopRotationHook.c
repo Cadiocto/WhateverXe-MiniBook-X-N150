@@ -50,6 +50,34 @@ RectValid(UINTN X, UINTN Y, UINTN Width, UINTN Height, UINTN LimitW, UINTN Limit
 }
 
 STATIC EFI_STATUS
+InitializeShadow(GOP_CONTEXT *Context)
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Physical;
+  UINTN X, Y, Count;
+  EFI_STATUS Status;
+
+  Count = (UINTN)Context->PhysicalWidth * Context->PhysicalHeight;
+  Physical = AllocatePool(Count * sizeof(*Physical));
+  if (Physical == NULL) return EFI_OUT_OF_RESOURCES;
+  Status = Context->OriginalBlt(Context->Gop, Physical, EfiBltVideoToBltBuffer,
+                                0, 0, 0, 0, Context->PhysicalWidth,
+                                Context->PhysicalHeight,
+                                Context->PhysicalWidth * sizeof(*Physical));
+  if (!EFI_ERROR(Status)) {
+    for (Y = 0; Y < Context->PhysicalHeight; ++Y) {
+      for (X = 0; X < Context->PhysicalWidth; ++X) {
+        UINTN LogicalX = Y;
+        UINTN LogicalY = Context->PhysicalWidth - 1 - X;
+        Context->Shadow[LogicalY * Context->LogicalWidth + LogicalX] =
+          Physical[Y * Context->PhysicalWidth + X];
+      }
+    }
+  }
+  FreePool(Physical);
+  return Status;
+}
+
+STATIC EFI_STATUS
 AllocateShadow(GOP_CONTEXT *Context)
 {
   UINTN Pixels;
@@ -168,6 +196,8 @@ HookSetMode(EFI_GRAPHICS_OUTPUT_PROTOCOL *This, UINT32 ModeNumber)
 
   Status = AllocateShadow(Context);
   if (EFI_ERROR(Status)) return Status;
+  Status = InitializeShadow(Context);
+  if (EFI_ERROR(Status)) return Status;
   DEBUG((DEBUG_INFO, "GopRotationHook: SetMode %u => logical %ux%u\n",
          ModeNumber, Context->LogicalWidth, Context->LogicalHeight));
   return EFI_SUCCESS;
@@ -247,10 +277,11 @@ HookBlt(EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
         return EFI_INVALID_PARAMETER;
       }
       {
-        UINTN Bytes = Width * Height * sizeof(*Context->Shadow);
+        UINTN Bytes;
         EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Temp;
         if (Width > MAX_UINTN / Height ||
             Width * Height > MAX_UINTN / sizeof(*Temp)) return EFI_OUT_OF_RESOURCES;
+        Bytes = Width * Height * sizeof(*Temp);
         Temp = AllocatePool(Bytes);
         if (Temp == NULL) return EFI_OUT_OF_RESOURCES;
         for (Y = 0; Y < Height; ++Y) {
@@ -298,6 +329,14 @@ InstallHook(EFI_HANDLE Handle)
   Context->PhysicalHeight = Context->PhysicalInfo->VerticalResolution;
   Status = AllocateShadow(Context);
   if (EFI_ERROR(Status)) {
+    FreePool(Context->PhysicalInfo);
+    ZeroMem(Context, sizeof(*Context));
+    return Status;
+  }
+  Status = InitializeShadow(Context);
+  if (EFI_ERROR(Status)) {
+    FreePool(Context->Shadow);
+    FreePool(Context->LogicalInfo);
     FreePool(Context->PhysicalInfo);
     ZeroMem(Context, sizeof(*Context));
     return Status;
