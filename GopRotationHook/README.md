@@ -115,9 +115,14 @@ See [docs/TESTING.md](docs/TESTING.md) before testing on the laptop.
 | GOP BLT clockwise transform | Implemented |
 | QueryMode / SetMode wrappers | Implemented |
 | CI compilation | Build #13 previously succeeded |
-| On-device validation on CHUWI N150 | Not yet confirmed |
+| CHUWI MiniBook X N150 physical-screen check | **Passed — user-confirmed on-device visual check; screen orientation/output is correct** |
+| Full GOP BLT test matrix on hardware | Not yet confirmed |
 | Pointer/touch coordinate rotation | Not implemented |
 | Hardware display-plane rotation | Out of scope |
+
+### Hardware validation note
+
+The user confirmed that the screen was checked on the **actual CHUWI MiniBook X N150**, not in a virtual machine, and that the displayed image/orientation is correct. This records a successful physical-screen visual check only; it does not claim that every GOP BLT operation, touch input path, boot application or recovery/unload scenario has been validated.
 
 ## Known implementation limits
 
