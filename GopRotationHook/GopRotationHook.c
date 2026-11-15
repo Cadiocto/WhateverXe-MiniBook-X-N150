@@ -229,15 +229,31 @@ HookSetMode (
 }
 
 STATIC EFI_STATUS
-CalculateBufferStride (IN UINTN X, IN UINTN Width, IN UINTN Delta, OUT UINTN *Stride)
+CalculateBufferStride (
+  IN UINTN X,
+  IN UINTN Width,
+  IN UINTN Delta,
+  OUT UINTN *Stride
+  )
 {
-  UINTN Pixels;
+  UINTN RowBytes;
+
+  (VOID)X;
   if (Stride == NULL) return EFI_INVALID_PARAMETER;
-  if (!SafeAdd(X, Width, &Pixels) || !SafeMultiply(Pixels, sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL), Stride)) return EFI_INVALID_PARAMETER;
-  if (Delta != 0) {
-    if (Delta < *Stride || Delta % sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL) != 0) return EFI_INVALID_PARAMETER;
-    *Stride = Delta;
+
+  if (!SafeMultiply(Width, sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL), &RowBytes)) {
+    return EFI_INVALID_PARAMETER;
   }
+
+  if (Delta != 0) {
+    if (Delta < RowBytes || Delta % sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL) != 0) {
+      return EFI_INVALID_PARAMETER;
+    }
+    *Stride = Delta;
+  } else {
+    *Stride = RowBytes;
+  }
+
   return EFI_SUCCESS;
 }
 
