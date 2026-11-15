@@ -31,7 +31,7 @@ jobs:
         with:
           repository: tianocore/edk2
           ref: edk2-stable202405
-          submodules: recursive
+          submodules: false
           path: edk2
           persist-credentials: false
 
