@@ -16,6 +16,7 @@
   UefiDriverEntryPoint
   UefiBootServicesTableLib
   UefiLib
+  BaseMemoryLib
   DebugLib
   MemoryAllocationLib
 
