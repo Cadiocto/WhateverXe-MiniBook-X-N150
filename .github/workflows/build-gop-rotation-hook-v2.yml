@@ -6,6 +6,7 @@ on:
     paths:
       - 'GopRotationHook/**'
       - '.github/workflows/build-gop-rotation-hook.yml'
+      - '.github/workflows/build-gop-rotation-hook-v2.yml'
   workflow_dispatch:
 
 permissions:
