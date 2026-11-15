@@ -22,6 +22,8 @@ typedef struct {
 
   EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *SavedPhysicalModeInfo;
   UINTN SavedPhysicalSizeOfInfo;
+  EFI_PHYSICAL_ADDRESS SavedPhysicalFrameBufferBase;
+  UINTN SavedPhysicalFrameBufferSize;
 
   UINT32 PhysicalWidth;
   UINT32 PhysicalHeight;
@@ -212,6 +214,8 @@ HookSetMode (
 
   Context->SavedPhysicalModeInfo = This->Mode->Info;
   Context->SavedPhysicalSizeOfInfo = This->Mode->SizeOfInfo;
+  Context->SavedPhysicalFrameBufferBase = This->Mode->FrameBufferBase;
+  Context->SavedPhysicalFrameBufferSize = This->Mode->FrameBufferSize;
 
   PhysicalInfo = AllocateCopyPool(sizeof(*PhysicalInfo), Context->SavedPhysicalModeInfo);
   if (PhysicalInfo == NULL) return EFI_OUT_OF_RESOURCES;
@@ -293,6 +297,64 @@ PhysicalToLogicalBuffer (
   }
 }
 
+STATIC EFI_STATUS
+CallOriginalBltPhysical (
+  IN GOP_ROTATION_CONTEXT *Context,
+  IN OUT EFI_GRAPHICS_OUTPUT_BLT_PIXEL *BltBuffer OPTIONAL,
+  IN EFI_GRAPHICS_OUTPUT_BLT_OPERATION BltOperation,
+  IN UINTN SourceX,
+  IN UINTN SourceY,
+  IN UINTN DestinationX,
+  IN UINTN DestinationY,
+  IN UINTN Width,
+  IN UINTN Height,
+  IN UINTN Delta
+  )
+{
+  EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
+  EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *LogicalInfo;
+  UINTN LogicalSizeOfInfo;
+  EFI_PHYSICAL_ADDRESS LogicalFrameBufferBase;
+  UINTN LogicalFrameBufferSize;
+  EFI_STATUS Status;
+
+  if (Context == NULL || Context->Gop == NULL || Context->Gop->Mode == NULL ||
+      Context->OriginalBlt == NULL || Context->SavedPhysicalModeInfo == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Mode = Context->Gop->Mode;
+  LogicalInfo = Mode->Info;
+  LogicalSizeOfInfo = Mode->SizeOfInfo;
+  LogicalFrameBufferBase = Mode->FrameBufferBase;
+  LogicalFrameBufferSize = Mode->FrameBufferSize;
+
+  Mode->Info = Context->SavedPhysicalModeInfo;
+  Mode->SizeOfInfo = Context->SavedPhysicalSizeOfInfo;
+  Mode->FrameBufferBase = Context->SavedPhysicalFrameBufferBase;
+  Mode->FrameBufferSize = Context->SavedPhysicalFrameBufferSize;
+
+  Status = Context->OriginalBlt(
+             Context->Gop,
+             BltBuffer,
+             BltOperation,
+             SourceX,
+             SourceY,
+             DestinationX,
+             DestinationY,
+             Width,
+             Height,
+             Delta
+             );
+
+  Mode->Info = LogicalInfo;
+  Mode->SizeOfInfo = LogicalSizeOfInfo;
+  Mode->FrameBufferBase = LogicalFrameBufferBase;
+  Mode->FrameBufferSize = LogicalFrameBufferSize;
+
+  return Status;
+}
+
 STATIC EFI_STATUS EFIAPI
 HookBlt (
   IN EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
@@ -320,7 +382,7 @@ HookBlt (
       if (BltBuffer == NULL) return EFI_INVALID_PARAMETER;
       Status = TransformRectCW(Context, DestinationX, DestinationY, Width, Height, &PhysicalRect);
       if (EFI_ERROR(Status)) return Status;
-      return Context->OriginalBlt(This, BltBuffer, EfiBltVideoFill, 0, 0, PhysicalRect.X, PhysicalRect.Y, PhysicalRect.Width, PhysicalRect.Height, 0);
+      return CallOriginalBltPhysical(Context, BltBuffer, EfiBltVideoFill, 0, 0, PhysicalRect.X, PhysicalRect.Y, PhysicalRect.Width, PhysicalRect.Height, 0);
 
     case EfiBltBufferToVideo:
       if (BltBuffer == NULL) return EFI_INVALID_PARAMETER;
@@ -332,7 +394,7 @@ HookBlt (
       Temporary = AllocatePool(BufferBytes);
       if (Temporary == NULL) return EFI_OUT_OF_RESOURCES;
       LogicalToPhysicalBuffer(BltBuffer, Stride, SourceX, SourceY, Width, Height, Temporary);
-      Status = Context->OriginalBlt(This, Temporary, EfiBltBufferToVideo, 0, 0, PhysicalRect.X, PhysicalRect.Y, PhysicalRect.Width, PhysicalRect.Height, PhysicalRect.Width * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+      Status = CallOriginalBltPhysical(Context, Temporary, EfiBltBufferToVideo, 0, 0, PhysicalRect.X, PhysicalRect.Y, PhysicalRect.Width, PhysicalRect.Height, PhysicalRect.Width * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
       FreePool(Temporary);
       return Status;
 
@@ -345,7 +407,7 @@ HookBlt (
       if (!SafeMultiply(Width, Height, &PixelCount) || !SafeMultiply(PixelCount, sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL), &BufferBytes)) return EFI_OUT_OF_RESOURCES;
       Temporary = AllocatePool(BufferBytes);
       if (Temporary == NULL) return EFI_OUT_OF_RESOURCES;
-      Status = Context->OriginalBlt(This, Temporary, EfiBltVideoToBltBuffer, PhysicalRect.X, PhysicalRect.Y, 0, 0, PhysicalRect.Width, PhysicalRect.Height, PhysicalRect.Width * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+      Status = CallOriginalBltPhysical(Context, Temporary, EfiBltVideoToBltBuffer, PhysicalRect.X, PhysicalRect.Y, 0, 0, PhysicalRect.Width, PhysicalRect.Height, PhysicalRect.Width * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
       if (!EFI_ERROR(Status)) {
         PhysicalToLogicalBuffer(Temporary, Width, Height, BltBuffer, Stride, DestinationX, DestinationY);
       }
@@ -360,7 +422,7 @@ HookBlt (
       if (EFI_ERROR(Status)) return Status;
       Status = TransformRectCW(Context, DestinationX, DestinationY, Width, Height, &PhysicalDestination);
       if (EFI_ERROR(Status)) return Status;
-      return Context->OriginalBlt(This, NULL, EfiBltVideoToVideo, PhysicalSource.X, PhysicalSource.Y, PhysicalDestination.X, PhysicalDestination.Y, PhysicalSource.Width, PhysicalSource.Height, 0);
+      return CallOriginalBltPhysical(Context, NULL, EfiBltVideoToVideo, PhysicalSource.X, PhysicalSource.Y, PhysicalDestination.X, PhysicalDestination.Y, PhysicalSource.Width, PhysicalSource.Height, 0);
     }
 
     default:
@@ -409,6 +471,8 @@ InstallHook (IN EFI_HANDLE Handle)
   Context->LogicalHeight = Context->PhysicalWidth;
   Context->SavedPhysicalModeInfo = Gop->Mode->Info;
   Context->SavedPhysicalSizeOfInfo = Gop->Mode->SizeOfInfo;
+  Context->SavedPhysicalFrameBufferBase = Gop->Mode->FrameBufferBase;
+  Context->SavedPhysicalFrameBufferSize = Gop->Mode->FrameBufferSize;
 
   Status = UpdateLogicalModeInfo(Context);
   if (EFI_ERROR(Status)) {
