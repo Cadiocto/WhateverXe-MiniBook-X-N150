@@ -51,7 +51,7 @@ jobs:
       - name: Build x64 UEFI driver
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
           source edk2/edksetup.sh
           cp -R driver-repo/GopRotationHook edk2/GopRotationHook
           build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -m GopRotationHook/GopRotationHook.inf -b DEBUG
