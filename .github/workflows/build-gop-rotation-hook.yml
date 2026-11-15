@@ -44,7 +44,7 @@ jobs:
         working-directory: edk2
         run: |
           python3 -m pip install --user -r pip-requirements.txt --break-system-packages
-          git submodule update --init BaseTools/Source/C/BrotliCompress/brotli CryptoPkg/Library/OpensslLib/openssl MdePkg/Library/MipiSysTLib/mipisyst MdeModulePkg/Library/BrotliCustomDecompressLib/brotli
+          git submodule update --init BaseTools/Source/C/BrotliCompress/brotli CryptoPkg/Library/OpensslLib/openssl CryptoPkg/Library/MbedTlsLib/mbedtls MdePkg/Library/MipiSysTLib/mipisyst MdeModulePkg/Library/BrotliCustomDecompressLib/brotli
           make -C BaseTools
           . ./edksetup.sh
 
