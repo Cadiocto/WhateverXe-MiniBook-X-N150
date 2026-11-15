@@ -1,3 +1,8 @@
+> [!NOTE]
+> **UEFI GOP Rotation Hook:** this branch also contains the experimental EDK II driver for the CHUWI MiniBook X N150. See the [GopRotationHook project README](GopRotationHook/README.md) for features, build instructions, limitations and the hardware test plan.
+
+---
+
 # WhateverXe
 
 [日本語](README_ja.md)
