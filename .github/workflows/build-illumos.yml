@@ -24,7 +24,7 @@ jobs:
           prepare: |
             set -eux
             pkg refresh
-            pkg install -y developer/gcc developer/build/gnu-make developer/build/onbld developer/versioning/git developer/perl shell/ksh93
+            pkg install --accept developer/gcc developer/build/gnu-make developer/build/onbld developer/versioning/git developer/perl shell/ksh93
           run: |
             set -eux
             WORKSPACE="$HOME/illumos-rotfb-work"
