@@ -67,6 +67,7 @@ rotfb_boot_init(fb_info_t *fb, uint8_t *physical_fb)
      rotfb_info.logical_fb == NULL)
   return (-1);
  rotfb_info.physical_fb = physical_fb;
+ fb->physical.fb = physical_fb;
  rotfb_info.boot_ready = B_TRUE;
  return (0);
 }

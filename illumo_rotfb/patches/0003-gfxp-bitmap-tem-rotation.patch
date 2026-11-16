@@ -1,63 +1,42 @@
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
-@@ -30,6 +30,7 @@
- #include <sys/sunddi.h>
- #include <sys/rgb.h>
- #include <sys/gfx_private.h>
-+#include <sys/rotfb.h>
- #include "gfxp_fb.h"
- 
- #define	MYNAME	"gfxp_bitmap"
-@@ -147,6 +148,11 @@
- 	if (softc == NULL || softc->console == NULL)
- 		return (DDI_SUCCESS);
- 
-+	if (rotfb_info.runtime_ready) {
-+		rotfb_runtime_fini(&fb_info);
-+		return (DDI_SUCCESS);
-+	}
-+
- 	if (softc->console->fb.fb_size != 0) {
- 		gfxp_unmap_kernel_space((gfxp_kva_t)softc->console->fb.fb,
- 		    softc->console->fb.fb_size);
-@@ -232,6 +238,8 @@
+@@ -232,12 +232,17 @@
  	struct gfxfb_info *gfxfb_info;
  
  	softc->console = (union gfx_console *)&fb_info;
-+	if (rotfb_info.configured)
-+		return (rotfb_runtime_init(&fb_info));
- 	size = ptob(btopr(fb_info.fb_size));
- 	softc->console->fb.fb_size = size;
- 	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
-@@ -349,6 +357,8 @@
- 			    width);
++	if (rotfb_info.configured) {
++		if (rotfb_runtime_init(&fb_info) != DDI_SUCCESS)
++			return (DDI_FAILURE);
++		size = (size_t)fb_info.fb_size;
++	} else {
++		size = ptob(btopr(fb_info.fb_size));
++		softc->console->fb.fb_size = size;
++		softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(
++		    fb_info.paddr, size, GFXP_MEMORY_WRITECOMBINED);
++		if (softc->console->fb.fb == NULL)
++			return (DDI_FAILURE);
++		softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
++	}
+-	size = ptob(btopr(fb_info.fb_size));
+-	softc->console->fb.fb_size = size;
+-	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
+-	    size, GFXP_MEMORY_WRITECOMBINED);
+-	if (softc->console->fb.fb == NULL)
+-		return (DDI_FAILURE);
+ 
+-	softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
+-
+@@ -509,6 +514,8 @@
  		}
+ 		break;
  	}
 +	if (rotfb_info.runtime_ready)
 +		rotfb_runtime_flush_all(&fb_info);
- }
- 
- /*
-@@ -436,6 +446,8 @@
- 			(void) memcpy(dest, src, size);
- 		}
- 	}
-+	if (rotfb_info.runtime_ready)
-+		rotfb_runtime_flush_all(&fb_info);
- }
- 
- static int
-@@ -511,6 +523,8 @@
- 	}
  
  	return (0);
-+	if (rotfb_info.runtime_ready)
-+		rotfb_runtime_flush_all(&fb_info);
  }
- 
- static void
-@@ -640,6 +654,8 @@
+@@ -640,6 +647,8 @@
  		ca->col = console->fb.cursor.origin.x;
  		break;
  	}
