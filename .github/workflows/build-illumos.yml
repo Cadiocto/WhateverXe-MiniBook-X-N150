@@ -47,7 +47,7 @@ jobs:
             export CODEMGR_WS="$WORKSPACE/illumos-gate"
             export GATE="$CODEMGR_WS"
             export PATH="/opt/onbld/bin:/usr/bin:/usr/sbin:/usr/gnu/bin"
-            sed -e "s/^export NIGHTLY_OPTIONS=.*/export NIGHTLY_OPTIONS='-Fn'/" \
+            sed -e "s/^export NIGHTLY_OPTIONS=.*/export NIGHTLY_OPTIONS='-n'/" \
               -e "s/^export SHADOW_CCS=.*/export SHADOW_CCS=/" \
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
               -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
