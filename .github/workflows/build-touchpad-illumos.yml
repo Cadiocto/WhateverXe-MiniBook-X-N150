@@ -1,0 +1,93 @@
+name: touchpad LPSS diagnostic build
+on:
+  push:
+    branches: [touchpad-i2c-diag]
+    paths:
+      - "illumos_i2c_diag/**"
+      - ".github/workflows/build-touchpad-illumos.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-touchpad-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout touchpad-only branch
+        uses: actions/checkout@v4
+        with:
+          ref: touchpad-i2c-diag
+
+      - name: Create artifact directory
+        run: mkdir -p "$GITHUB_WORKSPACE/touchpad-build-logs"
+
+      - name: Build pinned illumos in OpenIndiana VM
+        uses: vmactions/openindiana-vm@v1
+        with:
+          release: "202610-build"
+          arch: x86_64
+          mem: 8192
+          cpu: 4
+          prepare: |
+            set -eux
+            pkg refresh
+            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93
+          run: |
+            set -eux
+            LOGDIR="$GITHUB_WORKSPACE/touchpad-build-logs"
+            mkdir -p "$LOGDIR"
+            WORKSPACE="$HOME/illumos-touchpad-build"
+            mkdir -p "$WORKSPACE"
+            cd "$WORKSPACE"
+            git clone https://github.com/illumos/illumos-gate.git
+            cd illumos-gate
+            git checkout 098e95820891f8a83fae679daece7fcf58b7b3a4
+            echo "ILLUMOS_COMMIT=$(git rev-parse HEAD)" | tee "$LOGDIR/source-commit.txt"
+
+            # Register only the diagnostic module in the pinned intel
+            # architecture module list. No PCI alias is installed.
+            I2CDIAG="$GITHUB_WORKSPACE/illumos_i2c_diag"
+            git apply --check "$I2CDIAG/patches/0001-register-intel-lpss-i2c-driver.patch"
+            git apply "$I2CDIAG/patches/0001-register-intel-lpss-i2c-driver.patch"
+            mkdir -p usr/src/uts/intel/intel_lpss_i2c usr/src/uts/intel/io
+            cp "$I2CDIAG/intel_lpss_i2c.c" usr/src/uts/intel/io/intel_lpss_i2c.c
+            cp "$I2CDIAG/Makefile" usr/src/uts/intel/intel_lpss_i2c/Makefile
+            chmod 0644 usr/src/uts/intel/io/intel_lpss_i2c.c usr/src/uts/intel/intel_lpss_i2c/Makefile
+
+            grep -n '^DRV_KMODS.*intel_lpss_i2c$' usr/src/uts/intel/Makefile.intel
+            test -s usr/src/uts/intel/io/intel_lpss_i2c.c
+            test -s usr/src/uts/intel/intel_lpss_i2c/Makefile
+
+            cd usr/src
+            export CODEMGR_WS="$WORKSPACE/illumos-gate"
+            export GATE="$CODEMGR_WS"
+            export PATH="/opt/onbld/bin:/usr/bin:/usr/sbin:/usr/gnu/bin"
+            cp tools/env/illumos.sh /tmp/touchpad-illumos.env
+            # Use the stock illumos full-build options; do not pass -n or
+            # otherwise turn this into a dry run.
+            grep -q "NIGHTLY_OPTIONS='-FnCDAmprt'" /tmp/touchpad-illumos.env
+            echo "export VERSION=illumos-098e958-touchpad-diag" >> /tmp/touchpad-illumos.env
+
+            set +e
+            ksh93 -x tools/scripts/nightly /tmp/touchpad-illumos.env \
+              > "$LOGDIR/nightly-console.log" 2>&1
+            rc=$?
+            set -e
+
+            cp "$CODEMGR_WS/log/nightly.log" "$LOGDIR/nightly.log" 2>/dev/null || true
+            find "$CODEMGR_WS/log" -type f -maxdepth 3 -exec cp -p {} "$LOGDIR/" \; 2>/dev/null || true
+            grep -n -i -B 4 -A 8 "intel_lpss_i2c" "$LOGDIR/nightly-console.log" \
+              > "$LOGDIR/intel_lpss_i2c-build-context.txt" || true
+            grep -n -i -B 3 -A 6 -E "error:|fatal error:|undefined symbol|cannot find" \
+              "$LOGDIR/nightly-console.log" > "$LOGDIR/compiler-errors.txt" || true
+            echo "$rc" > "$LOGDIR/build-exit-code.txt"
+            exit "$rc"
+
+      - name: Upload touchpad build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: touchpad-illumos-build-logs-\${{ github.run_id }}
+          path: touchpad-build-logs/
+          if-no-files-found: warn
+          retention-days: 30
