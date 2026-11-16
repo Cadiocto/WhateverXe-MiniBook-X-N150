@@ -59,4 +59,7 @@ jobs:
             tail -n 300 /tmp/rotfb-nightly.log
             echo "===== illumos nightly log ====="
             find "$CODEMGR_WS/log" -type f -exec sh -c 'echo "===== $1 ====="; tail -n 300 "$1"' _ {} \; 2>/dev/null || true
+            echo "===== BUILD ERRORS ====="
+            cat /tmp/nightly.tmpdir.*/build_noise || true
+            grep -i -B 2 -A 5 "error:" /tmp/rotfb-nightly.log || true
             exit $rc
