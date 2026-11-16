@@ -52,6 +52,7 @@ jobs:
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
               -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
+            echo "export VERSION=illumos-098e958" >> /tmp/rotfb-nightly.env
             set +e
             ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > /tmp/rotfb-nightly.log 2>&1
             rc=$?
