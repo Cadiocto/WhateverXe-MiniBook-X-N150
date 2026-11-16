@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare persistent build-log directory
+        run: mkdir -p "$GITHUB_WORKSPACE/rotfb-build-logs"
       - name: Build in OpenIndiana VM
         uses: vmactions/openindiana-vm@v1
         with:
@@ -27,6 +29,8 @@ jobs:
             pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93
           run: |
             set -eux
+            LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
+            mkdir -p "$LOGDIR"
             WORKSPACE="$HOME/illumos-rotfb-work"
             mkdir -p "$WORKSPACE"
             cd "$WORKSPACE"
@@ -54,12 +58,36 @@ jobs:
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
             echo "export VERSION=illumos-098e958" >> /tmp/rotfb-nightly.env
             set +e
-            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > /tmp/rotfb-nightly.log 2>&1
+            NIGHTLY_LOG="$LOGDIR/rotfb-nightly.log"
+            # Snapshot transient diagnostics into the shared Actions workspace.
+            ( while :; do
+                for f in /tmp/nightly.tmpdir.*/build_noise; do
+                  [ -f "$f" ] && cp "$f" "$LOGDIR/build_noise.latest" 2>/dev/null || true
+                done
+                if [ -d "$CODEMGR_WS/log" ]; then
+                  find "$CODEMGR_WS/log" -type f -exec sh -c 'for f do cp "$f" "$LOGDIR/$(basename "$f").latest" 2>/dev/null || true; done' _ {} + 2>/dev/null || true
+                fi
+                sleep 5
+              done ) &
+            LOG_MONITOR_PID=$!
+            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > "$NIGHTLY_LOG" 2>&1
             rc=$?
-            tail -n 300 /tmp/rotfb-nightly.log
+            kill "$LOG_MONITOR_PID" 2>/dev/null || true
+            wait "$LOG_MONITOR_PID" 2>/dev/null || true
+            cp /tmp/rotfb-nightly.env "$LOGDIR/rotfb-nightly.env" 2>/dev/null || true
+            tail -n 300 "$NIGHTLY_LOG"
             echo "===== illumos nightly log ====="
             find "$CODEMGR_WS/log" -type f -exec sh -c 'echo "===== $1 ====="; tail -n 300 "$1"' _ {} \; 2>/dev/null || true
             echo "===== BUILD ERRORS ====="
-            cat /tmp/nightly.tmpdir.*/build_noise || true
-            grep -i -B 2 -A 5 "error:" /tmp/rotfb-nightly.log || true
+            cat /tmp/nightly.tmpdir.*/build_noise 2>/dev/null | tee "$LOGDIR/build_errors.txt" || true
+            grep -i -B 2 -A 5 "error:" "$NIGHTLY_LOG" | tee -a "$LOGDIR/build_errors.txt" || true
+            find "$CODEMGR_WS/log" -type f -exec cp -p {} "$LOGDIR/" \; 2>/dev/null || true
             exit $rc
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: illumos-rotfb-build-logs-${{ github.run_id }}
+          path: rotfb-build-logs/
+          if-no-files-found: warn
+          retention-days: 14
