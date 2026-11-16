@@ -1,7 +1,10 @@
 diff --git a/usr/src/uts/i86pc/sys/framebuffer.h b/usr/src/uts/i86pc/sys/framebuffer.h
 --- a/usr/src/uts/i86pc/sys/framebuffer.h
 +++ b/usr/src/uts/i86pc/sys/framebuffer.h
-@@
+@@ -59,5 +59,17 @@
+ 	FB_TYPE_UNKNOWN
+ } fb_type_t;
+ 
 +typedef struct physical_fb_info {
 +	uint64_t paddr;
 +	uint8_t *fb;
@@ -13,6 +16,6 @@ diff --git a/usr/src/uts/i86pc/sys/framebuffer.h b/usr/src/uts/i86pc/sys/framebu
 +	boolean_t valid;
 +} physical_fb_info_t;
 +
-@@
  typedef struct fb_info {
 +	physical_fb_info_t physical;
+ 	fb_type_t fb_type;	/* Marker from xbi_fb_init */
