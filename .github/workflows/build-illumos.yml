@@ -32,6 +32,7 @@ jobs:
           arch: x86_64
           mem: 8192
           cpu: 4
+          sync: nfs
           prepare: |
             set -eux
             pkg refresh
@@ -99,10 +100,29 @@ jobs:
             ) &
             LOG_MONITOR_PID=$!
 
-            set +e
-            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > "$NIGHTLY_LOG" 2>&1
-            BUILD_RC=$?
-            set -e
+            # Run nightly asynchronously so the SSH session emits a heartbeat.
+            # The NFS-backed workspace makes each diagnostic snapshot visible on the runner immediately.
+            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > "$NIGHTLY_LOG" 2>&1 &
+            BUILD_PID=$!
+            BUILD_RC=0
+            while kill -0 "$BUILD_PID" 2>/dev/null; do
+              find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+              while IFS= read -r f; do
+                d=$(basename "$(dirname "$f")")
+                cp -f "$f" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+              done
+              if [ -d "$CODEMGR_WS/log" ]; then
+                find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                while IFS= read -r f; do
+                  rel=${f#"$CODEMGR_WS/log"/}
+                  mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                  cp -f "$f" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                done
+              fi
+              printf 'OpenIndiana build heartbeat: %s\n' "$(date -u +%FT%TZ)"
+              sleep 60
+            done
+            wait "$BUILD_PID" || BUILD_RC=$?
 
             printf '%s\n' "$BUILD_RC" > "$LOGDIR/nightly-exit-code.txt"
             cp -f "$NIGHTLY_LOG" "$GITHUB_WORKSPACE/nightly.log" 2>/dev/null || true
