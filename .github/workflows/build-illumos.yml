@@ -72,7 +72,7 @@ jobs:
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
             echo "export VERSION=illumos-098e958-rotfb" >> /tmp/rotfb-nightly.env
 
-            NIGHTLY_LOG="/tmp/rotfb-nightly.log"
+            NIGHTLY_LOG="$LOGDIR/nightly.log"
             BUILD_NOISE_DIR="$LOGDIR/build-noise"
             GATE_LOG_DIR="$LOGDIR/gate-logs"
             mkdir -p "$BUILD_NOISE_DIR" "$GATE_LOG_DIR"
@@ -85,14 +85,17 @@ jobs:
                 find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
                 while IFS= read -r f; do
                   d=$(basename "$(dirname "$f")")
-                  cp -f "$f" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+                  tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
                 done
                 if [ -d "$CODEMGR_WS/log" ]; then
                   find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
                   while IFS= read -r f; do
                     rel=${f#"$CODEMGR_WS/log"/}
+                    rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
                     mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
-                    cp -f "$f" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                    tmp="$GATE_LOG_DIR/$rel.partial"
+                    cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
                   done
                 fi
                 sleep 3
@@ -109,38 +112,45 @@ jobs:
               find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
               while IFS= read -r f; do
                 d=$(basename "$(dirname "$f")")
-                cp -f "$f" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+                tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
               done
               if [ -d "$CODEMGR_WS/log" ]; then
                 find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
                 while IFS= read -r f; do
                   rel=${f#"$CODEMGR_WS/log"/}
+                  rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
                   mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
-                  cp -f "$f" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                  tmp="$GATE_LOG_DIR/$rel.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
                 done
               fi
-              printf 'OpenIndiana build heartbeat: %s\n' "$(date -u +%FT%TZ)"
-              sleep 60
+              printf 'OpenIndiana build heartbeat: %s\n' "$(date -u +%FT%TZ)" | tee -a "$LOGDIR/runner-heartbeat.log"
+              printf '%s nightly_pid=%s\n' "$(date -u +%FT%TZ)" "$BUILD_PID" > "$LOGDIR/build-state.txt"
+              sleep 10
             done
             wait "$BUILD_PID" || BUILD_RC=$?
 
             printf '%s\n' "$BUILD_RC" > "$LOGDIR/nightly-exit-code.txt"
-            cp -f "$NIGHTLY_LOG" "$GITHUB_WORKSPACE/nightly.log" 2>/dev/null || true
-            cp -f "$NIGHTLY_LOG" "$LOGDIR/nightly.log" 2>/dev/null || true
+            # NIGHTLY_LOG is already on the NFS-shared workspace; it is persisted during the build.
+            cp -f "$NIGHTLY_LOG" "$LOGDIR/nightly.log.final" 2>/dev/null || true
             cp -f /tmp/rotfb-nightly.env "$LOGDIR/rotfb-nightly.env" 2>/dev/null || true
 
             # Take a final snapshot after nightly exits, then stop the monitor.
             find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
             while IFS= read -r f; do
               d=$(basename "$(dirname "$f")")
-              cp -f "$f" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+              tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+              cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
             done
             if [ -d "$CODEMGR_WS/log" ]; then
               find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
               while IFS= read -r f; do
                 rel=${f#"$CODEMGR_WS/log"/}
+                rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
                 mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
-                cp -f "$f" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                tmp="$GATE_LOG_DIR/$rel.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
               done
             fi
             kill "$LOG_MONITOR_PID" 2>/dev/null || true
@@ -157,18 +167,49 @@ jobs:
               done
             } > "$LOGDIR/compiler-error-index.txt"
 
-            find "$LOGDIR" -type f -exec ls -l {} \; > "$LOGDIR/collected-files.txt" 2>&1 || true
+            {
+              echo "Collected at $(date -u +%FT%TZ)"
+              find "$LOGDIR" -type f -exec ls -ln {} \; 2>&1 || true
+            } > "$LOGDIR/collected-files.txt"
             echo "===== nightly tail ====="
             tail -n 300 "$NIGHTLY_LOG" || true
             exit "$BUILD_RC"
+
+      - name: Finalize diagnostic index on runner
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
+          mkdir -p "$LOGDIR"
+          {
+            echo "Runner-side diagnostic index generated at $(date -u +%FT%TZ)"
+            echo "This step runs even when the OpenIndiana VM/SSH step fails."
+            echo
+            find "$LOGDIR" -type f -printf '%p %s bytes %TY-%Tm-%TdT%TH:%TM:%TS\n' | sort
+          } > "$LOGDIR/runner-file-index.txt"
+          {
+            echo "===== compiler/build error scan ====="
+            find "$LOGDIR" -type f ! -name 'runner-error-index.txt' -print0 |
+            while IFS= read -r -d '' f; do
+              if grep -Iq . "$f"; then
+                matches=$(grep -n -i -B 5 -A 10 -E 'error:|fatal error|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|cannot|failed|killed|out of memory|panic|segmentation fault|ssh exited' "$f" 2>/dev/null)
+                if [ -n "$matches" ]; then
+                  printf '\n===== %s =====\n%s\n' "$f" "$matches"
+                fi
+              fi
+            done
+          } > "$LOGDIR/runner-error-index.txt"
+          echo "===== diagnostic files ====="
+          cat "$LOGDIR/runner-file-index.txt"
+          echo "===== error scan ====="
+          cat "$LOGDIR/runner-error-index.txt"
 
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: illumos-framebuffer-build-logs-${{ github.run_id }}
-          path: |
-            nightly.log
-            rotfb-build-logs/
-          if-no-files-found: error
+          path: rotfb-build-logs/
+          if-no-files-found: warn
           retention-days: 14
