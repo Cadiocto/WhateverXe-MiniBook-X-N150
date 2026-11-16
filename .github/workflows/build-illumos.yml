@@ -38,9 +38,11 @@ jobs:
               git apply --check "$ROTFB/patches/$p"
               git apply "$ROTFB/patches/$p"
             done
-            install -m 0644 "$ROTFB/rotfb.h" usr/src/uts/i86pc/sys/rotfb.h
-            install -m 0644 "$ROTFB/rotfb_boot.c" usr/src/uts/i86pc/boot/rotfb_boot.c
-            install -m 0644 "$ROTFB/rotfb_runtime.c" usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
+            mkdir -p usr/src/uts/i86pc/sys usr/src/uts/i86pc/boot usr/src/uts/i86pc/io/gfx_private
+            cp "$ROTFB/rotfb.h" usr/src/uts/i86pc/sys/rotfb.h
+            cp "$ROTFB/rotfb_boot.c" usr/src/uts/i86pc/boot/rotfb_boot.c
+            cp "$ROTFB/rotfb_runtime.c" usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
+            chmod 0644 usr/src/uts/i86pc/sys/rotfb.h usr/src/uts/i86pc/boot/rotfb_boot.c usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
             cd usr/src
             export CODEMGR_WS="$WORKSPACE/illumos-gate"
             export GATE="$CODEMGR_WS"
