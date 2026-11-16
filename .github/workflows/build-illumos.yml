@@ -48,4 +48,4 @@ jobs:
             export GATE="$CODEMGR_WS"
             export NIGHTLY_OPTIONS="-Fn"
             export PATH="/opt/onbld/bin:/usr/bin:/usr/sbin:/usr/gnu/bin"
-            ksh93 tools/scripts/nightly.sh
+            ksh93 tools/scripts/nightly
