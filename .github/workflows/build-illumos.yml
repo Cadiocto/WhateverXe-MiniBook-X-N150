@@ -17,14 +17,14 @@ jobs:
       - name: Build in OpenIndiana VM
         uses: vmactions/openindiana-vm@v1
         with:
-          release: "202610"
+          release: "202610-build"
           arch: x86_64
           mem: 8192
           cpu: 4
           prepare: |
             set -eux
             pkg refresh
-            pkg install --accept developer/gcc developer/build/gnu-make developer/build/onbld developer/versioning/git developer/perl shell/ksh93
+            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93
           run: |
             set -eux
             WORKSPACE="$HOME/illumos-rotfb-work"
