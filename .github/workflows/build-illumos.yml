@@ -58,7 +58,7 @@ jobs:
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
             echo "export VERSION=illumos-098e958" >> /tmp/rotfb-nightly.env
             set +e
-            NIGHTLY_LOG="$LOGDIR/rotfb-nightly.log"
+            NIGHTLY_LOG="/tmp/rotfb-nightly.log"
             # Snapshot transient diagnostics into the shared Actions workspace.
             ( while :; do
                 for f in /tmp/nightly.tmpdir.*/build_noise; do
@@ -72,6 +72,9 @@ jobs:
             LOG_MONITOR_PID=$!
             ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > "$NIGHTLY_LOG" 2>&1
             rc=$?
+            cp /tmp/nightly.tmpdir.*/build_noise "$GITHUB_WORKSPACE/build_noise.txt" || true
+            cp /tmp/rotfb-nightly.log "$GITHUB_WORKSPACE/nightly.log" || true
+            cat "$GITHUB_WORKSPACE/build_noise.txt" || true
             kill "$LOG_MONITOR_PID" 2>/dev/null || true
             wait "$LOG_MONITOR_PID" 2>/dev/null || true
             cp /tmp/rotfb-nightly.env "$LOGDIR/rotfb-nightly.env" 2>/dev/null || true
@@ -79,7 +82,7 @@ jobs:
             echo "===== illumos nightly log ====="
             find "$CODEMGR_WS/log" -type f -exec sh -c 'echo "===== $1 ====="; tail -n 300 "$1"' _ {} \; 2>/dev/null || true
             echo "===== BUILD ERRORS ====="
-            cat /tmp/nightly.tmpdir.*/build_noise 2>/dev/null | tee "$LOGDIR/build_errors.txt" || true
+            cat "$GITHUB_WORKSPACE/build_noise.txt" 2>/dev/null | tee "$LOGDIR/build_errors.txt" || true
             grep -i -B 2 -A 5 "error:" "$NIGHTLY_LOG" | tee -a "$LOGDIR/build_errors.txt" || true
             find "$CODEMGR_WS/log" -type f -exec cp -p {} "$LOGDIR/" \; 2>/dev/null || true
             exit $rc
@@ -88,6 +91,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: illumos-rotfb-build-logs-${{ github.run_id }}
-          path: rotfb-build-logs/
+          path: |
+            build_noise.txt
+            nightly.log
+            rotfb-build-logs/
           if-no-files-found: warn
           retention-days: 14
