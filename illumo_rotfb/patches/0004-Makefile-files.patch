@@ -1,0 +1,20 @@
+diff --git a/usr/src/uts/i86pc/Makefile.files b/usr/src/uts/i86pc/Makefile.files
+--- a/usr/src/uts/i86pc/Makefile.files
++++ b/usr/src/uts/i86pc/Makefile.files
+@@ -151,6 +151,7 @@
+ 	boot_keyboard_table.o	\
+ 	boot_vga.o		\
+ 	boot_fb.o		\
++	rotfb_boot.o		\
+ 	boot_mmu.o		\
+ 	dboot_multiboot2.o	\
+ 	$(FONT_OBJS)
+@@ -194,7 +195,7 @@
+ #
+ GFX_PRIVATE_OBJS	+= gfx_private.o gfxp_pci.o gfxp_segmap.o \
+ 			   gfxp_devmap.o gfxp_vgatext.o gfxp_vm.o vgasubr.o \
++			   gfxp_fb.o gfxp_bitmap.o rotfb_runtime.o
+-			   gfxp_fb.o gfxp_bitmap.o
+ EFI_OBJS += efi_drv.o efi_runtime.o
+ FIPE_OBJS += fipe_drv.o fipe_pm.o
+ IOAT_OBJS += ioat.o ioat_rs.o ioat_ioctl.o ioat_chan.o

@@ -1,0 +1,50 @@
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -232,15 +232,20 @@
+ 	struct gfxfb_info *gfxfb_info;
+ 
+ 	softc->console = (union gfx_console *)&fb_info;
++	if (rotfb_info.configured) {
++		if (rotfb_runtime_init(&fb_info) != DDI_SUCCESS)
++			return (DDI_FAILURE);
++		size = (size_t)fb_info.fb_size;
++	} else {
++		size = ptob(btopr(fb_info.fb_size));
++		softc->console->fb.fb_size = size;
++		softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(
++		    fb_info.paddr, size, GFXP_MEMORY_WRITECOMBINED);
++		if (softc->console->fb.fb == NULL)
++			return (DDI_FAILURE);
++		softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
++	}
+-	size = ptob(btopr(fb_info.fb_size));
+-	softc->console->fb.fb_size = size;
+-	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
+-	    size, GFXP_MEMORY_WRITECOMBINED);
+-	if (softc->console->fb.fb == NULL)
+-		return (DDI_FAILURE);
+ 
+-	softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
+-
+ 	bitmap_attr.fbtype.fb_height = fb_info.screen.y;
+ 	bitmap_attr.fbtype.fb_width = fb_info.screen.x;
+ 	bitmap_attr.fbtype.fb_depth = fb_info.depth;
+@@ -509,6 +514,8 @@
+ 		}
+ 		break;
+ 	}
++	if (rotfb_info.runtime_ready)
++		rotfb_runtime_flush_all(&fb_info);
+ 
+ 	return (0);
+ }
+@@ -640,6 +647,8 @@
+ 		ca->col = console->fb.cursor.origin.x;
+ 		break;
+ 	}
++	if (rotfb_info.runtime_ready)
++		rotfb_runtime_flush_all(&fb_info);
+ }
+ 
+ static void
