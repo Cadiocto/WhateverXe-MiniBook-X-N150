@@ -50,9 +50,12 @@ jobs:
             sed -e "s/^export NIGHTLY_OPTIONS=.*/export NIGHTLY_OPTIONS='-Fn'/" \
               -e "s/^export SHADOW_CCS=.*/export SHADOW_CCS=/" \
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
+              -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
             set +e
             ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > /tmp/rotfb-nightly.log 2>&1
             rc=$?
             tail -n 300 /tmp/rotfb-nightly.log
+            echo "===== illumos nightly log ====="
+            if [ -f "$CODEMGR_WS/log/nightly.log" ]; then tail -n 300 "$CODEMGR_WS/log/nightly.log"; fi
             exit $rc
