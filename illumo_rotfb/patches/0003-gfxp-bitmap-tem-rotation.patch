@@ -1,0 +1,28 @@
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@
++#include <sys/rotfb.h>
+@@
+ static int
+ bitmap_setup_fb(struct gfxp_fb_softc *softc)
+ {
+@@
+ 	softc->console = (union gfx_console *)&fb_info;
++	if (rotfb_info.configured) {
++		if (rotfb_runtime_init(&fb_info) != DDI_SUCCESS)
++			return (DDI_FAILURE);
++		softc->console->fb.fb = rotfb_info.logical_fb;
++		softc->console->fb.shadow_fb = rotfb_info.logical_fb;
++		return (DDI_SUCCESS);
++	}
+@@
+ int
+ gfxp_bm_detach(dev_info_t *devi __unused, struct gfxp_fb_softc *softc)
+ {
+@@
++	if (rotfb_info.runtime_ready) {
++		rotfb_runtime_fini(&fb_info);
++		softc->console = NULL;
++		return (DDI_SUCCESS);
++	}

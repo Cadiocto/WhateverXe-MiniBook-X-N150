@@ -1,0 +1,48 @@
+name: illumos framebuffer rotation build
+on:
+  push:
+    branches: [gop-rotation-hook]
+    paths:
+      - "illumo_rotfb/**"
+      - ".github/workflows/build-illumos.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-illumos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in OpenIndiana VM
+        uses: vmactions/openindiana-vm@v1
+        with:
+          release: hipster
+          arch: x86_64
+          mem: 8192
+          cpu: 4
+          prepare: |
+            set -eux
+            pkg refresh
+            pkg install -y developer/gcc developer/build/gnu-make developer/build/onbld developer/versioning/git developer/perl shell/ksh93
+          run: |
+            set -eux
+            WORKSPACE="$HOME/illumos-rotfb-work"
+            mkdir -p "$WORKSPACE"
+            cd "$WORKSPACE"
+            git clone --depth 1 https://github.com/illumos/illumos-gate.git
+            cd illumos-gate
+            ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
+            for p in 0001-framebuffer-metadata.patch 0002-boot-fb-rotation.patch 0003-gfxp-bitmap-tem-rotation.patch 0004-Makefile-files.patch; do
+              git apply --check "$ROTFB/patches/$p"
+              git apply "$ROTFB/patches/$p"
+            done
+            install -m 0644 "$ROTFB/rotfb.h" usr/src/uts/i86pc/sys/rotfb.h
+            install -m 0644 "$ROTFB/rotfb_boot.c" usr/src/uts/i86pc/boot/rotfb_boot.c
+            install -m 0644 "$ROTFB/rotfb_runtime.c" usr/src/uts/i86pc/io/rotfb_runtime.c
+            cd usr/src
+            export CODEMGR_WS="$WORKSPACE/illumos-gate"
+            export GATE="$CODEMGR_WS"
+            export NIGHTLY_OPTIONS="-Fn"
+            export PATH="/opt/onbld/bin:/usr/bin:/usr/sbin:/usr/gnu/bin"
+            ksh93 tools/scripts/nightly.sh

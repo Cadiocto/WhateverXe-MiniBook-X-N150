@@ -1,0 +1,10 @@
+diff --git a/usr/src/uts/i86pc/Makefile.files b/usr/src/uts/i86pc/Makefile.files
+--- a/usr/src/uts/i86pc/Makefile.files
++++ b/usr/src/uts/i86pc/Makefile.files
+@@
+ BOOT_DRIVER_OBJS =		\\
+ 	boot_fb.o		\\
++	rotfb_boot.o		\\
+@@
+ CORE_OBJS += $(BOOT_DRIVER_OBJS)
++CORE_OBJS += rotfb_runtime.o

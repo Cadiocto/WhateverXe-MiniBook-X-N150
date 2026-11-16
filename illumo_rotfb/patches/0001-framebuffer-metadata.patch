@@ -1,0 +1,18 @@
+diff --git a/usr/src/uts/i86pc/sys/framebuffer.h b/usr/src/uts/i86pc/sys/framebuffer.h
+--- a/usr/src/uts/i86pc/sys/framebuffer.h
++++ b/usr/src/uts/i86pc/sys/framebuffer.h
+@@
++typedef struct physical_fb_info {
++	uint64_t paddr;
++	uint8_t *fb;
++	uint32_t width;
++	uint32_t height;
++	uint32_t pitch;
++	uint32_t bpp;
++	uint64_t size;
++	boolean_t valid;
++} physical_fb_info_t;
++
+@@
+ typedef struct fb_info {
++	physical_fb_info_t physical;
