@@ -87,7 +87,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: touchpad-illumos-build-logs-\${{ github.run_id }}
+          name: touchpad-illumos-build-logs-${{ github.run_id }}
           path: touchpad-build-logs/
           if-no-files-found: warn
           retention-days: 30
