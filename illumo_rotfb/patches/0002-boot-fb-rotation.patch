@@ -1,83 +1,50 @@
-diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
---- a/usr/src/uts/i86pc/boot/boot_fb.c
-+++ b/usr/src/uts/i86pc/boot/boot_fb.c
-@@ -32,6 +32,7 @@
- #include <sys/boot_console.h>
- #include <sys/bootconf.h>
- #include <sys/rgb.h>
-+#include <sys/rotfb.h>
- #include "boot_console_impl.h"
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -232,15 +232,20 @@
+ 	struct gfxfb_info *gfxfb_info;
  
- #define	P2ROUNDUP(x, align)	(-(-(x) & -(align)))
-@@ -170,6 +171,14 @@
- 	fb_info.bpp = P2ROUNDUP(fb_info.depth, 8) >> 3;
- 	fb_info.screen.x = tag->framebuffer_common.framebuffer_width;
- 	fb_info.screen.y = tag->framebuffer_common.framebuffer_height;
-+	fb_info.physical.paddr = fb_info.paddr;
-+	fb_info.physical.width = fb_info.screen.x;
-+	fb_info.physical.height = fb_info.screen.y;
-+	fb_info.physical.pitch = fb_info.pitch;
-+	fb_info.physical.bpp = fb_info.bpp;
-+	fb_info.physical.size = (uint64_t)fb_info.pitch * fb_info.screen.y;
-+	fb_info.physical.valid = B_TRUE;
-+	(void) rotfb_boot_configure(&fb_info);
- 	fb_info.fb_size = fb_info.screen.y * fb_info.pitch;
- 
- 	bcons_dev->bd_putchar = boot_fb_putchar;
-@@ -336,6 +345,10 @@
- 	if (boot_console_type(NULL) != CONS_FRAMEBUFFER)
- 		return;			/* nothing to do */
- 
-+	if (rotfb_info.configured &&
-+	    rotfb_boot_shadow_init(bops, &fb_info) == 0)
-+		return;
-+
- 	fb_info.shadow_fb = (uint8_t *)bops->bsys_alloc(NULL, NULL,
- 	    fb_info.fb_size, MMU_PAGESIZE);
- 
-@@ -420,7 +433,14 @@
- 	fb_info_pixel_coord_t window;
- 
- 	/* frame buffer address is mapped in dboot. */
-+	if (rotfb_info.configured && rotfb_info.logical_fb != NULL &&
-+	    rotfb_boot_init(&fb_info,
-+	    (uint8_t *)(uintptr_t)fb_info.physical.paddr) == 0) {
-+		(void) rotfb_boot_import(&fb_info);
-+		fb_info.fb = rotfb_info.logical_fb;
+ 	softc->console = (union gfx_console *)&fb_info;
++	if (rotfb_info.configured) {
++		if (rotfb_runtime_init(&fb_info) != DDI_SUCCESS)
++			return (DDI_FAILURE);
++		size = (size_t)fb_info.fb_size;
 +	} else {
-+		fb_info.fb = (uint8_t *)(uintptr_t)fb_info.paddr;
++		size = ptob(btopr(fb_info.fb_size));
++		softc->console->fb.fb_size = size;
++		softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(
++		    fb_info.paddr, size, GFXP_MEMORY_WRITECOMBINED);
++		if (softc->console->fb.fb == NULL)
++			return (DDI_FAILURE);
++		softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
 +	}
--	fb_info.fb = (uint8_t *)(uintptr_t)fb_info.paddr;
+-	size = ptob(btopr(fb_info.fb_size));
+-	softc->console->fb.fb_size = size;
+-	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
+-	    size, GFXP_MEMORY_WRITECOMBINED);
+-	if (softc->console->fb.fb == NULL)
+-		return (DDI_FAILURE);
  
- 	boot_fb_set_font(fb_info.screen.y, fb_info.screen.x);
- 	window.x = (fb_info.screen.x -
-@@ -516,6 +536,9 @@
- 			boot_fb_cpy(dest, src, size);
+-	softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
+-
+ 	bitmap_attr.fbtype.fb_height = fb_info.screen.y;
+ 	bitmap_attr.fbtype.fb_width = fb_info.screen.x;
+ 	bitmap_attr.fbtype.fb_depth = fb_info.depth;
+@@ -509,6 +514,8 @@
  		}
+ 		break;
  	}
-+	if (rotfb_info.boot_ready)
-+		rotfb_boot_flush_rect(&fb_info, rect->col, rect->row,
-+		    rect->width, rect->height);
++	if (rotfb_info.runtime_ready)
++		rotfb_runtime_flush_all(&fb_info);
+ 
+ 	return (0);
+ }
+@@ -640,6 +647,8 @@
+ 		ca->col = console->fb.cursor.origin.x;
+ 		break;
+ 	}
++	if (rotfb_info.runtime_ready)
++		rotfb_runtime_flush_all(&fb_info);
  }
  
  static void
-@@ -574,6 +597,10 @@
- 			}
- 		}
- 	}
-+	if (rotfb_info.boot_ready)
-+		rotfb_boot_flush_rect(&fb_info, x, y,
-+		    fb_info.terminal.x * boot_fb_font.vf_width,
-+		    boot_fb_font.vf_height);
- }
- 
- static void
-@@ -622,6 +649,8 @@
- 		if (sdst != NULL)
- 			boot_fb_cpy(sdst + increment, src + increment, width);
- 	}
-+	if (rotfb_info.boot_ready)
-+		rotfb_boot_flush_all(&fb_info);
- }
- 
- /* Shift the line content by chars. */

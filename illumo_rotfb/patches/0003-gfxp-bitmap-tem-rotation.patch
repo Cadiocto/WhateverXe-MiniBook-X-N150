@@ -1,45 +1,23 @@
-diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
---- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
-+++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
-@@ -234,10 +234,15 @@
- 	softc->console = (union gfx_console *)&fb_info;
--	size = ptob(btopr(fb_info.fb_size));
--	softc->console->fb.fb_size = size;
--	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
--	    size, GFXP_MEMORY_WRITECOMBINED);
--	if (softc->console->fb.fb == NULL)
--		return (DDI_FAILURE);
--
--	softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
-+	if (rotfb_info.configured) {
-+		if (rotfb_runtime_init(&fb_info) != DDI_SUCCESS)
-+			return (DDI_FAILURE);
-+		size = (size_t)fb_info.fb_size;
-+	} else {
-+		size = ptob(btopr(fb_info.fb_size));
-+		softc->console->fb.fb_size = size;
-+		softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(
-+		    fb_info.paddr, size, GFXP_MEMORY_WRITECOMBINED);
-+		if (softc->console->fb.fb == NULL)
-+			return (DDI_FAILURE);
-+		softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
-+	}
+diff --git a/usr/src/uts/i86pc/sys/framebuffer.h b/usr/src/uts/i86pc/sys/framebuffer.h
+--- a/usr/src/uts/i86pc/sys/framebuffer.h
++++ b/usr/src/uts/i86pc/sys/framebuffer.h
+@@ -59,7 +59,19 @@
+ 	FB_TYPE_UNKNOWN
+ } fb_type_t;
  
-@@ -509,6 +514,8 @@
- 		}
- 		break;
- 	}
-+	if (rotfb_info.runtime_ready)
-+		rotfb_runtime_flush_all(&fb_info);
- 
- 	return (0);
- }
-@@ -640,6 +647,8 @@
- 		ca->col = console->fb.cursor.origin.x;
- 		break;
- 	}
-+	if (rotfb_info.runtime_ready)
-+		rotfb_runtime_flush_all(&fb_info);
- }
- 
- static void
++typedef struct physical_fb_info {
++	uint64_t paddr;
++	uint8_t *fb;
++	uint32_t width;
++	uint32_t height;
++	uint32_t pitch;
++	uint32_t bpp;
++	uint64_t size;
++	boolean_t valid;
++} physical_fb_info_t;
++
+ typedef struct fb_info {
++	physical_fb_info_t physical;
+ 	fb_type_t fb_type;	/* Marker from xbi_fb_init */
+ 	uint64_t paddr;		/* FB address from bootloader */
+ 	uint8_t *fb;		/* kernel mapped frame buffer */
