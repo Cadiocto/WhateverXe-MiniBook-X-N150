@@ -57,5 +57,5 @@ jobs:
             rc=$?
             tail -n 300 /tmp/rotfb-nightly.log
             echo "===== illumos nightly log ====="
-            if [ -f "$CODEMGR_WS/log/nightly.log" ]; then tail -n 300 "$CODEMGR_WS/log/nightly.log"; fi
+            find "$CODEMGR_WS/log" -type f -exec sh -c 'echo "===== $1 ====="; tail -n 300 "$1"' _ {} \; 2>/dev/null || true
             exit $rc
