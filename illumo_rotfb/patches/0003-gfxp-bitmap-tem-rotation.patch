@@ -1,8 +1,7 @@
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
-@@ -234,9 +234,14 @@
- 	softc->console = (union gfx_console *)&fb_info;
+@@ -235,8 +235,13 @@
 -	size = ptob(btopr(fb_info.fb_size));
 -	softc->console->fb.fb_size = size;
 -	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
