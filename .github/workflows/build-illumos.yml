@@ -51,4 +51,8 @@ jobs:
               -e "s/^export SHADOW_CCS=.*/export SHADOW_CCS=/" \
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
-            ksh93 tools/scripts/nightly -n /tmp/rotfb-nightly.env
+            set +e
+            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > /tmp/rotfb-nightly.log 2>&1
+            rc=$?
+            tail -n 300 /tmp/rotfb-nightly.log
+            exit $rc
