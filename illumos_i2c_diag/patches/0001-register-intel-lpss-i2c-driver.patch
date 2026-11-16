@@ -2,8 +2,9 @@ diff --git a/usr/src/uts/intel/Makefile.intel b/usr/src/uts/intel/Makefile.intel
 index 0000000..0000000 100644
 --- a/usr/src/uts/intel/Makefile.intel
 +++ b/usr/src/uts/intel/Makefile.intel
-@@ -243,4 +243,5 @@ DRV_KMODS += intel_nb5000
- DRV_KMODS += intel_nhm
-+DRV_KMODS += intel_lpss_i2c
- DRV_KMODS += ip
- DRV_KMODS += ip6
+@@ -246,4 +246,5 @@
+ DRV_KMODS	+= intel_nb5000
+ DRV_KMODS	+= intel_nhm
++DRV_KMODS	+= intel_lpss_i2c
+ DRV_KMODS	+= ip
+ DRV_KMODS	+= ip6
