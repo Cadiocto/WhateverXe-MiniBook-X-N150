@@ -1,22 +1,26 @@
-name: illumos framebuffer rotation and LPSS diagnostic build
+name: illumos framebuffer rotation build
+
 on:
   push:
     branches: [gop-rotation-hook]
     paths:
       - "illumo_rotfb/**"
-      - "illumos_i2c_diag/**"
       - ".github/workflows/build-illumos.yml"
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   build-illumos:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare persistent build-log directory
+
+      - name: Prepare build-log directory
         run: mkdir -p "$GITHUB_WORKSPACE/rotfb-build-logs"
+
       - name: Build in OpenIndiana VM
         uses: vmactions/openindiana-vm@v1
         with:
@@ -50,19 +54,6 @@ jobs:
             cp "$ROTFB/rotfb_runtime.c" usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
             chmod 0644 usr/src/uts/i86pc/sys/rotfb.h usr/src/uts/i86pc/boot/rotfb_boot.c usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
 
-            # Add the isolated, read-only LPSS diagnostic driver to the
-            # pinned illumos tree. No PCI alias is added.
-            I2CDIAG="$GITHUB_WORKSPACE/illumos_i2c_diag"
-            git apply --check "$I2CDIAG/patches/0001-register-intel-lpss-i2c-driver.patch"
-            git apply "$I2CDIAG/patches/0001-register-intel-lpss-i2c-driver.patch"
-            mkdir -p usr/src/uts/intel/intel_lpss_i2c usr/src/uts/intel/io
-            cp "$I2CDIAG/intel_lpss_i2c.c" usr/src/uts/intel/io/intel_lpss_i2c.c
-            cp "$I2CDIAG/Makefile" usr/src/uts/intel/intel_lpss_i2c/Makefile
-            chmod 0644 usr/src/uts/intel/io/intel_lpss_i2c.c usr/src/uts/intel/intel_lpss_i2c/Makefile
-            grep -n '^DRV_KMODS.*intel_lpss_i2c$' usr/src/uts/intel/Makefile.intel
-            test -s usr/src/uts/intel/io/intel_lpss_i2c.c
-            test -s usr/src/uts/intel/intel_lpss_i2c/Makefile
-
             cd usr/src
             export CODEMGR_WS="$WORKSPACE/illumos-gate"
             export GATE="$CODEMGR_WS"
@@ -72,10 +63,9 @@ jobs:
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
               -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
-            echo "export VERSION=illumos-098e958-lpss-diag" >> /tmp/rotfb-nightly.env
+            echo "export VERSION=illumos-098e958-rotfb" >> /tmp/rotfb-nightly.env
             set +e
             NIGHTLY_LOG="/tmp/rotfb-nightly.log"
-            # Snapshot transient diagnostics into the shared Actions workspace.
             ( while :; do
                 for f in /tmp/nightly.tmpdir.*/build_noise; do
                   [ -f "$f" ] && cp "$f" "$LOGDIR/build_noise.latest" 2>/dev/null || true
@@ -96,18 +86,17 @@ jobs:
             tail -n 300 "$NIGHTLY_LOG"
             echo "===== illumos nightly log ====="
             find "$CODEMGR_WS/log" -type f -exec sh -c 'echo "===== $1 ====="; tail -n 300 "$1"' _ {} \; 2>/dev/null || true
-            echo "===== LPSS diagnostic compiler references ====="
-            grep -n -i -B 3 -A 6 "intel_lpss_i2c" "$NIGHTLY_LOG" | tee "$LOGDIR/intel_lpss_i2c-build.txt" || true
             grep -n -i -B 2 -A 5 "error:" "$NIGHTLY_LOG" | tee "$LOGDIR/build_errors.txt" || true
             echo "===== BUILD_NOISE ====="
             cat "$GITHUB_WORKSPACE/build_noise.txt" 2>/dev/null | tee -a "$LOGDIR/build_errors.txt" || true
             find "$CODEMGR_WS/log" -type f -exec cp -p {} "$LOGDIR/" \; 2>/dev/null || true
             exit "$rc"
+
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: illumos-lpss-diag-build-logs-${{ github.run_id }}
+          name: illumos-framebuffer-build-logs-${{ github.run_id }}
           path: |
             build_noise.txt
             nightly.log
