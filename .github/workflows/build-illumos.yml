@@ -30,10 +30,11 @@ jobs:
             WORKSPACE="$HOME/illumos-rotfb-work"
             mkdir -p "$WORKSPACE"
             cd "$WORKSPACE"
-            git clone --depth 1 https://github.com/illumos/illumos-gate.git
+            git clone https://github.com/illumos/illumos-gate.git
             cd illumos-gate
+            git checkout 098e95820891f8a83fae679daece7fcf58b7b3a4
             ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
-            for p in 0002-boot-fb-rotation.patch 0003-gfxp-bitmap-tem-rotation.patch 0004-Makefile-files.patch; do
+            for p in 0001-framebuffer-metadata.patch 0002-boot-fb-rotation.patch 0003-gfxp-bitmap-tem-rotation.patch 0004-Makefile-files.patch; do
               git apply --check "$ROTFB/patches/$p"
               git apply "$ROTFB/patches/$p"
             done
