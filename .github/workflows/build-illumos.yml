@@ -39,33 +39,83 @@ jobs:
             pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
 
             # Audit the installed IPS payload before assuming Solaris Perl paths.
-            # The illumos build invokes both i386 and amd64 Perl pathnames.
+            # illumos Makefile.perl selects separate 32-bit and 64-bit Perl executables.
             PERL_AUDIT="$GITHUB_WORKSPACE/rotfb-build-logs/perl-package-audit.txt"
             mkdir -p "$(dirname "$PERL_AUDIT")"
             {
-              echo "===== installed Perl package candidates ====="
-              pkg list -Hv | grep -i perl || true
-              echo "===== requested Perl package status ====="
-              pkg list -Hv runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris || true
-              echo "===== available Perl packages ====="
-              pkg list -a | grep -i perl || true
-              echo "===== pkg contents runtime/perl-510 ====="
-              pkg contents runtime/perl-510 || true
-              echo "===== pkg contents -m runtime/perl-510 ====="
-              pkg contents -m runtime/perl-510 || true
-              echo "===== all Perl path entries (including symlinks) ====="
-              find /usr/perl5 -name perl -exec ls -ld {} \; 2>&1 || true
-              echo "===== regular Perl executables ====="
-              find /usr/perl5 -type f -name perl -exec ls -l {} \; -exec file {} \; 2>&1 || true
-              echo "===== executable Perl candidates ====="
-              find /usr/perl5 -name perl -exec sh -c 'test -x "$1" && { echo "EXECUTABLE: $1"; "$1" -V:archname; }' sh {} \; 2>&1 || true
-              echo "===== xsubpp candidates ====="
-              find /usr/perl5 -type f -name xsubpp -exec ls -l {} \; 2>&1 || true
+              audit_cmd() {
+                label="$1"
+                shift
+                echo "===== $label ====="
+                if "$@"; then
+                  echo "command_exit_status=0"
+                else
+                  rc=$?
+                  echo "command_exit_status=$rc"
+                fi
+              }
+
+              audit_perl_pkg_list() {
+                label="$1"
+                shift
+                tmp="/tmp/rotfb-perl-pkg-list.$$"
+                echo "===== $label ====="
+                if pkg list "$@" > "$tmp" 2>&1; then
+                  pkg_rc=0
+                else
+                  pkg_rc=$?
+                fi
+                if grep -i perl "$tmp"; then
+                  grep_rc=0
+                else
+                  grep_rc=$?
+                fi
+                echo "pkg_list_exit_status=$pkg_rc"
+                echo "grep_exit_status=$grep_rc"
+                rm -f "$tmp"
+              }
+
+              audit_perl_pkg_list "installed Perl packages" -Hv
+              audit_cmd "requested Perl package status" pkg list -Hv runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
+              audit_perl_pkg_list "available Perl packages" -a
+              audit_cmd "remote Perl 5.10 package info" pkg info -r runtime/perl-510
+              audit_cmd "remote Perl 5.10 payload" pkg contents -r runtime/perl-510
+              audit_cmd "remote Perl 5.10 manifest" pkg contents -m -r runtime/perl-510
+              audit_cmd "installed Perl 5.38 payload" pkg contents runtime/perl-538
+              audit_cmd "installed Perl 5.42 payload" pkg contents runtime/perl-542
+              audit_cmd "installed Perl 5.42 Solaris module payload" pkg contents runtime/perl-542/module/sun-solaris
+              audit_cmd "Perl path entries and symlinks" find /usr/perl5 -name perl -exec ls -ld {} +
+              audit_cmd "Perl binary file types" find /usr/perl5 -name perl -exec file {} +
+              audit_cmd "Perl executable architecture probes" find /usr/perl5 -name perl -exec sh -c '
+                for p do
+                  echo "PERL_PATH=$p"
+                  ls -ld "$p"
+                  if [ -x "$p" ]; then
+                    echo "EXECUTABLE=yes"
+                    if "$p" -V:version -V:archname; then
+                      echo "perl_probe_exit_status=0"
+                    else
+                      rc=$?
+                      echo "perl_probe_exit_status=$rc"
+                    fi
+                  else
+                    echo "EXECUTABLE=no"
+                  fi
+                done
+              ' sh {} +
+              audit_cmd "xsubpp path entries" find /usr/perl5 -name xsubpp -exec ls -ld {} +
+              audit_cmd "legacy expected Perl paths" ls -ld /usr/perl5/5.10.0 /usr/perl5/5.10.0/lib/ExtUtils/xsubpp /usr/perl5/5.10.0/bin/i386/perl /usr/perl5/5.10.0/bin/amd64/perl
             } > "$PERL_AUDIT" 2>&1
             cat "$PERL_AUDIT"
+            echo "CHECK: /usr/perl5/5.10.0/lib/ExtUtils/xsubpp"
             test -f /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
+            echo "PASS: xsubpp exists"
+            echo "CHECK: /usr/perl5/5.10.0/bin/i386/perl"
             test -x /usr/perl5/5.10.0/bin/i386/perl
+            echo "PASS: i386 Perl executable"
+            echo "CHECK: /usr/perl5/5.10.0/bin/amd64/perl"
             test -x /usr/perl5/5.10.0/bin/amd64/perl
+            echo "PASS: amd64 Perl executable"
             /usr/perl5/5.10.0/bin/amd64/perl -v
           run: |
             set -u
