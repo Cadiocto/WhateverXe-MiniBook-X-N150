@@ -1,17 +1,58 @@
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
-@@ -28,5 +28,6 @@
- #include <sys/ddi.h>
+@@ -29,6 +29,7 @@
  #include <sys/kd.h>
  #include <sys/sunddi.h>
  #include <sys/rgb.h>
 +#include <sys/rotfb.h>
  #include <sys/gfx_private.h>
-@@ -232,15 +232,20 @@
+ #include "gfxp_fb.h"
+ 
+@@ -148,12 +149,16 @@
+ 		return (DDI_SUCCESS);
+ 
+ 	if (softc->console->fb.fb_size != 0) {
+-		gfxp_unmap_kernel_space((gfxp_kva_t)softc->console->fb.fb,
+-		    softc->console->fb.fb_size);
+-		fb_info.fb = NULL;
+-		kmem_free(softc->console->fb.shadow_fb,
+-		    softc->console->fb.fb_size);
+-		softc->console->fb.shadow_fb = NULL;
++		if (rotfb_info.runtime_ready) {
++			rotfb_runtime_fini(&softc->console->fb);
++		} else {
++			gfxp_unmap_kernel_space((gfxp_kva_t)softc->console->fb.fb,
++			    softc->console->fb.fb_size);
++			fb_info.fb = NULL;
++			kmem_free(softc->console->fb.shadow_fb,
++			    softc->console->fb.fb_size);
++			softc->console->fb.shadow_fb = NULL;
++		}
+ 	}
+ 	return (DDI_SUCCESS);
+ }
+@@ -163,6 +168,8 @@
+ {
+ 	bitmap_copy_fb(softc, softc->console->fb.shadow_fb,
+ 	    softc->console->fb.fb);
++	if (rotfb_info.runtime_ready)
++		rotfb_runtime_flush_all(&softc->console->fb);
+ }
+ 
+ static void
+@@ -232,14 +239,19 @@
  	struct gfxfb_info *gfxfb_info;
  
  	softc->console = (union gfx_console *)&fb_info;
+-	size = ptob(btopr(fb_info.fb_size));
+-	softc->console->fb.fb_size = size;
+-	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
+-	    size, GFXP_MEMORY_WRITECOMBINED);
+-	if (softc->console->fb.fb == NULL)
+-		return (DDI_FAILURE);
+-
+-	softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
 +	if (rotfb_info.configured) {
 +		if (rotfb_runtime_init(&fb_info) != DDI_SUCCESS)
 +			return (DDI_FAILURE);
@@ -25,33 +66,48 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +			return (DDI_FAILURE);
 +		softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
 +	}
--	size = ptob(btopr(fb_info.fb_size));
--	softc->console->fb.fb_size = size;
--	softc->console->fb.fb = (uint8_t *)gfxp_map_kernel_space(fb_info.paddr,
--	    size, GFXP_MEMORY_WRITECOMBINED);
--	if (softc->console->fb.fb == NULL)
--		return (DDI_FAILURE);
  
--	softc->console->fb.shadow_fb = kmem_zalloc(size, KM_SLEEP);
--
  	bitmap_attr.fbtype.fb_height = fb_info.screen.y;
  	bitmap_attr.fbtype.fb_width = fb_info.screen.x;
- 	bitmap_attr.fbtype.fb_depth = fb_info.depth;
-@@ -509,6 +514,8 @@
+@@ -349,6 +361,11 @@
+ 			    width);
+ 		}
+ 	}
++	if (rotfb_info.runtime_ready && softc->mode == KD_TEXT) {
++		rotfb_runtime_flush_rect(&console->fb, ma->t_col, ma->t_row,
++		    ma->e_col - ma->s_col + 1,
++		    ma->e_row - ma->s_row + 1);
++	}
+ }
+ 
+ /*
+@@ -436,6 +453,9 @@
+ 			(void) memcpy(dest, src, size);
+ 		}
+ 	}
++	if (rotfb_info.runtime_ready && softc->mode == KD_TEXT)
++		rotfb_runtime_flush_rect(&console->fb, da->col, da->row,
++		    da->width, da->height);
+ }
+ 
+ static int
+@@ -509,6 +529,8 @@
  		}
  		break;
  	}
-+	if (rotfb_info.runtime_ready)
-+		rotfb_runtime_flush_all(&fb_info);
++	if (rotfb_info.runtime_ready && softc->mode == KD_TEXT)
++		rotfb_runtime_flush_all(&console->fb);
  
  	return (0);
  }
-@@ -640,6 +647,8 @@
+@@ -640,6 +662,10 @@
  		ca->col = console->fb.cursor.origin.x;
  		break;
  	}
-+	if (rotfb_info.runtime_ready)
-+		rotfb_runtime_flush_all(&fb_info);
++	if (rotfb_info.runtime_ready && softc->mode == KD_TEXT &&
++	    ca->action != VIS_GET_CURSOR)
++		rotfb_runtime_flush_rect(&console->fb, ca->col, ca->row,
++		    ca->width, ca->height);
  }
  
  static void
