@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Host-side mathematical checks for the ROTFB 90-degree clockwise mapping."""
 
+from pathlib import Path
+
 PHYS_WIDTH = 1200
 PHYS_HEIGHT = 1920
 PHYS_PITCH = 4800
