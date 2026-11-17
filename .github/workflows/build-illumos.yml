@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: ROTFB geometry and clipping model tests
+        run: python3 illumo_rotfb/tests/rotfb_model_test.py
+
       - name: Initialize diagnostic artifact staging
         if: always()
         run: |
@@ -136,7 +139,7 @@ jobs:
             echo "$PERL_ARCH_OUTPUT"
             /usr/bin/perl -v
           run: |
-            set -u
+            set -eu
             LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
             mkdir -p "$LOGDIR"
             printf 'VM diagnostic collector started at %s\n' "$(date -u +%FT%TZ)" > "$LOGDIR/vm-started.txt"
@@ -151,9 +154,10 @@ jobs:
             git branch -f rotfb-build HEAD
 
             ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
-            for p in 0001-framebuffer-metadata.patch 0002-boot-fb-rotation.patch 0003-gfxp-bitmap-tem-rotation.patch 0004-Makefile-files.patch; do
-              git apply --check "$ROTFB/patches/$p"
-              git apply "$ROTFB/patches/$p"
+            for p in "$ROTFB"/patches/*.patch; do
+              [ -f "$p" ] || continue
+              git apply --check "$p"
+              git apply "$p"
             done
             mkdir -p usr/src/uts/i86pc/sys usr/src/uts/i86pc/boot usr/src/uts/i86pc/io/gfx_private
             cp "$ROTFB/rotfb.h" usr/src/uts/i86pc/sys/rotfb.h
@@ -282,6 +286,32 @@ jobs:
             fi
             kill "$LOG_MONITOR_PID" 2>/dev/null || true
             wait "$LOG_MONITOR_PID" 2>/dev/null || true
+
+            # Require proof that ROTFB compiled and both platform modules linked it.
+            EVIDENCE_RC=0
+            BOOT_COMPILE_COUNT=$(grep -c ' -c -o .*rotfb_boot.o .*rotfb_boot.c' "$GATE_LOG_DIR/nightly.log" || true)
+            RUNTIME_COMPILE_COUNT=$(grep -c ' -c -o .*rotfb_runtime.o .*rotfb_runtime.c' "$GATE_LOG_DIR/nightly.log" || true)
+            RUNTIME_LINK_COUNT=$(grep -c ' -o obj64/gfx_private .*obj64/rotfb_runtime.o' "$GATE_LOG_DIR/nightly.log" || true)
+            BOOT_LINK_COUNT=$(grep -c ' -o obj64/unix.o .*obj64/rotfb_boot.o' "$GATE_LOG_DIR/nightly.log" || true)
+            {
+              echo "rotfb_boot_compile_commands=$BOOT_COMPILE_COUNT"
+              echo "rotfb_runtime_compile_commands=$RUNTIME_COMPILE_COUNT"
+              echo "gfx_private_runtime_link_commands=$RUNTIME_LINK_COUNT"
+              echo "unix_boot_object_link_commands=$BOOT_LINK_COUNT"
+            } > "$LOGDIR/rotfb-build-evidence.txt"
+            if [ "$BOOT_COMPILE_COUNT" -lt 2 ] ||
+                [ "$RUNTIME_COMPILE_COUNT" -lt 2 ] ||
+                [ "$RUNTIME_LINK_COUNT" -lt 2 ] ||
+                [ "$BOOT_LINK_COUNT" -lt 2 ]; then
+              echo "ROTFB compile/link evidence incomplete" | tee -a "$LOGDIR/rotfb-build-evidence.txt"
+              EVIDENCE_RC=1
+            else
+              echo "ROTFB compile/link evidence: PASS" | tee -a "$LOGDIR/rotfb-build-evidence.txt"
+            fi
+            if [ "$EVIDENCE_RC" -ne 0 ]; then
+              BUILD_RC=1
+            fi
+            printf '%s\n' "$BUILD_RC" > "$LOGDIR/final-build-exit-code.txt"
 
             # Flatten compiler errors from every captured log into one index.
             {

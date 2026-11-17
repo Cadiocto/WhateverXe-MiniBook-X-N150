@@ -1,0 +1,218 @@
+diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
+--- a/usr/src/uts/i86pc/boot/boot_fb.c
++++ b/usr/src/uts/i86pc/boot/boot_fb.c
+@@ -178,8 +178,7 @@
+ 	fb_info.physical.pitch = fb_info.pitch;
+ 	fb_info.physical.bpp = fb_info.bpp;
+ 	fb_info.physical.size = (uint64_t)fb_info.pitch * fb_info.screen.y;
+ 	fb_info.physical.valid = B_TRUE;
+-	(void) rotfb_boot_configure(&fb_info);
+ 	fb_info.fb_size = fb_info.screen.y * fb_info.pitch;
+ 
+ 	bcons_dev->bd_putchar = boot_fb_putchar;
+@@ -205,6 +204,7 @@
+ 	fb_info.rgb.blue.size = tag->u.fb2.framebuffer_blue_mask_size;
+ 	fb_info.rgb.blue.pos = tag->u.fb2.framebuffer_blue_field_position;
+ 	rgb_info = fb_info.rgb;
++	(void) rotfb_boot_configure(&fb_info);
+ 
+ 	return (B_TRUE);
+ }
+@@ -345,5 +345,7 @@
+-	if (rotfb_info.configured &&
+-	    rotfb_boot_shadow_init(bops, &fb_info) == 0)
++	if (rotfb_info.configured &&
++	    rotfb_boot_shadow_init(bops, &fb_info) == 0) {
++		boot_fb_init(0);
+ 		return;
++	}
+ 
+ 	fb_info.shadow_fb = (uint8_t *)bops->bsys_alloc(NULL, NULL,
+@@ -436,11 +439,17 @@
+ #if defined(_BOOT)
+ 	/*
+ 	 * Being called from dboot, we can have cursor terminal
+ 	 * position passed from boot loader. In such case, fix the
+ 	 * cursor screen coords.
+ 	 */
+ 	if (fb_info.cursor.pos.x != 0 || fb_info.cursor.pos.y != 0) {
+ 		fb_info.cursor.origin.x = window.x +
+ 		    fb_info.cursor.pos.x * boot_fb_font.vf_width;
+ 		fb_info.cursor.origin.y = window.y +
+ 		    fb_info.cursor.pos.y * boot_fb_font.vf_height;
+ 	}
++#else
++	if (rotfb_info.boot_ready &&
++	    (fb_info.cursor.pos.x != 0 || fb_info.cursor.pos.y != 0)) {
++		fb_info.cursor.origin.x = window.x +
++		    fb_info.cursor.pos.x * boot_fb_font.vf_width;
++		fb_info.cursor.origin.y = window.y +
++		    fb_info.cursor.pos.y * boot_fb_font.vf_height;
++	}
+ #endif
+ 
+ 	/* If the cursor terminal position is 0,0 just reset screen coords */
+@@ -479,7 +482,9 @@
+ 			boot_fb_fill(dest, bg, fb_info.pitch);
+ 			toffset += fb_info.pitch;
+ 		}
++		if (rotfb_info.boot_ready)
++			rotfb_boot_flush_all(&fb_info);
+ 	}
+ #endif
+ 
+@@ -496,8 +501,8 @@
+ 	/* make sure we will not write past FB */
+ 	if (rect->col >= fb_info.screen.x ||
+ 	    rect->row >= fb_info.screen.y ||
+-	    rect->col + rect->width >= fb_info.screen.x ||
+-	    rect->row + rect->height >= fb_info.screen.y)
++	    rect->col + rect->width > fb_info.screen.x ||
++	    rect->row + rect->height > fb_info.screen.y)
+ 		return;
+ 
+ 	size = rect->width * fb_info.bpp;
+@@ -559,6 +564,8 @@
+ 
+ 	toffset = x * fb_info.bpp + y * fb_info.pitch;
+ 	dst = fb_info.fb + toffset;
+-	sdst = fb_info.shadow_fb + toffset;
++	sdst = NULL;
++	if (fb_info.shadow_fb != NULL)
++		sdst = fb_info.shadow_fb + toffset;
+ 
+ 	for (i = 0; i < boot_fb_font.vf_height; i++) {
+@@ -748,4 +755,8 @@
+ 		}
+ 		break;
+ 	}
++	if (rotfb_info.boot_ready)
++		rotfb_boot_flush_rect(&fb_info, fb_info.cursor.origin.x,
++		    fb_info.cursor.origin.y, boot_fb_font.vf_width,
++		    boot_fb_font.vf_height);
+ }
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -29,6 +29,7 @@
+ #include <sys/kd.h>
+ #include <sys/sunddi.h>
+ #include <sys/rgb.h>
++#include <sys/errno.h>
+ #include <sys/rotfb.h>
+ #include <sys/gfx_private.h>
+ #include "gfxp_fb.h"
+@@ -147,17 +148,24 @@
+ 	if (softc == NULL || softc->console == NULL)
+ 		return (DDI_SUCCESS);
+ 
+ 	if (softc->console->fb.fb_size != 0) {
+-		if (rotfb_info.runtime_ready) {
+-			rotfb_runtime_fini(&softc->console->fb);
+-		} else {
+-			gfxp_unmap_kernel_space((gfxp_kva_t)softc->console->fb.fb,
+-			    softc->console->fb.fb_size);
+-			fb_info.fb = NULL;
+-			kmem_free(softc->console->fb.shadow_fb,
+-			    softc->console->fb.fb_size);
+-			softc->console->fb.shadow_fb = NULL;
+-		}
++		if (rotfb_info.configured) {
++			if (rotfb_info.runtime_ready)
++				rotfb_runtime_fini(&softc->console->fb);
++		} else {
++			if (softc->console->fb.fb != NULL) {
++				gfxp_unmap_kernel_space(
++				    (gfxp_kva_t)softc->console->fb.fb,
++				    softc->console->fb.fb_size);
++				softc->console->fb.fb = NULL;
++			}
++			if (softc->console->fb.shadow_fb != NULL) {
++				kmem_free(softc->console->fb.shadow_fb,
++				    softc->console->fb.fb_size);
++				softc->console->fb.shadow_fb = NULL;
++			}
++			softc->console->fb.fb_size = 0;
++		}
+ 	}
+ 	return (DDI_SUCCESS);
+ }
+@@ -672,27 +679,44 @@
+ 	struct gfxp_fb_softc *softc = (struct gfxp_fb_softc *)ptr;
+ 	union gfx_console *console;
+-	size_t length;
++	size_t length, remaining;
++	uint64_t maddr;
+ 
+-	if (softc == NULL) {
++	if (softc == NULL || softc->console == NULL) {
+ 		cmn_err(CE_WARN, "bitmap: Can't find softstate");
+ 		return (ENXIO);
+ 	}
+ 
+ 	console = softc->console;
+ 
+-	if (off >= console->fb.fb_size) {
++	/* A rotated shadow surface is not physically contiguous in this layout. */
++	if (rotfb_info.configured)
++		return (ENOTSUP);
++
++	if (off < 0 || console->fb.fb_size == 0 ||
++	    console->fb.fb_size > (uint64_t)((size_t)-1)) {
++		return (ENXIO);
++	}
++
++	if ((uint64_t)off >= console->fb.fb_size) {
+ 		cmn_err(CE_WARN, "bitmap: Can't map offset 0x%llx", off);
+ 		return (ENXIO);
+ 	}
+ 
+-	if (off + len > console->fb.fb_size)
+-		length = console->fb.fb_size - off;
+-	else
+-		length = len;
++	remaining = (size_t)(console->fb.fb_size - (uint64_t)off);
++	length = (len > remaining) ? remaining : len;
++	if (length == 0)
++		return (EINVAL);
+ 
+-	gfxp_map_devmem(dhp, console->fb.paddr, length, &dev_attr);
++	if (console->fb.paddr > (uint64_t)-1 - (uint64_t)off)
++		return (ENXIO);
++	maddr = console->fb.paddr + (uint64_t)off;
++	if (maddr > (uint64_t)-1 - (uint64_t)length)
++		return (ENXIO);
++
++	gfxp_map_devmem(dhp, maddr, length, &dev_attr);
+ 
+ 	*maplen = length;
+ 
+ 	return (0);
+ }
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
+@@ -372,3 +372,14 @@
+ 		}
+ 		break;
+ 
++	case VIS_DEVFINI:
++		if (!(mode & FKIOCTL))
++			return (ENXIO);
++		if (softc->fb_type == GFXP_BITMAP)
++			err = gfxp_bm_detach(softc->devi, softc);
++		else
++			err = DDI_SUCCESS;
++		if (err != DDI_SUCCESS)
++			return (err);
++		break;
++
+ 	case VIS_CONSCLEAR:	/* clear screen */
+diff --git a/usr/src/uts/i86xpv/Makefile.files b/usr/src/uts/i86xpv/Makefile.files
+--- a/usr/src/uts/i86xpv/Makefile.files
++++ b/usr/src/uts/i86xpv/Makefile.files
+@@ -192,4 +192,4 @@
+ GFX_PRIVATE_OBJS += gfx_private.o gfxp_pci.o gfxp_segmap.o \
+ 		    gfxp_devmap.o gfxp_vgatext.o gfxp_vm.o vgasubr.o \
+-		    gfxp_fb.o gfxp_bitmap.o
++		    gfxp_fb.o gfxp_bitmap.o rotfb_runtime.o
