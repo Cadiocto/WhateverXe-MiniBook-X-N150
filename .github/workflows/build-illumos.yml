@@ -36,10 +36,10 @@ jobs:
           prepare: |
             set -eux
             pkg refresh
-            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
+            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-542 runtime/perl-542/module/sun-solaris
 
-            # Audit the installed IPS payload before assuming Solaris Perl paths.
-            # illumos Makefile.perl selects separate 32-bit and 64-bit Perl executables.
+            # Audit IPS packages and actual Perl paths before configuring illumos.
+            # OpenIndiana 202610 marks Perl 5.10 obsolete and ships Perl 5.42 as 64-bit.
             PERL_AUDIT="$GITHUB_WORKSPACE/rotfb-build-logs/perl-package-audit.txt"
             mkdir -p "$(dirname "$PERL_AUDIT")"
             {
@@ -76,14 +76,19 @@ jobs:
               }
 
               audit_perl_pkg_list "installed Perl packages" -Hv
-              audit_cmd "requested Perl package status" pkg list -Hv runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
+              audit_cmd "requested Perl 5.42 package status" pkg list -Hv runtime/perl-542 runtime/perl-542/module/sun-solaris
               audit_perl_pkg_list "available Perl packages" -a
               audit_cmd "remote Perl 5.10 package info" pkg info -r runtime/perl-510
               audit_cmd "remote Perl 5.10 payload" pkg contents -r runtime/perl-510
               audit_cmd "remote Perl 5.10 manifest" pkg contents -m -r runtime/perl-510
               audit_cmd "installed Perl 5.38 payload" pkg contents runtime/perl-538
               audit_cmd "installed Perl 5.42 payload" pkg contents runtime/perl-542
+              audit_cmd "installed Perl 5.42 manifest" pkg contents -m runtime/perl-542
               audit_cmd "installed Perl 5.42 Solaris module payload" pkg contents runtime/perl-542/module/sun-solaris
+              audit_cmd "installed Perl 5.42 Solaris module manifest" pkg contents -m runtime/perl-542/module/sun-solaris
+              audit_cmd "nightly Perl entry point metadata" ls -li /usr/bin/perl /usr/bin/perl5.42.3 /usr/bin/xsubpp /usr/perl5/5.42/bin/perl /usr/perl5/5.42/bin/xsubpp
+              audit_cmd "nightly Perl entry point file types" file /usr/bin/perl /usr/perl5/5.42/bin/perl
+              audit_cmd "nightly Perl entry point architecture" /usr/bin/perl -V:version -V:archname
               audit_cmd "Perl path entries and symlinks" find /usr/perl5 -name perl -exec ls -ld {} +
               audit_cmd "Perl binary file types" find /usr/perl5 -name perl -exec file {} +
               audit_cmd "Perl executable architecture probes" find /usr/perl5 -name perl -exec sh -c '
@@ -104,19 +109,32 @@ jobs:
                 done
               ' sh {} +
               audit_cmd "xsubpp path entries" find /usr/perl5 -name xsubpp -exec ls -ld {} +
-              audit_cmd "legacy expected Perl paths" ls -ld /usr/perl5/5.10.0 /usr/perl5/5.10.0/lib/ExtUtils/xsubpp /usr/perl5/5.10.0/bin/i386/perl /usr/perl5/5.10.0/bin/amd64/perl
+              audit_cmd "64-bit Perl headers" ls -l /usr/perl5/5.42/lib/i86pc-solaris-thread-multi-64/CORE/perl.h /usr/perl5/5.42/lib/i86pc-solaris-thread-multi-64/CORE/libperl.so
+              audit_cmd "legacy Perl 5.10 paths" ls -ld /usr/perl5/5.10.0 /usr/perl5/5.10.0/lib/ExtUtils/xsubpp /usr/perl5/5.10.0/bin/i386/perl /usr/perl5/5.10.0/bin/amd64/perl
+              audit_cmd "5.42 architecture-specific Perl paths" ls -ld /usr/perl5/5.42/bin/i386/perl /usr/perl5/5.42/bin/amd64/perl
             } > "$PERL_AUDIT" 2>&1
             cat "$PERL_AUDIT"
-            echo "CHECK: /usr/perl5/5.10.0/lib/ExtUtils/xsubpp"
-            test -f /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
-            echo "PASS: xsubpp exists"
-            echo "CHECK: /usr/perl5/5.10.0/bin/i386/perl"
-            test -x /usr/perl5/5.10.0/bin/i386/perl
-            echo "PASS: i386 Perl executable"
-            echo "CHECK: /usr/perl5/5.10.0/bin/amd64/perl"
-            test -x /usr/perl5/5.10.0/bin/amd64/perl
-            echo "PASS: amd64 Perl executable"
-            /usr/perl5/5.10.0/bin/amd64/perl -v
+            echo "CHECK: /usr/perl5/5.42/lib/ExtUtils/xsubpp"
+            test -f /usr/perl5/5.42/lib/ExtUtils/xsubpp
+            echo "PASS: Perl 5.42 xsubpp exists"
+            echo "CHECK: /usr/perl5/5.42/lib/ExtUtils/typemap"
+            test -f /usr/perl5/5.42/lib/ExtUtils/typemap
+            echo "PASS: Perl 5.42 typemap exists"
+            echo "CHECK: 64-bit Perl CORE headers"
+            test -f /usr/perl5/5.42/lib/i86pc-solaris-thread-multi-64/CORE/perl.h
+            test -f /usr/perl5/5.42/lib/i86pc-solaris-thread-multi-64/CORE/libperl.so
+            echo "PASS: Perl 5.42 64-bit CORE files exist"
+            echo "CHECK: /usr/perl5/5.42/bin/perl"
+            test -x /usr/perl5/5.42/bin/perl
+            echo "CHECK: /usr/bin/perl used by illumos Makefile.master"
+            test -x /usr/bin/perl
+            PERL_VERSION_OUTPUT=$(/usr/bin/perl -V:version)
+            PERL_ARCH_OUTPUT=$(/usr/bin/perl -V:archname)
+            test "$PERL_VERSION_OUTPUT" = "version='5.42.3';"
+            test "$PERL_ARCH_OUTPUT" = "archname='i86pc-solaris-thread-multi-64';"
+            echo "$PERL_VERSION_OUTPUT"
+            echo "$PERL_ARCH_OUTPUT"
+            /usr/bin/perl -v
           run: |
             set -u
             LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
@@ -152,7 +170,452 @@ jobs:
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
               -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
+            cat >> /tmp/rotfb-nightly.env <<'EOF'
+            export PERL_VERSION=5.42
+            export PERL_VARIANT=-thread-multi
+            export PERL_PKGVERS=-542
+            export BUILDPERL32='#'
+            EOF
             echo "export VERSION=illumos-098e958-rotfb" >> /tmp/rotfb-nightly.env
+            echo "===== effective Perl build configuration ====="
+            grep -E '^export PERL_VERSION=5\.42
+
+            NIGHTLY_LOG="$LOGDIR/nightly.log"
+            BUILD_NOISE_DIR="$LOGDIR/build-noise"
+            GATE_LOG_DIR="$LOGDIR/gate-logs"
+            mkdir -p "$BUILD_NOISE_DIR" "$GATE_LOG_DIR"
+            printf 'nightly invocation: %s\n' "$(date -u +%FT%TZ)" > "$LOGDIR/build-metadata.txt"
+            printf 'workspace=%s\nupstream_commit=098e95820891f8a83fae679daece7fcf58b7b3a4\n' "$CODEMGR_WS" >> "$LOGDIR/build-metadata.txt"
+
+            # Preserve transient compiler diagnostics while nightly is running.
+            (
+              while :; do
+                find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+                while IFS= read -r f; do
+                  d=$(basename "$(dirname "$f")")
+                  tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+                done
+                if [ -d "$CODEMGR_WS/log" ]; then
+                  find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                  while IFS= read -r f; do
+                    rel=${f#"$CODEMGR_WS/log"/}
+                    rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                    mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                    tmp="$GATE_LOG_DIR/$rel.partial"
+                    cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                  done
+                fi
+                sleep 3
+              done
+            ) &
+            LOG_MONITOR_PID=$!
+
+            # Run nightly asynchronously so the SSH session emits a heartbeat.
+            # The NFS-backed workspace makes each diagnostic snapshot visible on the runner immediately.
+            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > "$NIGHTLY_LOG" 2>&1 &
+            BUILD_PID=$!
+            BUILD_RC=0
+            while kill -0 "$BUILD_PID" 2>/dev/null; do
+              find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+              while IFS= read -r f; do
+                d=$(basename "$(dirname "$f")")
+                tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+              done
+              if [ -d "$CODEMGR_WS/log" ]; then
+                find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                while IFS= read -r f; do
+                  rel=${f#"$CODEMGR_WS/log"/}
+                  rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                  mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                  tmp="$GATE_LOG_DIR/$rel.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                done
+              fi
+              printf 'OpenIndiana build heartbeat: %s\n' "$(date -u +%FT%TZ)" | tee -a "$LOGDIR/runner-heartbeat.log"
+              printf '%s nightly_pid=%s\n' "$(date -u +%FT%TZ)" "$BUILD_PID" > "$LOGDIR/build-state.txt"
+              sleep 10
+            done
+            wait "$BUILD_PID" || BUILD_RC=$?
+
+            printf '%s\n' "$BUILD_RC" > "$LOGDIR/nightly-exit-code.txt"
+            # NIGHTLY_LOG is already on the NFS-shared workspace; it is persisted during the build.
+            cp -f "$NIGHTLY_LOG" "$LOGDIR/nightly.log.final" 2>/dev/null || true
+            cp -f /tmp/rotfb-nightly.env "$LOGDIR/rotfb-nightly.env" 2>/dev/null || true
+
+            # Take a final snapshot after nightly exits, then stop the monitor.
+            find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+            while IFS= read -r f; do
+              d=$(basename "$(dirname "$f")")
+              tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+              cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+            done
+            if [ -d "$CODEMGR_WS/log" ]; then
+              find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+              while IFS= read -r f; do
+                rel=${f#"$CODEMGR_WS/log"/}
+                rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                tmp="$GATE_LOG_DIR/$rel.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+              done
+            fi
+            kill "$LOG_MONITOR_PID" 2>/dev/null || true
+            wait "$LOG_MONITOR_PID" 2>/dev/null || true
+
+            # Flatten compiler errors from every captured log into one index.
+            {
+              echo "===== nightly.log compiler/error context ====="
+              grep -n -i -B 4 -A 8 -E 'error:|undefined symbol|syntax error|fatal error|dmake:.*failed|Don.t know how to make' "$NIGHTLY_LOG" || true
+              for f in "$BUILD_NOISE_DIR"/*.txt "$GATE_LOG_DIR"/*; do
+                [ -f "$f" ] || continue
+                echo "===== $f ====="
+                grep -n -i -B 4 -A 8 -E 'error:|undefined symbol|syntax error|fatal error|dmake:.*failed|Don.t know how to make' "$f" || true
+              done
+            } > "$LOGDIR/compiler-error-index.txt"
+
+            {
+              echo "Collected at $(date -u +%FT%TZ)"
+              find "$LOGDIR" -type f -exec ls -ln {} \; 2>&1 || true
+            } > "$LOGDIR/collected-files.txt"
+            echo "===== nightly tail ====="
+            tail -n 300 "$NIGHTLY_LOG" || true
+            exit "$BUILD_RC"
+
+      - name: Finalize diagnostic index on runner
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
+          mkdir -p "$LOGDIR"
+          {
+            echo "Runner-side diagnostic index generated at $(date -u +%FT%TZ)"
+            echo "This step runs even when the OpenIndiana VM/SSH step fails."
+            echo
+            find "$LOGDIR" -type f -printf '%p %s bytes %TY-%Tm-%TdT%TH:%TM:%TS\n' | sort
+          } > "$LOGDIR/runner-file-index.txt"
+          {
+            echo "===== compiler/build error scan ====="
+            find "$LOGDIR" -type f ! -name 'runner-error-index.txt' -print0 |
+            while IFS= read -r -d '' f; do
+              if grep -Iq . "$f"; then
+                matches=$(grep -n -i -B 5 -A 10 -E 'error:|fatal error|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|cannot|failed|killed|out of memory|panic|segmentation fault|ssh exited' "$f" 2>/dev/null)
+                if [ -n "$matches" ]; then
+                  printf '\n===== %s =====\n%s\n' "$f" "$matches"
+                fi
+              fi
+            done
+          } > "$LOGDIR/runner-error-index.txt"
+          echo "===== diagnostic files ====="
+          cat "$LOGDIR/runner-file-index.txt"
+          echo "===== error scan ====="
+          cat "$LOGDIR/runner-error-index.txt"
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: illumos-framebuffer-build-logs-${{ github.run_id }}
+          path: rotfb-build-logs/
+          if-no-files-found: warn
+          retention-days: 14
+ /tmp/rotfb-nightly.env
+            grep -E '^export PERL_VARIANT=-thread-multi
+
+            NIGHTLY_LOG="$LOGDIR/nightly.log"
+            BUILD_NOISE_DIR="$LOGDIR/build-noise"
+            GATE_LOG_DIR="$LOGDIR/gate-logs"
+            mkdir -p "$BUILD_NOISE_DIR" "$GATE_LOG_DIR"
+            printf 'nightly invocation: %s\n' "$(date -u +%FT%TZ)" > "$LOGDIR/build-metadata.txt"
+            printf 'workspace=%s\nupstream_commit=098e95820891f8a83fae679daece7fcf58b7b3a4\n' "$CODEMGR_WS" >> "$LOGDIR/build-metadata.txt"
+
+            # Preserve transient compiler diagnostics while nightly is running.
+            (
+              while :; do
+                find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+                while IFS= read -r f; do
+                  d=$(basename "$(dirname "$f")")
+                  tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+                done
+                if [ -d "$CODEMGR_WS/log" ]; then
+                  find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                  while IFS= read -r f; do
+                    rel=${f#"$CODEMGR_WS/log"/}
+                    rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                    mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                    tmp="$GATE_LOG_DIR/$rel.partial"
+                    cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                  done
+                fi
+                sleep 3
+              done
+            ) &
+            LOG_MONITOR_PID=$!
+
+            # Run nightly asynchronously so the SSH session emits a heartbeat.
+            # The NFS-backed workspace makes each diagnostic snapshot visible on the runner immediately.
+            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > "$NIGHTLY_LOG" 2>&1 &
+            BUILD_PID=$!
+            BUILD_RC=0
+            while kill -0 "$BUILD_PID" 2>/dev/null; do
+              find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+              while IFS= read -r f; do
+                d=$(basename "$(dirname "$f")")
+                tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+              done
+              if [ -d "$CODEMGR_WS/log" ]; then
+                find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                while IFS= read -r f; do
+                  rel=${f#"$CODEMGR_WS/log"/}
+                  rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                  mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                  tmp="$GATE_LOG_DIR/$rel.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                done
+              fi
+              printf 'OpenIndiana build heartbeat: %s\n' "$(date -u +%FT%TZ)" | tee -a "$LOGDIR/runner-heartbeat.log"
+              printf '%s nightly_pid=%s\n' "$(date -u +%FT%TZ)" "$BUILD_PID" > "$LOGDIR/build-state.txt"
+              sleep 10
+            done
+            wait "$BUILD_PID" || BUILD_RC=$?
+
+            printf '%s\n' "$BUILD_RC" > "$LOGDIR/nightly-exit-code.txt"
+            # NIGHTLY_LOG is already on the NFS-shared workspace; it is persisted during the build.
+            cp -f "$NIGHTLY_LOG" "$LOGDIR/nightly.log.final" 2>/dev/null || true
+            cp -f /tmp/rotfb-nightly.env "$LOGDIR/rotfb-nightly.env" 2>/dev/null || true
+
+            # Take a final snapshot after nightly exits, then stop the monitor.
+            find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+            while IFS= read -r f; do
+              d=$(basename "$(dirname "$f")")
+              tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+              cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+            done
+            if [ -d "$CODEMGR_WS/log" ]; then
+              find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+              while IFS= read -r f; do
+                rel=${f#"$CODEMGR_WS/log"/}
+                rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                tmp="$GATE_LOG_DIR/$rel.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+              done
+            fi
+            kill "$LOG_MONITOR_PID" 2>/dev/null || true
+            wait "$LOG_MONITOR_PID" 2>/dev/null || true
+
+            # Flatten compiler errors from every captured log into one index.
+            {
+              echo "===== nightly.log compiler/error context ====="
+              grep -n -i -B 4 -A 8 -E 'error:|undefined symbol|syntax error|fatal error|dmake:.*failed|Don.t know how to make' "$NIGHTLY_LOG" || true
+              for f in "$BUILD_NOISE_DIR"/*.txt "$GATE_LOG_DIR"/*; do
+                [ -f "$f" ] || continue
+                echo "===== $f ====="
+                grep -n -i -B 4 -A 8 -E 'error:|undefined symbol|syntax error|fatal error|dmake:.*failed|Don.t know how to make' "$f" || true
+              done
+            } > "$LOGDIR/compiler-error-index.txt"
+
+            {
+              echo "Collected at $(date -u +%FT%TZ)"
+              find "$LOGDIR" -type f -exec ls -ln {} \; 2>&1 || true
+            } > "$LOGDIR/collected-files.txt"
+            echo "===== nightly tail ====="
+            tail -n 300 "$NIGHTLY_LOG" || true
+            exit "$BUILD_RC"
+
+      - name: Finalize diagnostic index on runner
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
+          mkdir -p "$LOGDIR"
+          {
+            echo "Runner-side diagnostic index generated at $(date -u +%FT%TZ)"
+            echo "This step runs even when the OpenIndiana VM/SSH step fails."
+            echo
+            find "$LOGDIR" -type f -printf '%p %s bytes %TY-%Tm-%TdT%TH:%TM:%TS\n' | sort
+          } > "$LOGDIR/runner-file-index.txt"
+          {
+            echo "===== compiler/build error scan ====="
+            find "$LOGDIR" -type f ! -name 'runner-error-index.txt' -print0 |
+            while IFS= read -r -d '' f; do
+              if grep -Iq . "$f"; then
+                matches=$(grep -n -i -B 5 -A 10 -E 'error:|fatal error|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|cannot|failed|killed|out of memory|panic|segmentation fault|ssh exited' "$f" 2>/dev/null)
+                if [ -n "$matches" ]; then
+                  printf '\n===== %s =====\n%s\n' "$f" "$matches"
+                fi
+              fi
+            done
+          } > "$LOGDIR/runner-error-index.txt"
+          echo "===== diagnostic files ====="
+          cat "$LOGDIR/runner-file-index.txt"
+          echo "===== error scan ====="
+          cat "$LOGDIR/runner-error-index.txt"
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: illumos-framebuffer-build-logs-${{ github.run_id }}
+          path: rotfb-build-logs/
+          if-no-files-found: warn
+          retention-days: 14
+ /tmp/rotfb-nightly.env
+            grep -E '^export PERL_PKGVERS=-542
+
+            NIGHTLY_LOG="$LOGDIR/nightly.log"
+            BUILD_NOISE_DIR="$LOGDIR/build-noise"
+            GATE_LOG_DIR="$LOGDIR/gate-logs"
+            mkdir -p "$BUILD_NOISE_DIR" "$GATE_LOG_DIR"
+            printf 'nightly invocation: %s\n' "$(date -u +%FT%TZ)" > "$LOGDIR/build-metadata.txt"
+            printf 'workspace=%s\nupstream_commit=098e95820891f8a83fae679daece7fcf58b7b3a4\n' "$CODEMGR_WS" >> "$LOGDIR/build-metadata.txt"
+
+            # Preserve transient compiler diagnostics while nightly is running.
+            (
+              while :; do
+                find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+                while IFS= read -r f; do
+                  d=$(basename "$(dirname "$f")")
+                  tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+                done
+                if [ -d "$CODEMGR_WS/log" ]; then
+                  find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                  while IFS= read -r f; do
+                    rel=${f#"$CODEMGR_WS/log"/}
+                    rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                    mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                    tmp="$GATE_LOG_DIR/$rel.partial"
+                    cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                  done
+                fi
+                sleep 3
+              done
+            ) &
+            LOG_MONITOR_PID=$!
+
+            # Run nightly asynchronously so the SSH session emits a heartbeat.
+            # The NFS-backed workspace makes each diagnostic snapshot visible on the runner immediately.
+            ksh93 -x tools/scripts/nightly -n /tmp/rotfb-nightly.env > "$NIGHTLY_LOG" 2>&1 &
+            BUILD_PID=$!
+            BUILD_RC=0
+            while kill -0 "$BUILD_PID" 2>/dev/null; do
+              find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+              while IFS= read -r f; do
+                d=$(basename "$(dirname "$f")")
+                tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+              done
+              if [ -d "$CODEMGR_WS/log" ]; then
+                find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                while IFS= read -r f; do
+                  rel=${f#"$CODEMGR_WS/log"/}
+                  rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                  mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                  tmp="$GATE_LOG_DIR/$rel.partial"
+                  cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+                done
+              fi
+              printf 'OpenIndiana build heartbeat: %s\n' "$(date -u +%FT%TZ)" | tee -a "$LOGDIR/runner-heartbeat.log"
+              printf '%s nightly_pid=%s\n' "$(date -u +%FT%TZ)" "$BUILD_PID" > "$LOGDIR/build-state.txt"
+              sleep 10
+            done
+            wait "$BUILD_PID" || BUILD_RC=$?
+
+            printf '%s\n' "$BUILD_RC" > "$LOGDIR/nightly-exit-code.txt"
+            # NIGHTLY_LOG is already on the NFS-shared workspace; it is persisted during the build.
+            cp -f "$NIGHTLY_LOG" "$LOGDIR/nightly.log.final" 2>/dev/null || true
+            cp -f /tmp/rotfb-nightly.env "$LOGDIR/rotfb-nightly.env" 2>/dev/null || true
+
+            # Take a final snapshot after nightly exits, then stop the monitor.
+            find /tmp -maxdepth 3 -type f -path '/tmp/nightly.tmpdir.*/build_noise' -print 2>/dev/null |
+            while IFS= read -r f; do
+              d=$(basename "$(dirname "$f")")
+              tmp="$BUILD_NOISE_DIR/$d.txt.partial"
+              cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$BUILD_NOISE_DIR/$d.txt" 2>/dev/null || true
+            done
+            if [ -d "$CODEMGR_WS/log" ]; then
+              find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+              while IFS= read -r f; do
+                rel=${f#"$CODEMGR_WS/log"/}
+                rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                mkdir -p "$GATE_LOG_DIR/$(dirname "$rel")"
+                tmp="$GATE_LOG_DIR/$rel.partial"
+                cp -f "$f" "$tmp" 2>/dev/null && mv -f "$tmp" "$GATE_LOG_DIR/$rel" 2>/dev/null || true
+              done
+            fi
+            kill "$LOG_MONITOR_PID" 2>/dev/null || true
+            wait "$LOG_MONITOR_PID" 2>/dev/null || true
+
+            # Flatten compiler errors from every captured log into one index.
+            {
+              echo "===== nightly.log compiler/error context ====="
+              grep -n -i -B 4 -A 8 -E 'error:|undefined symbol|syntax error|fatal error|dmake:.*failed|Don.t know how to make' "$NIGHTLY_LOG" || true
+              for f in "$BUILD_NOISE_DIR"/*.txt "$GATE_LOG_DIR"/*; do
+                [ -f "$f" ] || continue
+                echo "===== $f ====="
+                grep -n -i -B 4 -A 8 -E 'error:|undefined symbol|syntax error|fatal error|dmake:.*failed|Don.t know how to make' "$f" || true
+              done
+            } > "$LOGDIR/compiler-error-index.txt"
+
+            {
+              echo "Collected at $(date -u +%FT%TZ)"
+              find "$LOGDIR" -type f -exec ls -ln {} \; 2>&1 || true
+            } > "$LOGDIR/collected-files.txt"
+            echo "===== nightly tail ====="
+            tail -n 300 "$NIGHTLY_LOG" || true
+            exit "$BUILD_RC"
+
+      - name: Finalize diagnostic index on runner
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
+          mkdir -p "$LOGDIR"
+          {
+            echo "Runner-side diagnostic index generated at $(date -u +%FT%TZ)"
+            echo "This step runs even when the OpenIndiana VM/SSH step fails."
+            echo
+            find "$LOGDIR" -type f -printf '%p %s bytes %TY-%Tm-%TdT%TH:%TM:%TS\n' | sort
+          } > "$LOGDIR/runner-file-index.txt"
+          {
+            echo "===== compiler/build error scan ====="
+            find "$LOGDIR" -type f ! -name 'runner-error-index.txt' -print0 |
+            while IFS= read -r -d '' f; do
+              if grep -Iq . "$f"; then
+                matches=$(grep -n -i -B 5 -A 10 -E 'error:|fatal error|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|cannot|failed|killed|out of memory|panic|segmentation fault|ssh exited' "$f" 2>/dev/null)
+                if [ -n "$matches" ]; then
+                  printf '\n===== %s =====\n%s\n' "$f" "$matches"
+                fi
+              fi
+            done
+          } > "$LOGDIR/runner-error-index.txt"
+          echo "===== diagnostic files ====="
+          cat "$LOGDIR/runner-file-index.txt"
+          echo "===== error scan ====="
+          cat "$LOGDIR/runner-error-index.txt"
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: illumos-framebuffer-build-logs-${{ github.run_id }}
+          path: rotfb-build-logs/
+          if-no-files-found: warn
+          retention-days: 14
+ /tmp/rotfb-nightly.env
+            grep -E "^export BUILDPERL32='#'$" /tmp/rotfb-nightly.env
+            if grep -E '^export BUILDPERL64=' /tmp/rotfb-nightly.env; then
+              echo "Unexpected: 64-bit Perl modules were disabled"
+              exit 1
+            fi
+            echo "OpenIndiana has no 32-bit Perl executable; upstream-supported BUILDPERL32='#' skips only 32-bit Perl module targets. No amd64-to-i386 alias is created."
 
             NIGHTLY_LOG="$LOGDIR/nightly.log"
             BUILD_NOISE_DIR="$LOGDIR/build-noise"
