@@ -1,6 +1,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
 #include <sys/kmem.h>
 #include <sys/ddi.h>
 #include <sys/sunddi.h>
@@ -13,6 +14,12 @@ static size_t rotfb_runtime_mapping_size;
 static uint8_t *rotfb_runtime_shadow;
 static size_t rotfb_runtime_shadow_size;
 static fb_info_t *rotfb_runtime_owner;
+
+#define ROTFB_CALLBACK_QUIESCING 0x80000000u
+#define ROTFB_CALLBACK_COUNT_MASK 0x7fffffffu
+
+static volatile uint32_t rotfb_callback_gate = ROTFB_CALLBACK_QUIESCING;
+static volatile uint32_t rotfb_callback_managed;
 
 typedef struct rotfb_saved_state {
 	uint8_t *fb;
@@ -29,6 +36,32 @@ typedef struct rotfb_saved_state {
 } rotfb_saved_state_t;
 
 static rotfb_saved_state_t rotfb_saved_state;
+
+int
+rotfb_runtime_callback_enter(void)
+{
+	uint32_t old;
+
+	if (atomic_add_32_nv(&rotfb_callback_managed, 0) == 0)
+		return (0);
+
+	for (;;) {
+		old = atomic_add_32_nv(&rotfb_callback_gate, 0);
+		if ((old & ROTFB_CALLBACK_QUIESCING) != 0 ||
+		    (old & ROTFB_CALLBACK_COUNT_MASK) ==
+		    ROTFB_CALLBACK_COUNT_MASK)
+			return (-1);
+		if (atomic_cas_32(&rotfb_callback_gate, old, old + 1) == old)
+			return (1);
+	}
+}
+
+void
+rotfb_runtime_callback_exit(int entered)
+{
+	if (entered > 0)
+		atomic_dec_32(&rotfb_callback_gate);
+}
 
 static boolean_t
 rotfb_runtime_valid(void)
@@ -151,6 +184,9 @@ rotfb_runtime_init(fb_info_t *fb)
 	rotfb_runtime_shadow_size = shadow_size;
 	rotfb_runtime_owner = fb;
 
+	/* Gate polled callbacks before publishing runtime framebuffer pointers. */
+	atomic_swap_32(&rotfb_callback_managed, 1);
+
 	rotfb_info.physical_fb = mapping;
 	rotfb_info.logical_fb = shadow;
 	rotfb_info.runtime_ready = B_TRUE;
@@ -167,6 +203,9 @@ rotfb_runtime_init(fb_info_t *fb)
 
 	/* Publish the imported boot image before TEM starts using polled I/O. */
 	rotfb_runtime_flush_all(fb);
+
+	/* Publish the lock-free polled-I/O gate after all surfaces are ready. */
+	atomic_swap_32(&rotfb_callback_gate, 0);
 
 	return (DDI_SUCCESS);
 }
@@ -245,6 +284,23 @@ rotfb_runtime_fini(fb_info_t *fb)
 	    rotfb_runtime_shadow_size != rotfb_saved_state.fb_size)
 		return (DDI_FAILURE);
 
+	/*
+	 * Close the callback gate before changing any published framebuffer
+	 * pointer.  A callback either owns a reference or is rejected.
+	 */
+	for (;;) {
+		uint32_t old = atomic_add_32_nv(&rotfb_callback_gate, 0);
+
+		if ((old & ROTFB_CALLBACK_QUIESCING) != 0)
+			break;
+		if (atomic_cas_32(&rotfb_callback_gate, old,
+		    old | ROTFB_CALLBACK_QUIESCING) == old)
+			break;
+	}
+	while ((atomic_add_32_nv(&rotfb_callback_gate, 0) &
+	    ROTFB_CALLBACK_COUNT_MASK) != 0)
+		delay(1);
+
 	rotfb_info.runtime_ready = B_FALSE;
 	rotfb_info.boot_ready = B_FALSE;
 	bcopy(rotfb_runtime_shadow, rotfb_saved_state.fb,
@@ -282,6 +338,9 @@ rotfb_runtime_fini(fb_info_t *fb)
 		gfxp_unmap_kernel_space((gfxp_kva_t)mapping, map_size);
 	if (shadow != NULL)
 		kmem_free(shadow, shadow_size);
+
+	/* No runtime callback can still hold a reference to freed resources. */
+	atomic_swap_32(&rotfb_callback_managed, 0);
 
 	return (DDI_SUCCESS);
 }

@@ -237,3 +237,39 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +		    ca->height > console->fb.screen.y - ca->row)
 +			return;
  		/* keep track of cursor position for polled mode */
+@@ -645,6 +767,10 @@
+ static void
+ bitmap_polled_copy(struct vis_polledio_arg *arg, struct vis_conscopy *ca)
+ {
+ 	struct gfxp_fb_softc *softc = (struct gfxp_fb_softc *)arg;
++	int entered = rotfb_runtime_callback_enter();
++	if (entered < 0)
++		return;
+ 	bitmap_cons_copy(softc, ca);
++	rotfb_runtime_callback_exit(entered);
+ }
+
+@@ -652,6 +778,10 @@
+ static void
+ bitmap_polled_display(struct vis_polledio_arg *arg, struct vis_consdisplay *da)
+ {
+ 	struct gfxp_fb_softc *softc = (struct gfxp_fb_softc *)arg;
++	int entered = rotfb_runtime_callback_enter();
++	if (entered < 0)
++		return;
+ 	bitmap_cons_display(softc, da);
++	rotfb_runtime_callback_exit(entered);
+ }
+
+@@ -659,6 +789,10 @@
+ static void
+ bitmap_polled_cursor(struct vis_polledio_arg *arg, struct vis_conscursor *ca)
+ {
+ 	struct gfxp_fb_softc *softc = (struct gfxp_fb_softc *)arg;
++	int entered = rotfb_runtime_callback_enter();
++	if (entered < 0)
++		return;
+ 	bitmap_cons_cursor(softc, ca);
++	rotfb_runtime_callback_exit(entered);
+ }
+
