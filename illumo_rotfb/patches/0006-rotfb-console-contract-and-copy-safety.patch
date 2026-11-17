@@ -155,12 +155,12 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/g
 +			return (ENXIO);
  	{
 @@ -401,2 +403,4 @@
- 	case VIS_CONSCOPY:
+ 	case VIS_CONSCOPY:	/* move */
 +		if (!(mode & FKIOCTL))
 +			return (ENXIO);
  	{
 @@ -422,2 +426,4 @@
- 	case VIS_CONSDISPLAY:
+ 	case VIS_CONSDISPLAY:	/* display */
 +		if (!(mode & FKIOCTL))
 +			return (ENXIO);
  	{

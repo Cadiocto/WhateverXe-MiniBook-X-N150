@@ -85,8 +85,16 @@ rotfb_runtime_init(fb_info_t *fb)
 	if (fb == NULL)
 		return (DDI_FAILURE);
 
-	if (rotfb_info.runtime_ready)
-		return (rotfb_runtime_owner == fb ? DDI_SUCCESS : DDI_FAILURE);
+	if (rotfb_info.runtime_ready) {
+		return (rotfb_runtime_owner == fb &&
+		    fb->fb == rotfb_runtime_shadow &&
+		    fb->shadow_fb == rotfb_runtime_shadow &&
+		    fb->fb_size == rotfb_runtime_shadow_size &&
+		    fb->pitch == rotfb_info.logical_pitch &&
+		    fb->screen.x == rotfb_info.logical_width &&
+		    fb->screen.y == rotfb_info.logical_height ?
+		    DDI_SUCCESS : DDI_FAILURE);
+	}
 
 	if (!rotfb_runtime_valid() || rotfb_info.physical_paddr == 0 ||
 	    rotfb_info.physical_size == 0 ||
@@ -171,6 +179,9 @@ rotfb_runtime_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 
 	if (fb == NULL || fb != rotfb_runtime_owner ||
 	    fb->fb != rotfb_runtime_shadow ||
+	    fb->shadow_fb != rotfb_runtime_shadow ||
+	    fb->fb_size != rotfb_runtime_shadow_size ||
+	    fb->bpp != ROTFB_BYTES_PER_PIXEL ||
 	    fb->pitch != rotfb_info.logical_pitch ||
 	    fb->screen.x != rotfb_info.logical_width ||
 	    fb->screen.y != rotfb_info.logical_height ||
@@ -214,7 +225,7 @@ rotfb_runtime_flush_all(fb_info_t *fb)
 		    rotfb_info.logical_height);
 }
 
-void
+int
 rotfb_runtime_fini(fb_info_t *fb)
 {
 	uint8_t *mapping, *shadow;
@@ -222,15 +233,17 @@ rotfb_runtime_fini(fb_info_t *fb)
 
 	if (fb == NULL || !rotfb_info.runtime_ready ||
 	    rotfb_runtime_owner != fb || !rotfb_saved_state.valid)
-		return;
+		return (DDI_FAILURE);
 
 	/*
 	 * Stop new flushes, preserve the current runtime image in the
 	 * boot-owned shadow, then restore the boot mapping and geometry.
 	 */
 	if (rotfb_saved_state.fb == NULL || rotfb_runtime_shadow == NULL ||
+	    rotfb_runtime_mapping == NULL ||
+	    rotfb_runtime_mapping_size != rotfb_info.physical_size ||
 	    rotfb_runtime_shadow_size != rotfb_saved_state.fb_size)
-		return;
+		return (DDI_FAILURE);
 
 	rotfb_info.runtime_ready = B_FALSE;
 	rotfb_info.boot_ready = B_FALSE;
@@ -269,4 +282,6 @@ rotfb_runtime_fini(fb_info_t *fb)
 		gfxp_unmap_kernel_space((gfxp_kva_t)mapping, map_size);
 	if (shadow != NULL)
 		kmem_free(shadow, shadow_size);
+
+	return (DDI_SUCCESS);
 }

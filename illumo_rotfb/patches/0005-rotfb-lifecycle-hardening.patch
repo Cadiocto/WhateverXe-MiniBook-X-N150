@@ -52,7 +52,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  #endif
  
  	/* If the cursor terminal position is 0,0 just reset screen coords */
-@@ -479,6 +482,8 @@
+@@ -479,7 +482,9 @@
  			boot_fb_fill(dest, bg, fb_info.pitch);
  			toffset += fb_info.pitch;
  		}
@@ -60,15 +60,19 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 +			rotfb_boot_flush_all(&fb_info);
  	}
  #endif
+ }
  
-@@ -496,8 +501,8 @@
+@@ -496,8 +501,9 @@
  	/* make sure we will not write past FB */
- 	if (rect->col >= fb_info.screen.x ||
- 	    rect->row >= fb_info.screen.y ||
+-	if (rect->col >= fb_info.screen.x ||
+-	    rect->row >= fb_info.screen.y ||
 -	    rect->col + rect->width >= fb_info.screen.x ||
 -	    rect->row + rect->height >= fb_info.screen.y)
-+	    rect->col + rect->width > fb_info.screen.x ||
-+	    rect->row + rect->height > fb_info.screen.y)
++	if (rect->width == 0 || rect->height == 0 ||
++	    rect->col >= fb_info.screen.x ||
++	    rect->row >= fb_info.screen.y ||
++	    rect->width > fb_info.screen.x - rect->col ||
++	    rect->height > fb_info.screen.y - rect->row)
  		return;
  
  	size = rect->width * fb_info.bpp;
@@ -82,7 +86,12 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 +		sdst = fb_info.shadow_fb + toffset;
  
  	for (i = 0; i < boot_fb_font.vf_height; i++) {
-@@ -748,4 +755,8 @@
+@@ -748,9 +755,13 @@
+ 				if (sfb32 == NULL)
+ 					continue;
+ 
+ 				sfb32[j] = (sfb32[j] ^ fg) ^ bg;
+ 			}
  		}
  		break;
  	}
@@ -102,7 +111,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  #include <sys/rotfb.h>
  #include <sys/gfx_private.h>
  #include "gfxp_fb.h"
-@@ -147,17 +148,24 @@
+@@ -147,17 +148,25 @@
  	if (softc == NULL || softc->console == NULL)
  		return (DDI_SUCCESS);
  
@@ -118,8 +127,9 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 -			softc->console->fb.shadow_fb = NULL;
 -		}
 +		if (rotfb_info.configured) {
-+			if (rotfb_info.runtime_ready)
-+				rotfb_runtime_fini(&softc->console->fb);
++			if (rotfb_info.runtime_ready &&
++			    rotfb_runtime_fini(&softc->console->fb) != DDI_SUCCESS)
++				return (DDI_FAILURE);
 +		} else {
 +			if (softc->console->fb.fb != NULL) {
 +				gfxp_unmap_kernel_space(
@@ -208,11 +218,3 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/g
 +		break;
 +
  	case VIS_CONSCLEAR:	/* clear screen */
-diff --git a/usr/src/uts/i86xpv/Makefile.files b/usr/src/uts/i86xpv/Makefile.files
---- a/usr/src/uts/i86xpv/Makefile.files
-+++ b/usr/src/uts/i86xpv/Makefile.files
-@@ -192,3 +192,3 @@
- GFX_PRIVATE_OBJS += gfx_private.o gfxp_pci.o gfxp_segmap.o \
- 		    gfxp_devmap.o gfxp_vgatext.o gfxp_vm.o vgasubr.o \
--		    gfxp_fb.o gfxp_bitmap.o
-+		    gfxp_fb.o gfxp_bitmap.o rotfb_runtime.o

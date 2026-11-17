@@ -154,11 +154,18 @@ jobs:
             git branch -f rotfb-build HEAD
 
             ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
+            PATCH_APPLY_LOG="$LOGDIR/patch-apply.log"
+            : > "$PATCH_APPLY_LOG"
             for p in "$ROTFB"/patches/*.patch; do
               [ -f "$p" ] || continue
+              echo "CHECK $(basename "$p")" | tee -a "$PATCH_APPLY_LOG"
               git apply --check "$p"
               git apply "$p"
+              echo "APPLIED $(basename "$p")" | tee -a "$PATCH_APPLY_LOG"
             done
+            git diff --check
+            git status --short > "$LOGDIR/upstream-patched-status.txt"
+            git diff --stat > "$LOGDIR/upstream-patched-diffstat.txt"
             mkdir -p usr/src/uts/i86pc/sys usr/src/uts/i86pc/boot usr/src/uts/i86pc/io/gfx_private
             cp "$ROTFB/rotfb.h" usr/src/uts/i86pc/sys/rotfb.h
             cp "$ROTFB/rotfb_boot.c" usr/src/uts/i86pc/boot/rotfb_boot.c

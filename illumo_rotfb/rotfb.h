@@ -29,7 +29,7 @@ int rotfb_boot_import(fb_info_t *);
 void rotfb_boot_flush_rect(fb_info_t *, uint32_t, uint32_t, uint32_t, uint32_t);
 void rotfb_boot_flush_all(fb_info_t *);
 int rotfb_runtime_init(fb_info_t *);
-void rotfb_runtime_fini(fb_info_t *);
+int rotfb_runtime_fini(fb_info_t *);
 void rotfb_runtime_flush_rect(fb_info_t *, uint32_t, uint32_t, uint32_t, uint32_t);
 void rotfb_runtime_flush_all(fb_info_t *);
 #ifdef __cplusplus

@@ -65,21 +65,23 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  			if (softc->mode == KD_TEXT) {
  				(void) memmove(dst + increment,
  				    src + increment, width);
-@@ -384,16 +404,30 @@
+@@ -403,20 +403,30 @@
  bitmap_cons_display(struct gfxp_fb_softc *softc, struct vis_consdisplay *da)
  {
  	union gfx_console *console;
--	uint32_t size, offset;
-+	uint32_t size;
+ 	uint32_t size;		/* write size per scanline */
 +	uint64_t offset;
- 	uint8_t *fbp, *sfbp;
+ 	uint8_t *fbp, *sfbp;	/* fb + calculated offset */
  	int i;
  
 +	if (softc == NULL || da == NULL || softc->console == NULL ||
 +	    da->data == NULL)
 +		return;
  	console = softc->console;
--	if (da->col + da->width > console->fb.screen.x ||
+-	/* make sure we will not write past FB */
+-	if (da->col >= console->fb.screen.x ||
+-	    da->row >= console->fb.screen.y ||
+-	    da->col + da->width > console->fb.screen.x ||
 -	    da->row + da->height > console->fb.screen.y)
 +	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
 +	    console->fb.bpp == 0 || console->fb.pitch == 0 ||
@@ -95,11 +97,14 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  		return;
  
  	size = da->width * console->fb.bpp;
--	offset = da->col * console->fb.bpp + da->row * console->fb.pitch;
+-	fbp = console->fb.fb + da->col * console->fb.bpp +
+-	    da->row * console->fb.pitch;
+-	sfbp = console->fb.shadow_fb + da->col * console->fb.bpp +
+-	    da->row * console->fb.pitch;
 +	offset = (uint64_t)da->col * console->fb.bpp +
 +	    (uint64_t)da->row * console->fb.pitch;
- 	sfbp = console->fb.shadow_fb + offset;
- 	fbp = console->fb.fb + offset;
++	sfbp = console->fb.shadow_fb + offset;
++	fbp = console->fb.fb + offset;
 @@ -444,6 +480,15 @@
  	int i, j, pitch;
  
@@ -158,22 +163,36 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 -	offset = ca->col * bpp + ca->row * pitch;
 +	offset = (uint64_t)ca->col * bpp + (uint64_t)ca->row * pitch;
  	switch (console->fb.depth) {
-@@ -546,2 +608,2 @@
+@@ -540,7 +608,7 @@
+ 	case 8:
+ 		fg = ca->fg_color.eight;
+ 		bg = ca->bg_color.eight;
+ 		for (i = 0; i < ca->height; i++) {
 -			fb8 = console->fb.fb + offset + i * pitch;
 -			sfb8 = console->fb.shadow_fb + offset + i * pitch;
 +			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
 +			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
+ 			for (j = 0; j < size; j += 1) {
 @@ -565,3 +627,3 @@
 -			    (console->fb.fb + offset + i * pitch);
 +			    (console->fb.fb + offset + (uint64_t)i * pitch);
  			sfb16 = (uint16_t *)
 -			    (console->fb.shadow_fb + offset + i * pitch);
 +			    (console->fb.shadow_fb + offset + (uint64_t)i * pitch);
-@@ -585,2 +647,2 @@
+@@ -585,11 +653,11 @@
+ 	case 24:
+ 		fg = ca->fg_color.twentyfour[0] << 16;
+ 		fg |= ca->fg_color.twentyfour[1] << 8;
+ 		fg |= ca->fg_color.twentyfour[2];
+ 		bg = ca->bg_color.twentyfour[0] << 16;
+ 		bg |= ca->bg_color.twentyfour[1] << 8;
+ 		bg |= ca->bg_color.twentyfour[2];
+ 		for (i = 0; i < ca->height; i++) {
 -			fb8 = console->fb.fb + offset + i * pitch;
 -			sfb8 = console->fb.shadow_fb + offset + i * pitch;
 +			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
 +			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
+ 			for (j = 0; j < size; j += 3) {
 @@ -605,3 +667,3 @@
 -			    (console->fb.fb + offset + i * pitch);
 +			    (console->fb.fb + offset + (uint64_t)i * pitch);

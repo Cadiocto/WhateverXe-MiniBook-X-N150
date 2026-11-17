@@ -173,7 +173,13 @@ rotfb_boot_init(fb_info_t *fb, uint8_t *physical_fb)
 	if (fb == NULL || physical_fb == NULL || !rotfb_info.configured ||
 	    rotfb_info.logical_fb == NULL ||
 	    fb->paddr != rotfb_info.physical_paddr ||
-	    !fb->physical.valid)
+	    !fb->physical.valid ||
+	    fb->physical.paddr != rotfb_info.physical_paddr ||
+	    fb->physical.width != rotfb_info.physical_width ||
+	    fb->physical.height != rotfb_info.physical_height ||
+	    fb->physical.pitch != rotfb_info.physical_pitch ||
+	    fb->physical.bpp != rotfb_info.physical_bpp ||
+	    fb->physical.size != rotfb_info.physical_size)
 		return (-1);
 
 	rotfb_info.physical_fb = physical_fb;
@@ -189,6 +195,8 @@ rotfb_boot_import(fb_info_t *fb)
 
 	if (fb == NULL || !rotfb_boot_valid() || !rotfb_info.boot_ready ||
 	    rotfb_info.runtime_ready || fb->fb != rotfb_info.logical_fb ||
+	    fb->fb_size < rotfb_info.logical_size ||
+	    fb->bpp != ROTFB_BYTES_PER_PIXEL || fb->depth != 32 ||
 	    fb->pitch != rotfb_info.logical_pitch ||
 	    fb->screen.x != rotfb_info.logical_width ||
 	    fb->screen.y != rotfb_info.logical_height)
@@ -226,6 +234,8 @@ rotfb_boot_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 	    fb->pitch != rotfb_info.logical_pitch ||
 	    fb->screen.x != rotfb_info.logical_width ||
 	    fb->screen.y != rotfb_info.logical_height ||
+	    fb->fb_size < rotfb_info.logical_size ||
+	    fb->bpp != ROTFB_BYTES_PER_PIXEL || fb->depth != 32 ||
 	    width == 0 || height == 0 || x >= rotfb_info.logical_width ||
 	    y >= rotfb_info.logical_height)
 		return;
