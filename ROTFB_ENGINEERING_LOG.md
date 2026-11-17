@@ -86,3 +86,22 @@
   * Hourly automation `6afcda7b6630819184b8240079e358ee` is enabled, but no completed scheduled agent execution is yet confirmed.
   * Physical Chuwi hardware behavior remains NOT VERIFIED.
 * Next autonomous action: re-check all target runs; if #61 is still queued/in progress, do not dispatch or mutate build state. Once completed, retrieve and analyze its logs and artifacts before deciding whether a source/CI repair is justified.
+
+
+## ROTFB AUTONOMOUS ENGINEERING REPORT
+
+* Timestamp UTC: 2026-11-17T23:28:58Z
+* Branch: `gop-rotation-hook`
+* HEAD before repair: `958a1710a6c05ecd8bd435f50df9474a998c3994`
+* Repair commit: `40d901eee5fc5fd2ffb94af0b5e492b7095191ad`
+* Latest completed target run inspected: #61 / Run `44193836335` / `c0a906084c311d9971a2e66a827f7fd3c7fb924f`
+* Target workflow inventory: 61 runs (#1–#61), all completed at the pre-push recheck; no queued or in-progress target build remained.
+* Build #61 result: FAILURE. Geometry/clipping model tests passed. OpenIndiana VM step failed before compilation or linking.
+* First root cause: `git apply --check` rejected the i86xpv hunk in `0004-Makefile-files.patch` at `usr/src/uts/i86xpv/Makefile.files:192`. The hunk had only two leading context lines and no trailing context. The pinned upstream block at lines 192–194 matched textually, but this short context was not accepted by `git apply`. The earlier boot-object insertion in the same file also shifts the new-side position.
+* Minimal repair: expanded the i86xpv hunk to include the preceding `BALLOON_OBJS`, `DOMCAPS_OBJS`, and `EVTCHN_OBJS` lines and following `IOAT_OBJS`, `ISANEXUS_OBJS`, and `PCI_E_NEXUS_OBJS` lines; updated the hunk header to `@@ -189,7 +190,7 @@`. Updated the model-test contract assertion to expect the corrected hunk header. No runtime source or shadow-framebuffer behavior changed.
+* Patch audit: all eight patches in lexical order were checked. All hunk old/new line counts are internally consistent, all files end with a newline, and the 0006 console-contract guards are present.
+* Local validation: ROTFB geometry/clipping model tests PASS; corrected 0004 patch `git apply --check` PASS against a local fixture containing the exact pinned-upstream context for both Makefile.files targets; `git diff --check` PASS for the two-file change. A full local upstream clone/whole-series apply was not possible because outbound DNS resolution is unavailable in this execution container.
+* Commit contents: only `illumo_rotfb/patches/0004-Makefile-files.patch` and `illumo_rotfb/tests/rotfb_model_test.py`.
+* Build scheduling: rechecked all 61 target runs immediately before moving the branch ref; zero were queued/in progress. Pushed one source commit, which is covered by the workflow's `illumo_rotfb/**` path filter and should create one automatic target run. No manual dispatch or concurrent build was issued. The next cycle must inspect that run and confirm patch application through 0008 before assessing compilation/linking.
+* Issues fallback: GitHub Issues remain disabled (HTTP 410); this append-only root log remains the durable engineering record and is outside the target workflow path filters.
+* Hardware validation: NOT PERFORMED. No claim of Chuwi hardware success.
