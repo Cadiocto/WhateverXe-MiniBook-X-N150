@@ -100,7 +100,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  
  	return (0);
  }
-@@ -640,7 +662,11 @@
+@@ -640,6 +662,10 @@
  		ca->col = console->fb.cursor.origin.x;
  		break;
  	}
