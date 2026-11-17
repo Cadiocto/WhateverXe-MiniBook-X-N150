@@ -50,11 +50,11 @@ jobs:
               echo "===== pkg contents -m runtime/perl-510 ====="
               pkg contents -m runtime/perl-510
               echo "===== all Perl path entries (including symlinks) ====="
-              find /usr/perl5 -name perl -exec ls -ld {} \\; 2>&1
+              find /usr/perl5 -name perl -exec ls -ld {} \; 2>&1
               echo "===== regular Perl executables ====="
-              find /usr/perl5 -type f -name perl -exec ls -l {} \\; -exec file {} \\; 2>&1
+              find /usr/perl5 -type f -name perl -exec ls -l {} \; -exec file {} \; 2>&1
               echo "===== executable Perl candidates ====="
-              find /usr/perl5 -name perl -exec sh -c 'test -x "$1" && { echo "EXECUTABLE: $1"; "$1" -V:archname; }' sh {} \\; 2>&1
+              find /usr/perl5 -name perl -exec sh -c 'test -x "$1" && { echo "EXECUTABLE: $1"; "$1" -V:archname; }' sh {} \; 2>&1
               echo "===== xsubpp ====="
               ls -l /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
             } > "$PERL_AUDIT" 2>&1
