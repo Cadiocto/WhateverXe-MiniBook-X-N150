@@ -20,7 +20,7 @@ rotfb_boot_configure(fb_info_t *fb)
  if (fb == NULL || fb->paddr == 0 || fb->pitch == 0 ||
      fb->screen.x == 0 || fb->screen.y == 0 || fb->bpp != 4)
   return (-1);
- bzero(&rotfb_info, sizeof (rotfb_info));
+ (void) memset(&rotfb_info, 0, sizeof (rotfb_info));
  rotfb_info.physical_paddr = fb->paddr;
  rotfb_info.physical_width = fb->screen.x;
  rotfb_info.physical_height = fb->screen.y;
@@ -48,7 +48,7 @@ rotfb_boot_shadow_init(struct bootops *bops, fb_info_t *fb)
      rotfb_info.logical_size, MMU_PAGESIZE);
  if (shadow == NULL)
   return (-1);
- bzero(shadow, rotfb_info.logical_size);
+ (void) memset(shadow, 0, rotfb_info.logical_size);
  rotfb_info.logical_fb = shadow;
  fb->shadow_fb = NULL;
  fb->fb = shadow;
