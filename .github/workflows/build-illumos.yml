@@ -37,9 +37,31 @@ jobs:
             set -eux
             pkg refresh
             pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
+
+            # Audit the installed IPS payload before assuming Solaris Perl paths.
+            # The illumos build invokes both i386 and amd64 Perl pathnames.
+            PERL_AUDIT="$GITHUB_WORKSPACE/rotfb-build-logs/perl-package-audit.txt"
+            mkdir -p "$(dirname "$PERL_AUDIT")"
+            {
+              echo "===== installed Perl package ====="
+              pkg list -Hv runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
+              echo "===== pkg contents runtime/perl-510 ====="
+              pkg contents runtime/perl-510
+              echo "===== pkg contents -m runtime/perl-510 ====="
+              pkg contents -m runtime/perl-510
+              echo "===== all Perl path entries (including symlinks) ====="
+              find /usr/perl5 -name perl -exec ls -ld {} \\; 2>&1
+              echo "===== regular Perl executables ====="
+              find /usr/perl5 -type f -name perl -exec ls -l {} \\; -exec file {} \\; 2>&1
+              echo "===== executable Perl candidates ====="
+              find /usr/perl5 -name perl -exec sh -c 'test -x "$1" && { echo "EXECUTABLE: $1"; "$1" -V:archname; }' sh {} \\; 2>&1
+              echo "===== xsubpp ====="
+              ls -l /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
+            } > "$PERL_AUDIT" 2>&1
+            cat "$PERL_AUDIT"
+            test -f /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
             test -x /usr/perl5/5.10.0/bin/i386/perl
             test -x /usr/perl5/5.10.0/bin/amd64/perl
-            test -f /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
             /usr/perl5/5.10.0/bin/amd64/perl -v
           run: |
             set -u
