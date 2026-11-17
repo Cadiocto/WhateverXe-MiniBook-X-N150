@@ -296,25 +296,25 @@ jobs:
 
             # Require compile and link evidence for both kernel architectures.
             EVIDENCE_RC=0
-            BOOT_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/rotfb_boot\\.o .*rotfb_boot\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            BOOT_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/rotfb_boot\\.o .*rotfb_boot\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            RUNTIME_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/rotfb_runtime\\.o .*rotfb_runtime\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            RUNTIME_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/rotfb_runtime\\.o .*rotfb_runtime\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            BITMAP_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/gfxp_bitmap\\.o .*gfxp_bitmap\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            BITMAP_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/gfxp_bitmap\\.o .*gfxp_bitmap\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            GFXP_FB_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/gfxp_fb\\.o .*gfxp_fb\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            GFXP_FB_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/gfxp_fb\\.o .*gfxp_fb\\.c' "$GATE_LOG_DIR/nightly.log" || true)
-            BOOT_LINK_COUNT=$(grep -E -c '/ld -r -o obj64/unix\\.o .*obj64/rotfb_boot\\.o' "$GATE_LOG_DIR/nightly.log" || true)
-            RUNTIME_LINK_COUNT=$(grep -E -c '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/rotfb_runtime\\.o' "$GATE_LOG_DIR/nightly.log" || true)
-            BITMAP_LINK_COUNT=$(grep -E -c '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/gfxp_bitmap\\.o' "$GATE_LOG_DIR/nightly.log" || true)
-            GFXP_FB_LINK_COUNT=$(grep -E -c '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/gfxp_fb\\.o' "$GATE_LOG_DIR/nightly.log" || true)
+            BOOT_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/rotfb_boot\.o .*rotfb_boot\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            BOOT_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/rotfb_boot\.o .*rotfb_boot\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            RUNTIME_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/rotfb_runtime\.o .*rotfb_runtime\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            RUNTIME_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/rotfb_runtime\.o .*rotfb_runtime\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            BITMAP_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/gfxp_bitmap\.o .*gfxp_bitmap\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            BITMAP_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/gfxp_bitmap\.o .*gfxp_bitmap\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            GFXP_FB_PC_COMPILE_COUNT=$(grep -E -c ' -Di86pc .* -c -o obj64/gfxp_fb\.o .*gfxp_fb\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            GFXP_FB_XPV_COMPILE_COUNT=$(grep -E -c ' -D__i86xpv .* -c -o obj64/gfxp_fb\.o .*gfxp_fb\.c' "$GATE_LOG_DIR/nightly.log" || true)
+            BOOT_LINK_COUNT=$(grep -E -c '/ld -r -o obj64/unix\.o .*obj64/rotfb_boot\.o' "$GATE_LOG_DIR/nightly.log" || true)
+            RUNTIME_LINK_COUNT=$(grep -E -c '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/rotfb_runtime\.o' "$GATE_LOG_DIR/nightly.log" || true)
+            BITMAP_LINK_COUNT=$(grep -E -c '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/gfxp_bitmap\.o' "$GATE_LOG_DIR/nightly.log" || true)
+            GFXP_FB_LINK_COUNT=$(grep -E -c '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/gfxp_fb\.o' "$GATE_LOG_DIR/nightly.log" || true)
 
-            grep -E ' -c -o obj64/rotfb_boot\\.o .*rotfb_boot\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-boot-compile-commands.txt" || true
-            grep -E '/ld -r -o obj64/unix\\.o .*obj64/rotfb_boot\\.o' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-boot-link-commands.txt" || true
-            grep -E ' -c -o obj64/rotfb_runtime\\.o .*rotfb_runtime\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-runtime-compile-commands.txt" || true
-            grep -E '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/rotfb_runtime\\.o' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-runtime-link-commands.txt" || true
-            grep -E ' -c -o obj64/gfxp_bitmap\\.o .*gfxp_bitmap\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-bitmap-compile-commands.txt" || true
-            grep -E ' -c -o obj64/gfxp_fb\\.o .*gfxp_fb\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-fb-compile-commands.txt" || true
+            grep -E ' -c -o obj64/rotfb_boot\.o .*rotfb_boot\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-boot-compile-commands.txt" || true
+            grep -E '/ld -r -o obj64/unix\.o .*obj64/rotfb_boot\.o' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-boot-link-commands.txt" || true
+            grep -E ' -c -o obj64/rotfb_runtime\.o .*rotfb_runtime\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-runtime-compile-commands.txt" || true
+            grep -E '/ld -ztype=kmod .* -o obj64/gfx_private .*obj64/rotfb_runtime\.o' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-runtime-link-commands.txt" || true
+            grep -E ' -c -o obj64/gfxp_bitmap\.o .*gfxp_bitmap\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-bitmap-compile-commands.txt" || true
+            grep -E ' -c -o obj64/gfxp_fb\.o .*gfxp_fb\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-fb-compile-commands.txt" || true
 
             {
               echo "rotfb_boot_i86pc_compile_commands=$BOOT_PC_COMPILE_COUNT"
