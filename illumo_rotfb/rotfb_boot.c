@@ -3,7 +3,7 @@
 #include <sys/framebuffer.h>
 #include <sys/bootconf.h>
 #include <sys/rotfb.h>
-#include <sys/mmu.h>
+#include <sys/sysmacros.h>
 rotfb_info_t rotfb_info;
 static boolean_t
 rotfb_boot_valid(void)
