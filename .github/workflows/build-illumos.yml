@@ -36,7 +36,11 @@ jobs:
           prepare: |
             set -eux
             pkg refresh
-            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93
+            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
+            test -x /usr/perl5/5.10.0/bin/i386/perl
+            test -x /usr/perl5/5.10.0/bin/amd64/perl
+            test -f /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
+            /usr/perl5/5.10.0/bin/amd64/perl -v
           run: |
             set -u
             LOGDIR="$GITHUB_WORKSPACE/rotfb-build-logs"
