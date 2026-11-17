@@ -28,7 +28,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 +	}
  
  	fb_info.shadow_fb = (uint8_t *)bops->bsys_alloc(NULL, NULL,
-@@ -436,11 +439,17 @@
+@@ -436,15 +439,23 @@
  #if defined(_BOOT)
  	/*
  	 * Being called from dboot, we can have cursor terminal
@@ -52,7 +52,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  #endif
  
  	/* If the cursor terminal position is 0,0 just reset screen coords */
-@@ -479,7 +482,9 @@
+@@ -479,6 +482,8 @@
  			boot_fb_fill(dest, bg, fb_info.pitch);
  			toffset += fb_info.pitch;
  		}
@@ -137,7 +137,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  	}
  	return (DDI_SUCCESS);
  }
-@@ -672,27 +679,44 @@
+@@ -672,27 +679,43 @@
  	struct gfxp_fb_softc *softc = (struct gfxp_fb_softc *)ptr;
  	union gfx_console *console;
 -	size_t length;
@@ -192,7 +192,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
-@@ -372,3 +372,14 @@
+@@ -372,4 +372,15 @@
  		}
  		break;
  
@@ -211,7 +211,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/g
 diff --git a/usr/src/uts/i86xpv/Makefile.files b/usr/src/uts/i86xpv/Makefile.files
 --- a/usr/src/uts/i86xpv/Makefile.files
 +++ b/usr/src/uts/i86xpv/Makefile.files
-@@ -192,4 +192,4 @@
+@@ -192,3 +192,3 @@
  GFX_PRIVATE_OBJS += gfx_private.o gfxp_pci.o gfxp_segmap.o \
  		    gfxp_devmap.o gfxp_vgatext.o gfxp_vm.o vgasubr.o \
 -		    gfxp_fb.o gfxp_bitmap.o

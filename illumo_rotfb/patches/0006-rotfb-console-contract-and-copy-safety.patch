@@ -1,0 +1,196 @@
+diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
+--- a/usr/src/uts/i86pc/boot/boot_fb.c
++++ b/usr/src/uts/i86pc/boot/boot_fb.c
+@@ -433,9 +433,26 @@
+ 	/* frame buffer address is mapped in dboot. */
+-	if (rotfb_info.configured && rotfb_info.logical_fb != NULL &&
+-	    rotfb_boot_init(&fb_info,
+-	    (uint8_t *)(uintptr_t)fb_info.physical.paddr) == 0) {
+-		(void) rotfb_boot_import(&fb_info);
+-		fb_info.fb = rotfb_info.logical_fb;
++	if (rotfb_info.configured && rotfb_info.logical_fb != NULL) {
++		if (!rotfb_info.boot_ready) {
++			if (rotfb_boot_init(&fb_info,
++			    (uint8_t *)(uintptr_t)fb_info.physical.paddr) != 0 ||
++			    rotfb_boot_import(&fb_info) != 0) {
++				rotfb_info.configured = B_FALSE;
++				rotfb_info.boot_ready = B_FALSE;
++				rotfb_info.runtime_ready = B_FALSE;
++				rotfb_info.physical_fb = NULL;
++				rotfb_info.logical_fb = NULL;
++				fb_info.fb = (uint8_t *)(uintptr_t)fb_info.paddr;
++				fb_info.fb_size = fb_info.physical.size;
++				fb_info.pitch = fb_info.physical.pitch;
++				fb_info.screen.x = fb_info.physical.width;
++				fb_info.screen.y = fb_info.physical.height;
++				fb_info.bpp = fb_info.physical.bpp;
++			} else {
++				fb_info.fb = rotfb_info.logical_fb;
++			}
++		} else {
++			fb_info.fb = rotfb_info.logical_fb;
++		}
+ 	} else {
+ 		fb_info.fb = (uint8_t *)(uintptr_t)fb_info.paddr;
+ 	}
+@@ -591,38 +611,65 @@
+ static void
+ boot_fb_conscopy(struct vis_conscopy *c_copy)
+ {
+-	uint32_t soffset, toffset;
+-	uint32_t width, height, increment;
++	uint64_t soffset, toffset, width, increment;
++	uint32_t width_pixels, height, i;
+ 	uint8_t *src, *dst, *sdst = NULL;
+-	int i;
+ 
+-	soffset = c_copy->s_col * fb_info.bpp + c_copy->s_row * fb_info.pitch;
+-	toffset = c_copy->t_col * fb_info.bpp + c_copy->t_row * fb_info.pitch;
++	if (c_copy == NULL || fb_info.fb == NULL || fb_info.fb_size == 0 ||
++	    fb_info.pitch == 0 || fb_info.bpp == 0 ||
++	    fb_info.screen.x == 0 || fb_info.screen.y == 0 ||
++	    (uint64_t)fb_info.pitch <
++	    (uint64_t)fb_info.screen.x * fb_info.bpp ||
++	    (uint64_t)fb_info.pitch >
++	    (uint64_t)-1 / fb_info.screen.y ||
++	    fb_info.fb_size < (uint64_t)fb_info.pitch * fb_info.screen.y ||
++	    c_copy->s_col > c_copy->e_col ||
++	    c_copy->s_row > c_copy->e_row ||
++	    c_copy->s_col >= fb_info.screen.x ||
++	    c_copy->s_row >= fb_info.screen.y ||
++	    c_copy->e_col >= fb_info.screen.x ||
++	    c_copy->e_row >= fb_info.screen.y ||
++	    c_copy->t_col >= fb_info.screen.x ||
++	    c_copy->t_row >= fb_info.screen.y)
++		return;
+ 
+-	src = fb_info.fb + soffset;
+-	dst = fb_info.fb + toffset;
++	width_pixels = c_copy->e_col - c_copy->s_col + 1;
++	height = c_copy->e_row - c_copy->s_row + 1;
++	if (width_pixels > fb_info.screen.x - c_copy->t_col ||
++	    height > fb_info.screen.y - c_copy->t_row)
++		return;
+ 
+-	if (fb_info.shadow_fb != NULL) {
+-		src = fb_info.shadow_fb + soffset;
+-		sdst = fb_info.shadow_fb + toffset;
+-	}
++	width = (uint64_t)width_pixels * fb_info.bpp;
++	soffset = (uint64_t)c_copy->s_col * fb_info.bpp +
++	    (uint64_t)c_copy->s_row * fb_info.pitch;
++	toffset = (uint64_t)c_copy->t_col * fb_info.bpp +
++	    (uint64_t)c_copy->t_row * fb_info.pitch;
+ 
+-	width = (c_copy->e_col - c_copy->s_col + 1) * fb_info.bpp;
+-	height = c_copy->e_row - c_copy->s_row + 1;
++	if (soffset > fb_info.fb_size || toffset > fb_info.fb_size ||
++	    width > fb_info.fb_size - soffset ||
++	    width > fb_info.fb_size - toffset)
++		return;
+ 
+-	for (i = 0; i < height; i++) {
+-		increment = i * fb_info.pitch;
++	src = fb_info.fb + soffset;
++	dst = fb_info.fb + toffset;
++	if (fb_info.shadow_fb != NULL) {
++		src = fb_info.shadow_fb + soffset;
++		sdst = fb_info.shadow_fb + toffset;
++	}
+ 
+-		/* Make sure we fit into FB size. */
+-		if (soffset + increment + width >= fb_info.fb_size ||
+-		    toffset + increment + width >= fb_info.fb_size)
++	for (i = 0; i < height; i++) {
++		increment = (uint64_t)i * fb_info.pitch;
++		if (increment > fb_info.fb_size - soffset ||
++		    width > fb_info.fb_size - soffset - increment ||
++		    increment > fb_info.fb_size - toffset ||
++		    width > fb_info.fb_size - toffset - increment)
+ 			break;
+ 
+-		boot_fb_cpy(dst + increment, src + increment, width);
++		boot_fb_cpy(dst + increment, src + increment, (uint32_t)width);
+ 
+ 		if (sdst != NULL)
+-			boot_fb_cpy(sdst + increment, src + increment, width);
++			boot_fb_cpy(sdst + increment, src + increment, (uint32_t)width);
+ 	}
+ 	if (rotfb_info.boot_ready)
+ 		rotfb_boot_flush_all(&fb_info);
+ }
+@@ -636,3 +674,3 @@
+ 	c_copy.e_col = (fb_info.terminal.x - chars) * boot_fb_font.vf_width;
+-	c_copy.e_col += fb_info.terminal_origin.x;
+-	c_copy.e_row = c_copy.s_row + boot_fb_font.vf_height;
++	c_copy.e_col += fb_info.terminal_origin.x - 1;
++	c_copy.e_row = c_copy.s_row + boot_fb_font.vf_height - 1;
+@@ -650,13 +689,18 @@
+ boot_fb_scroll(void)
+ {
+ 	struct vis_conscopy c_copy;
+ 
++	if (fb_info.terminal.x == 0 || fb_info.terminal.y <= 1)
++		return;
++
+ 	/* support for scrolling. set up the console copy data and last line */
+ 	c_copy.s_row = fb_info.terminal_origin.y + boot_fb_font.vf_height;
+ 	c_copy.s_col = fb_info.terminal_origin.x;
+-	c_copy.e_row = fb_info.screen.y - fb_info.terminal_origin.y;
+-	c_copy.e_col = fb_info.screen.x - fb_info.terminal_origin.x;
++	c_copy.e_row = fb_info.terminal_origin.y +
++	    fb_info.terminal.y * boot_fb_font.vf_height - 1;
++	c_copy.e_col = fb_info.terminal_origin.x +
++	    fb_info.terminal.x * boot_fb_font.vf_width - 1;
+ 	c_copy.t_row = fb_info.terminal_origin.y;
+ 	c_copy.t_col = fb_info.terminal_origin.x;
+ 
+ 	boot_fb_conscopy(&c_copy);
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
+@@ -383,2 +383,4 @@
+ 	case VIS_CONSCLEAR:	/* clear screen */
++		if (!(mode & FKIOCTL))
++			return (ENXIO);
+ 	{
+@@ -401,2 +403,4 @@
+ 	case VIS_CONSCOPY:
++		if (!(mode & FKIOCTL))
++			return (ENXIO);
+ 	{
+@@ -422,2 +426,4 @@
+ 	case VIS_CONSDISPLAY:
++		if (!(mode & FKIOCTL))
++			return (ENXIO);
+ 	{
+@@ -448,2 +454,4 @@
+ 	case VIS_CONSCURSOR:
++		if (!(mode & FKIOCTL))
++			return (ENXIO);
+ 	{
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -104,6 +104,16 @@
+ void
+ gfxp_bm_getfb_info(gfxp_fb_softc_ptr_t ptr, struct gfxp_bm_fb_info *fbip)
+ {
+ 	struct gfxp_fb_softc *softc = (struct gfxp_fb_softc *)ptr;
+ 
++	if (fbip == NULL)
++		return;
++	fbip->xres = 0;
++	fbip->yres = 0;
++	fbip->bpp = 0;
++	fbip->depth = 0;
++	if (softc == NULL || softc->console == NULL ||
++	    (softc->fb_type == GFXP_BITMAP && rotfb_info.configured))
++		return;
++
+ 	switch (softc->fb_type) {
+@@ -198,2 +208,4 @@
+ 	case KD_GRAPHICS:
++		if (rotfb_info.configured)
++			return (ENOTSUP);
+ 		bitmap_kdsetgraphics(softc);

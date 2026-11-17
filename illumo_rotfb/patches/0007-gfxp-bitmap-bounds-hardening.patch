@@ -1,0 +1,211 @@
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -312,24 +312,47 @@
+ bitmap_cons_copy(struct gfxp_fb_softc *softc, struct vis_conscopy *ma)
+ {
+ 	union gfx_console *console;
+-	uint32_t soffset, toffset;
+-	uint32_t width, height, pitch;
++	uint64_t soffset, toffset, width;
++	uint32_t width_pixels, height, pitch;
+ 	uint8_t *src, *dst, *sdst;
+ 	int i;
+ 
++	if (softc == NULL || ma == NULL || softc->console == NULL)
++		return;
+ 	console = softc->console;
+-	soffset = ma->s_col * console->fb.bpp + ma->s_row * console->fb.pitch;
+-	toffset = ma->t_col * console->fb.bpp + ma->t_row * console->fb.pitch;
++	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
++	    console->fb.bpp == 0 || console->fb.pitch == 0 ||
++	    console->fb.screen.x == 0 || console->fb.screen.y == 0 ||
++	    (uint64_t)console->fb.pitch <
++	    (uint64_t)console->fb.screen.x * console->fb.bpp ||
++	    console->fb.fb_size <
++	    (uint64_t)console->fb.pitch * console->fb.screen.y ||
++	    ma->s_col > ma->e_col || ma->s_row > ma->e_row ||
++	    ma->s_col >= console->fb.screen.x ||
++	    ma->e_col >= console->fb.screen.x ||
++	    ma->s_row >= console->fb.screen.y ||
++	    ma->e_row >= console->fb.screen.y ||
++	    ma->t_col >= console->fb.screen.x ||
++	    ma->t_row >= console->fb.screen.y)
++		return;
++	width_pixels = ma->e_col - ma->s_col + 1;
++	height = ma->e_row - ma->s_row + 1;
++	if (width_pixels > console->fb.screen.x - ma->t_col ||
++	    height > console->fb.screen.y - ma->t_row)
++		return;
++	soffset = (uint64_t)ma->s_col * console->fb.bpp +
++	    (uint64_t)ma->s_row * console->fb.pitch;
++	toffset = (uint64_t)ma->t_col * console->fb.bpp +
++	    (uint64_t)ma->t_row * console->fb.pitch;
+ 	src = console->fb.shadow_fb + soffset;
+ 	dst = console->fb.fb + toffset;
+ 	sdst = console->fb.shadow_fb + toffset;
+-	width = (ma->e_col - ma->s_col + 1) * console->fb.bpp;
+-	height = ma->e_row - ma->s_row + 1;
++	width = (uint64_t)width_pixels * console->fb.bpp;
+ 	pitch = console->fb.pitch;
+ 
+ 	if (toffset <= soffset) {
+ 		for (i = 0; i < height; i++) {
+-			uint32_t increment = i * pitch;
++			uint64_t increment = (uint64_t)i * pitch;
+ 			if (softc->mode == KD_TEXT) {
+ 				(void) memmove(dst + increment,
+ 				    src + increment, width);
+@@ -340,7 +360,7 @@
+ 		}
+ 	} else {
+ 		for (i = height - 1; i >= 0; i--) {
+-			uint32_t increment = i * pitch;
++			uint64_t increment = (uint64_t)i * pitch;
+ 			if (softc->mode == KD_TEXT) {
+ 				(void) memmove(dst + increment,
+ 				    src + increment, width);
+@@ -384,16 +404,30 @@
+ bitmap_cons_display(struct gfxp_fb_softc *softc, struct vis_consdisplay *da)
+ {
+ 	union gfx_console *console;
+-	uint32_t size, offset;
++	uint32_t size;
++	uint64_t offset;
+ 	uint8_t *fbp, *sfbp;
+ 	int i;
+ 
++	if (softc == NULL || da == NULL || softc->console == NULL ||
++	    da->data == NULL)
++		return;
+ 	console = softc->console;
+-	if (da->col + da->width > console->fb.screen.x ||
+-	    da->row + da->height > console->fb.screen.y)
++	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
++	    console->fb.bpp == 0 || console->fb.pitch == 0 ||
++	    da->width == 0 || da->height == 0 ||
++	    da->col >= console->fb.screen.x ||
++	    da->row >= console->fb.screen.y ||
++	    da->width > console->fb.screen.x - da->col ||
++	    da->height > console->fb.screen.y - da->row ||
++	    (uint64_t)console->fb.pitch <
++	    (uint64_t)console->fb.screen.x * console->fb.bpp ||
++	    console->fb.fb_size <
++	    (uint64_t)console->fb.pitch * console->fb.screen.y)
+ 		return;
+ 
+ 	size = da->width * console->fb.bpp;
+-	offset = da->col * console->fb.bpp + da->row * console->fb.pitch;
++	offset = (uint64_t)da->col * console->fb.bpp +
++	    (uint64_t)da->row * console->fb.pitch;
+ 	sfbp = console->fb.shadow_fb + offset;
+ 	fbp = console->fb.fb + offset;
+@@ -444,6 +480,15 @@
+ 	int i, j, pitch;
+ 
++	if (softc == NULL || ca == NULL || softc->console == NULL)
++		return (EINVAL);
+ 	console = softc->console;
+ 	pitch = console->fb.pitch;
++	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
++	    console->fb.bpp == 0 || pitch <= 0 ||
++	    console->fb.screen.x == 0 || console->fb.screen.y == 0 ||
++	    (uint64_t)pitch < (uint64_t)console->fb.screen.x *
++	    console->fb.bpp ||
++	    console->fb.fb_size < (uint64_t)pitch * console->fb.screen.y)
++		return (EINVAL);
+ 
+ 	switch (console->fb.depth) {
+@@ -492,7 +540,7 @@
+ 		data |= ca->bg_color.twentyfour[2];
+ 		for (i = 0; i < console->fb.screen.y; i++) {
+ 			fb = console->fb.fb + i * pitch;
+ 			sfb = console->fb.shadow_fb + i * pitch;
+-			for (j = 0; j < pitch; j += 3) {
++			for (j = 0; j < console->fb.screen.x * 3; j += 3) {
+ 				if (softc->mode == KD_TEXT) {
+ 					fb[j] = (data >> 16) & 0xff;
+@@ -521,14 +569,27 @@
+ bitmap_display_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
+ {
+ 	union gfx_console *console;
+-	uint32_t fg, bg, offset, size;
++	uint32_t fg, bg, size;
++	uint64_t offset;
+ 	uint32_t *fb32, *sfb32;
+ 	uint16_t *fb16, *sfb16;
+ 	uint8_t *fb8, *sfb8;
+ 	int i, j, bpp, pitch;
+ 
++	if (softc == NULL || ca == NULL || softc->console == NULL)
++		return;
+ 	console = softc->console;
+ 	pitch = console->fb.pitch;
+ 	bpp = console->fb.bpp;
++	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
++	    bpp <= 0 || pitch <= 0 || console->fb.screen.x == 0 ||
++	    console->fb.screen.y == 0 || ca->width == 0 || ca->height == 0 ||
++	    ca->col >= console->fb.screen.x ||
++	    ca->row >= console->fb.screen.y ||
++	    ca->width > console->fb.screen.x - ca->col ||
++	    ca->height > console->fb.screen.y - ca->row ||
++	    (uint64_t)pitch < (uint64_t)console->fb.screen.x * bpp ||
++	    console->fb.fb_size < (uint64_t)pitch * console->fb.screen.y)
++		return;
+ 	size = ca->width * bpp;
+ 
+@@ -540,2 +601,2 @@
+-	offset = ca->col * bpp + ca->row * pitch;
++	offset = (uint64_t)ca->col * bpp + (uint64_t)ca->row * pitch;
+ 	switch (console->fb.depth) {
+@@ -546,2 +608,2 @@
+-			fb8 = console->fb.fb + offset + i * pitch;
+-			sfb8 = console->fb.shadow_fb + offset + i * pitch;
++			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
++			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
+@@ -565,3 +627,3 @@
+-			    (console->fb.fb + offset + i * pitch);
++			    (console->fb.fb + offset + (uint64_t)i * pitch);
+ 			sfb16 = (uint16_t *)
+-			    (console->fb.shadow_fb + offset + i * pitch);
++			    (console->fb.shadow_fb + offset + (uint64_t)i * pitch);
+@@ -585,2 +647,2 @@
+-			fb8 = console->fb.fb + offset + i * pitch;
+-			sfb8 = console->fb.shadow_fb + offset + i * pitch;
++			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
++			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
+@@ -605,3 +667,3 @@
+-			    (console->fb.fb + offset + i * pitch);
++			    (console->fb.fb + offset + (uint64_t)i * pitch);
+ 			sfb32 = (uint32_t *)
+-			    (console->fb.shadow_fb + offset + i * pitch);
++			    (console->fb.shadow_fb + offset + (uint64_t)i * pitch);
+@@ -622,5 +684,9 @@
+ bitmap_cons_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
+ {
+-	union gfx_console *console = softc->console;
++	union gfx_console *console;
++
++	if (softc == NULL || ca == NULL || softc->console == NULL)
++		return;
++	console = softc->console;
+ 
+ 	switch (ca->action) {
+@@ -631,3 +710,17 @@
+ 		break;
+ 	case VIS_DISPLAY_CURSOR:
++		if (console->fb.font_width == 0 || console->fb.font_height == 0 ||
++		    ca->col < console->fb.terminal_origin.x ||
++		    ca->row < console->fb.terminal_origin.y ||
++		    (uint32_t)(ca->col - console->fb.terminal_origin.x) >=
++		    (uint32_t)console->fb.terminal.x * console->fb.font_width ||
++		    (uint32_t)(ca->row - console->fb.terminal_origin.y) >=
++		    (uint32_t)console->fb.terminal.y * console->fb.font_height)
++			return;
++		if (ca->width == 0 || ca->height == 0 ||
++		    ca->col >= console->fb.screen.x ||
++		    ca->row >= console->fb.screen.y ||
++		    ca->width > console->fb.screen.x - ca->col ||
++		    ca->height > console->fb.screen.y - ca->row)
++			return;
+ 		/* keep track of cursor position for polled mode */

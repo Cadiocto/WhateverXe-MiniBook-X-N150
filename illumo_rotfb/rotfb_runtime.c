@@ -98,7 +98,7 @@ rotfb_runtime_init(fb_info_t *fb)
 	    fb->physical.bpp != rotfb_info.physical_bpp ||
 	    fb->physical.size != rotfb_info.physical_size ||
 	    fb->physical.fb != rotfb_info.physical_fb ||
-	    fb->fb != rotfb_info.logical_fb ||
+	    fb->fb != rotfb_info.logical_fb || fb->shadow_fb != NULL ||
 	    fb->fb_size != rotfb_info.logical_size ||
 	    fb->pitch != rotfb_info.logical_pitch ||
 	    fb->screen.x != rotfb_info.logical_width ||
@@ -117,7 +117,7 @@ rotfb_runtime_init(fb_info_t *fb)
 	if (mapping == NULL)
 		return (DDI_FAILURE);
 
-	shadow = kmem_zalloc(shadow_size, KM_SLEEP);
+	shadow = kmem_zalloc(shadow_size, KM_NOSLEEP);
 	if (shadow == NULL) {
 		gfxp_unmap_kernel_space((gfxp_kva_t)mapping, map_size);
 		return (DDI_FAILURE);
@@ -169,10 +169,14 @@ rotfb_runtime_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 {
 	uint32_t xx, yy, xend, yend;
 
-	if (fb == NULL || !rotfb_info.runtime_ready ||
-	    rotfb_runtime_mapping == NULL || rotfb_runtime_shadow == NULL ||
-	    width == 0 || height == 0 || x >= rotfb_info.logical_width ||
-	    y >= rotfb_info.logical_height)
+	if (fb == NULL || fb != rotfb_runtime_owner ||
+	    fb->fb != rotfb_runtime_shadow ||
+	    fb->pitch != rotfb_info.logical_pitch ||
+	    fb->screen.x != rotfb_info.logical_width ||
+	    fb->screen.y != rotfb_info.logical_height ||
+	    !rotfb_info.runtime_ready || rotfb_runtime_mapping == NULL ||
+	    rotfb_runtime_shadow == NULL || width == 0 || height == 0 ||
+	    x >= rotfb_info.logical_width || y >= rotfb_info.logical_height)
 		return;
 
 	if (width > rotfb_info.logical_width - x)
@@ -221,11 +225,17 @@ rotfb_runtime_fini(fb_info_t *fb)
 		return;
 
 	/*
-	 * Restore all externally visible pointers and geometry before freeing
-	 * runtime resources.  The boot shadow remains owned by the boot
-	 * allocator and is the safe fallback surface after detach.
+	 * Stop new flushes, preserve the current runtime image in the
+	 * boot-owned shadow, then restore the boot mapping and geometry.
 	 */
+	if (rotfb_saved_state.fb == NULL || rotfb_runtime_shadow == NULL ||
+	    rotfb_runtime_shadow_size != rotfb_saved_state.fb_size)
+		return;
+
 	rotfb_info.runtime_ready = B_FALSE;
+	rotfb_info.boot_ready = B_FALSE;
+	bcopy(rotfb_runtime_shadow, rotfb_saved_state.fb,
+	    rotfb_runtime_shadow_size);
 
 	fb->fb = rotfb_saved_state.fb;
 	fb->shadow_fb = rotfb_saved_state.shadow_fb;
@@ -238,6 +248,10 @@ rotfb_runtime_fini(fb_info_t *fb)
 
 	rotfb_info.physical_fb = rotfb_saved_state.rotfb_physical_fb;
 	rotfb_info.logical_fb = rotfb_saved_state.rotfb_logical_fb;
+	rotfb_info.boot_ready = B_TRUE;
+
+	/* Re-publish the latest runtime image through the restored boot path. */
+	rotfb_boot_flush_all(fb);
 
 	mapping = rotfb_runtime_mapping;
 	map_size = rotfb_runtime_mapping_size;

@@ -187,7 +187,11 @@ rotfb_boot_import(fb_info_t *fb)
 {
 	uint32_t x, y;
 
-	if (fb == NULL || !rotfb_boot_valid() || !rotfb_info.boot_ready)
+	if (fb == NULL || !rotfb_boot_valid() || !rotfb_info.boot_ready ||
+	    rotfb_info.runtime_ready || fb->fb != rotfb_info.logical_fb ||
+	    fb->pitch != rotfb_info.logical_pitch ||
+	    fb->screen.x != rotfb_info.logical_width ||
+	    fb->screen.y != rotfb_info.logical_height)
 		return (-1);
 
 	for (y = 0; y < rotfb_info.logical_height; y++) {
@@ -218,6 +222,10 @@ rotfb_boot_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 	uint32_t xx, yy, xend, yend;
 
 	if (fb == NULL || !rotfb_boot_valid() || !rotfb_info.boot_ready ||
+	    fb->fb != rotfb_info.logical_fb ||
+	    fb->pitch != rotfb_info.logical_pitch ||
+	    fb->screen.x != rotfb_info.logical_width ||
+	    fb->screen.y != rotfb_info.logical_height ||
 	    width == 0 || height == 0 || x >= rotfb_info.logical_width ||
 	    y >= rotfb_info.logical_height)
 		return;

@@ -63,6 +63,8 @@ def test_last_pixel_offsets():
     assert (px, py) == (0, PHYS_HEIGHT - 1)
     assert py * PHYS_PITCH + px * BPP == (PHYS_HEIGHT - 1) * PHYS_PITCH
 
+    assert PHYS_PITCH >= PHYS_WIDTH * BPP
+    assert LOGICAL_PITCH >= LOGICAL_WIDTH * BPP
     assert LOGICAL_PITCH * LOGICAL_HEIGHT == PHYS_PITCH * PHYS_HEIGHT
 
 
@@ -73,6 +75,8 @@ def test_clipping_boundaries_and_overflow_inputs():
     )
     assert clip_rect(1920, 0, 1, 1) is None
     assert clip_rect(0, 1200, 1, 1) is None
+    assert clip_rect(UINT32_MAX, 0, 1, 1) is None
+    assert clip_rect(0, UINT32_MAX, 1, 1) is None
     assert clip_rect(0, 0, 0, 10) is None
     assert clip_rect(0, 0, 10, 0) is None
 
