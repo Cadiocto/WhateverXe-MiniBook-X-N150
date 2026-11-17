@@ -18,3 +18,18 @@ diff --git a/usr/src/uts/i86pc/Makefile.files b/usr/src/uts/i86pc/Makefile.files
  EFI_OBJS += efi_drv.o efi_runtime.o
  FIPE_OBJS += fipe_drv.o fipe_pm.o
  IOAT_OBJS += ioat.o ioat_rs.o ioat_ioctl.o ioat_chan.o
+diff --git a/usr/src/uts/i86xpv/Makefile.files b/usr/src/uts/i86xpv/Makefile.files
+--- a/usr/src/uts/i86xpv/Makefile.files
++++ b/usr/src/uts/i86xpv/Makefile.files
+@@ -120,10 +120,11 @@
+ BOOT_DRIVER_OBJS =		\
+ 	boot_console.o		\
+ 	boot_keyboard.o		\
+ 	boot_keyboard_table.o	\
+ 	boot_mmu.o		\
+ 	boot_vga.o		\
+ 	boot_fb.o		\
++	rotfb_boot.o		\
+ 	boot_xconsole.o		\
+ 	dboot_multiboot2.o	\
+ 	$(FONT_OBJS)
