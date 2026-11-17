@@ -3,6 +3,7 @@
 #include <sys/systm.h>
 #include <sys/kmem.h>
 #include <sys/ddi.h>
+#include <sys/sunddi.h>
 #include <sys/framebuffer.h>
 #include <sys/gfx_private.h>
 #include <sys/rotfb.h>

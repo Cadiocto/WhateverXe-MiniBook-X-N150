@@ -49,6 +49,8 @@ jobs:
             git clone https://github.com/illumos/illumos-gate.git
             cd illumos-gate
             git checkout 098e95820891f8a83fae679daece7fcf58b7b3a4
+            # illumos.sh uses git describe --all; anchor this pinned detached commit.
+            git branch -f rotfb-build HEAD
 
             ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
             for p in 0001-framebuffer-metadata.patch 0002-boot-fb-rotation.patch 0003-gfxp-bitmap-tem-rotation.patch 0004-Makefile-files.patch; do

@@ -1,6 +1,13 @@
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -28,6 +28,7 @@
+ #include <sys/ddi.h>
+ #include <sys/kd.h>
+ #include <sys/sunddi.h>
+ #include <sys/rgb.h>
++#include <sys/rotfb.h>
+ #include <sys/gfx_private.h>
 @@ -232,15 +232,20 @@
  	struct gfxfb_info *gfxfb_info;
  

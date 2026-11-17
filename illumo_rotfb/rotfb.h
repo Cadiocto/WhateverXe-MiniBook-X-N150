@@ -2,7 +2,6 @@
 #define _SYS_ROTFB_H
 #include <sys/types.h>
 #include <sys/framebuffer.h>
-#include <sys/bootops.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,7 +22,8 @@ typedef struct rotfb_info {
 } rotfb_info_t;
 extern rotfb_info_t rotfb_info;
 int rotfb_boot_configure(fb_info_t *);
-int rotfb_boot_shadow_init(bootops_t *, fb_info_t *);
+struct bootops;
+int rotfb_boot_shadow_init(struct bootops *, fb_info_t *);
 int rotfb_boot_init(fb_info_t *, uint8_t *);
 int rotfb_boot_import(fb_info_t *);
 void rotfb_boot_flush_rect(fb_info_t *, uint32_t, uint32_t, uint32_t, uint32_t);

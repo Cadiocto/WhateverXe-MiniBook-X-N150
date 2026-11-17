@@ -1,7 +1,7 @@
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/framebuffer.h>
-#include <sys/bootops.h>
+#include <sys/bootconf.h>
 #include <sys/rotfb.h>
 #include <sys/mmu.h>
 rotfb_info_t rotfb_info;
@@ -39,7 +39,7 @@ rotfb_boot_configure(fb_info_t *fb)
  return (0);
 }
 int
-rotfb_boot_shadow_init(bootops_t *bops, fb_info_t *fb)
+rotfb_boot_shadow_init(struct bootops *bops, fb_info_t *fb)
 {
  uint8_t *shadow;
  if (bops == NULL || fb == NULL || !rotfb_info.configured)
