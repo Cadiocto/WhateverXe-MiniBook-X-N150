@@ -170,16 +170,34 @@ jobs:
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
               -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
               tools/env/illumos.sh > /tmp/rotfb-nightly.env
-            cat >> /tmp/rotfb-nightly.env <<'EOF'
-            export PERL_VERSION=5.42
-            export PERL_VARIANT=-thread-multi
-            export PERL_PKGVERS=-542
-            export BUILDPERL32='#'
-            EOF
+            echo "export PERL_VERSION=5.42" >> /tmp/rotfb-nightly.env
+            echo "export PERL_VARIANT=-thread-multi" >> /tmp/rotfb-nightly.env
+            echo "export PERL_PKGVERS=-542" >> /tmp/rotfb-nightly.env
+            echo "export BUILDPERL32='#'" >> /tmp/rotfb-nightly.env
             echo "export VERSION=illumos-098e958-rotfb" >> /tmp/rotfb-nightly.env
             echo "===== effective Perl build configuration ====="
-            grep -E '^export PERL_VERSION=5\.42
-
+            if ! grep -F "export PERL_VERSION=5.42" /tmp/rotfb-nightly.env >/dev/null; then
+              echo "PERL_VERSION override missing"
+              exit 1
+            fi
+            if ! grep -F "export PERL_VARIANT=-thread-multi" /tmp/rotfb-nightly.env >/dev/null; then
+              echo "PERL_VARIANT override missing"
+              exit 1
+            fi
+            if ! grep -F "export PERL_PKGVERS=-542" /tmp/rotfb-nightly.env >/dev/null; then
+              echo "PERL_PKGVERS override missing"
+              exit 1
+            fi
+            if ! grep -F "export BUILDPERL32='#'" /tmp/rotfb-nightly.env >/dev/null; then
+              echo "Upstream-supported 32-bit Perl module configuration missing"
+              exit 1
+            fi
+            if grep -E '^[[:space:]]*export BUILDPERL64=' /tmp/rotfb-nightly.env >/dev/null; then
+              echo "Unexpected: 64-bit Perl modules were disabled"
+              exit 1
+            fi
+            cat /tmp/rotfb-nightly.env
+            echo "OpenIndiana has no 32-bit Perl executable; upstream-supported BUILDPERL32='#' skips only 32-bit Perl module targets. No amd64-to-i386 alias is created."
             NIGHTLY_LOG="$LOGDIR/nightly.log"
             BUILD_NOISE_DIR="$LOGDIR/build-noise"
             GATE_LOG_DIR="$LOGDIR/gate-logs"
