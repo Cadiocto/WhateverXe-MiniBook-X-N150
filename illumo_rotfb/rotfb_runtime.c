@@ -120,6 +120,9 @@ rotfb_runtime_init(fb_info_t *fb)
 
 	if (rotfb_info.runtime_ready) {
 		return (rotfb_runtime_owner == fb &&
+		    atomic_add_32_nv(&rotfb_callback_managed, 0) != 0 &&
+		    (atomic_add_32_nv(&rotfb_callback_gate, 0) &
+		    ROTFB_CALLBACK_QUIESCING) == 0 &&
 		    fb->fb == rotfb_runtime_shadow &&
 		    fb->shadow_fb == rotfb_runtime_shadow &&
 		    fb->fb_size == rotfb_runtime_shadow_size &&
@@ -271,7 +274,8 @@ rotfb_runtime_fini(fb_info_t *fb)
 	size_t map_size, shadow_size;
 
 	if (fb == NULL || !rotfb_info.runtime_ready ||
-	    rotfb_runtime_owner != fb || !rotfb_saved_state.valid)
+	    rotfb_runtime_owner != fb || !rotfb_saved_state.valid ||
+	    atomic_add_32_nv(&rotfb_callback_managed, 0) == 0)
 		return (DDI_FAILURE);
 
 	/*
@@ -339,8 +343,10 @@ rotfb_runtime_fini(fb_info_t *fb)
 	if (shadow != NULL)
 		kmem_free(shadow, shadow_size);
 
-	/* No runtime callback can still hold a reference to freed resources. */
-	atomic_swap_32(&rotfb_callback_managed, 0);
+	/*
+	 * Keep the callback gate managed and closed after fini.  This rejects
+	 * stale polledio calls until a later successful runtime init reopens it.
+	 */
 
 	return (DDI_SUCCESS);
 }
