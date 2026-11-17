@@ -43,20 +43,24 @@ jobs:
             PERL_AUDIT="$GITHUB_WORKSPACE/rotfb-build-logs/perl-package-audit.txt"
             mkdir -p "$(dirname "$PERL_AUDIT")"
             {
-              echo "===== installed Perl package ====="
-              pkg list -Hv runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris
+              echo "===== installed Perl package candidates ====="
+              pkg list -Hv | grep -i perl || true
+              echo "===== requested Perl package status ====="
+              pkg list -Hv runtime/perl-510 runtime/perl-510/extra runtime/perl-510/module/sun-solaris || true
+              echo "===== available Perl packages ====="
+              pkg list -a | grep -i perl || true
               echo "===== pkg contents runtime/perl-510 ====="
-              pkg contents runtime/perl-510
+              pkg contents runtime/perl-510 || true
               echo "===== pkg contents -m runtime/perl-510 ====="
-              pkg contents -m runtime/perl-510
+              pkg contents -m runtime/perl-510 || true
               echo "===== all Perl path entries (including symlinks) ====="
-              find /usr/perl5 -name perl -exec ls -ld {} \; 2>&1
+              find /usr/perl5 -name perl -exec ls -ld {} \\; 2>&1 || true
               echo "===== regular Perl executables ====="
-              find /usr/perl5 -type f -name perl -exec ls -l {} \; -exec file {} \; 2>&1
+              find /usr/perl5 -type f -name perl -exec ls -l {} \\; -exec file {} \\; 2>&1 || true
               echo "===== executable Perl candidates ====="
-              find /usr/perl5 -name perl -exec sh -c 'test -x "$1" && { echo "EXECUTABLE: $1"; "$1" -V:archname; }' sh {} \; 2>&1
-              echo "===== xsubpp ====="
-              ls -l /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
+              find /usr/perl5 -name perl -exec sh -c 'test -x "$1" && { echo "EXECUTABLE: $1"; "$1" -V:archname; }' sh {} \\; 2>&1 || true
+              echo "===== xsubpp candidates ====="
+              find /usr/perl5 -type f -name xsubpp -exec ls -l {} \\; 2>&1 || true
             } > "$PERL_AUDIT" 2>&1
             cat "$PERL_AUDIT"
             test -f /usr/perl5/5.10.0/lib/ExtUtils/xsubpp
