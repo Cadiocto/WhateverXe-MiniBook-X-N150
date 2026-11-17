@@ -1,7 +1,7 @@
 diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 --- a/usr/src/uts/i86pc/boot/boot_fb.c
 +++ b/usr/src/uts/i86pc/boot/boot_fb.c
-@@ -178,8 +178,7 @@
+@@ -177,8 +177,7 @@
  	fb_info.physical.pitch = fb_info.pitch;
  	fb_info.physical.bpp = fb_info.bpp;
  	fb_info.physical.size = (uint64_t)fb_info.pitch * fb_info.screen.y;
@@ -10,7 +10,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  	fb_info.fb_size = fb_info.screen.y * fb_info.pitch;
  
  	bcons_dev->bd_putchar = boot_fb_putchar;
-@@ -205,6 +204,7 @@
+@@ -216,6 +215,7 @@
  	fb_info.rgb.blue.size = tag->u.fb2.framebuffer_blue_mask_size;
  	fb_info.rgb.blue.pos = tag->u.fb2.framebuffer_blue_field_position;
  	rgb_info = fb_info.rgb;
@@ -18,7 +18,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  
  	return (B_TRUE);
  }
-@@ -345,5 +345,7 @@
+@@ -348,5 +348,7 @@
 -	if (rotfb_info.configured &&
 -	    rotfb_boot_shadow_init(bops, &fb_info) == 0)
 +	if (rotfb_info.configured &&
@@ -28,7 +28,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 +	}
  
  	fb_info.shadow_fb = (uint8_t *)bops->bsys_alloc(NULL, NULL,
-@@ -436,15 +439,23 @@
+@@ -453,15 +455,23 @@
  #if defined(_BOOT)
  	/*
  	 * Being called from dboot, we can have cursor terminal
@@ -52,7 +52,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  #endif
  
  	/* If the cursor terminal position is 0,0 just reset screen coords */
-@@ -479,7 +482,9 @@
+@@ -501,7 +511,9 @@
  			boot_fb_fill(dest, bg, fb_info.pitch);
  			toffset += fb_info.pitch;
  		}
@@ -62,7 +62,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  #endif
  }
  
-@@ -496,8 +501,9 @@
+@@ -516,8 +528,9 @@
  	/* make sure we will not write past FB */
 -	if (rect->col >= fb_info.screen.x ||
 -	    rect->row >= fb_info.screen.y ||
@@ -76,7 +76,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  		return;
  
  	size = rect->width * fb_info.bpp;
-@@ -559,6 +564,8 @@
+@@ -583,6 +596,8 @@
  
  	toffset = x * fb_info.bpp + y * fb_info.pitch;
  	dst = fb_info.fb + toffset;
@@ -86,7 +86,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 +		sdst = fb_info.shadow_fb + toffset;
  
  	for (i = 0; i < boot_fb_font.vf_height; i++) {
-@@ -748,9 +755,13 @@
+@@ -800,9 +815,13 @@
  				if (sfb32 == NULL)
  					continue;
  
@@ -111,7 +111,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  #include <sys/rotfb.h>
  #include <sys/gfx_private.h>
  #include "gfxp_fb.h"
-@@ -147,17 +148,25 @@
+@@ -148,17 +149,25 @@
  	if (softc == NULL || softc->console == NULL)
  		return (DDI_SUCCESS);
  
@@ -147,7 +147,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  	}
  	return (DDI_SUCCESS);
  }
-@@ -672,27 +679,43 @@
+@@ -701,27 +710,43 @@
  	struct gfxp_fb_softc *softc = (struct gfxp_fb_softc *)ptr;
  	union gfx_console *console;
 -	size_t length;
@@ -202,7 +202,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
-@@ -372,4 +372,15 @@
+@@ -367,4 +367,15 @@
  		}
  		break;
  

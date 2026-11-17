@@ -1,7 +1,7 @@
 diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 --- a/usr/src/uts/i86pc/boot/boot_fb.c
 +++ b/usr/src/uts/i86pc/boot/boot_fb.c
-@@ -433,9 +433,26 @@
+@@ -437,9 +437,26 @@
  	/* frame buffer address is mapped in dboot. */
 -	if (rotfb_info.configured && rotfb_info.logical_fb != NULL &&
 -	    rotfb_boot_init(&fb_info,
@@ -33,7 +33,7 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  	} else {
  		fb_info.fb = (uint8_t *)(uintptr_t)fb_info.paddr;
  	}
-@@ -591,38 +611,65 @@
+@@ -632,38 +649,65 @@
  static void
  boot_fb_conscopy(struct vis_conscopy *c_copy)
  {
@@ -119,13 +119,13 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  	if (rotfb_info.boot_ready)
  		rotfb_boot_flush_all(&fb_info);
  }
-@@ -636,3 +674,3 @@
+@@ -680,3 +724,3 @@
  	c_copy.e_col = (fb_info.terminal.x - chars) * boot_fb_font.vf_width;
 -	c_copy.e_col += fb_info.terminal_origin.x;
 -	c_copy.e_row = c_copy.s_row + boot_fb_font.vf_height;
 +	c_copy.e_col += fb_info.terminal_origin.x - 1;
 +	c_copy.e_row = c_copy.s_row + boot_fb_font.vf_height - 1;
-@@ -650,13 +689,18 @@
+@@ -694,13 +738,18 @@
  boot_fb_scroll(void)
  {
  	struct vis_conscopy c_copy;
@@ -149,22 +149,22 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
-@@ -383,2 +383,4 @@
+@@ -381,2 +381,4 @@
  	case VIS_CONSCLEAR:	/* clear screen */
 +		if (!(mode & FKIOCTL))
 +			return (ENXIO);
  	{
-@@ -401,2 +403,4 @@
+@@ -392,2 +394,4 @@
  	case VIS_CONSCOPY:	/* move */
 +		if (!(mode & FKIOCTL))
 +			return (ENXIO);
  	{
-@@ -422,2 +426,4 @@
+@@ -404,2 +408,4 @@
  	case VIS_CONSDISPLAY:	/* display */
 +		if (!(mode & FKIOCTL))
 +			return (ENXIO);
  	{
-@@ -448,2 +454,4 @@
+@@ -416,2 +422,4 @@
  	case VIS_CONSCURSOR:
 +		if (!(mode & FKIOCTL))
 +			return (ENXIO);
@@ -172,7 +172,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c b/usr/src/uts/i86pc/io/g
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
-@@ -104,6 +104,16 @@
+@@ -106,6 +106,16 @@
  void
  gfxp_bm_getfb_info(gfxp_fb_softc_ptr_t ptr, struct gfxp_bm_fb_info *fbip)
  {
@@ -189,7 +189,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +		return;
 +
  	switch (softc->fb_type) {
-@@ -198,2 +208,4 @@
+@@ -214,2 +224,4 @@
  	case KD_GRAPHICS:
 +		if (rotfb_info.configured)
 +			return (ENOTSUP);

@@ -81,9 +81,22 @@ def test_clipping_boundaries_and_overflow_inputs():
     assert clip_rect(0, 0, 10, 0) is None
 
 
+
+
+def test_patch_contracts():
+    root = Path(__file__).resolve().parents[1]
+    patch4 = (root / "patches" / "0004-Makefile-files.patch").read_text()
+    patch6 = (root / "patches" / "0006-rotfb-console-contract-and-copy-safety.patch").read_text()
+    for patch in sorted((root / "patches").glob("000*.patch")):
+        assert patch.read_text().endswith("\n"), f"{patch.name} lacks final newline"
+    assert "@@ -192,3 +193,3 @@" in patch4
+    assert "if (rotfb_info.configured && rotfb_info.logical_fb != NULL)" in patch6
+    assert "if (!rotfb_info.boot_ready)" in patch6
+
 if __name__ == "__main__":
     test_corners()
     test_mapping_is_bijective()
     test_last_pixel_offsets()
     test_clipping_boundaries_and_overflow_inputs()
+    test_patch_contracts()
     print("ROTFB model tests: PASS")

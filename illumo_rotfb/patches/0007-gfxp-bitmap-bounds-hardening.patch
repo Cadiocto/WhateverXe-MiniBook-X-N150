@@ -1,7 +1,7 @@
 diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 --- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 +++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
-@@ -312,24 +312,47 @@
+@@ -346,24 +346,47 @@
  bitmap_cons_copy(struct gfxp_fb_softc *softc, struct vis_conscopy *ma)
  {
  	union gfx_console *console;
@@ -56,7 +56,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  			if (softc->mode == KD_TEXT) {
  				(void) memmove(dst + increment,
  				    src + increment, width);
-@@ -340,7 +360,7 @@
+@@ -373,7 +396,7 @@
  		}
  	} else {
  		for (i = height - 1; i >= 0; i--) {
@@ -65,7 +65,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  			if (softc->mode == KD_TEXT) {
  				(void) memmove(dst + increment,
  				    src + increment, width);
-@@ -403,20 +403,30 @@
+@@ -442,20 +465,30 @@
  bitmap_cons_display(struct gfxp_fb_softc *softc, struct vis_consdisplay *da)
  {
  	union gfx_console *console;
@@ -105,7 +105,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +	    (uint64_t)da->row * console->fb.pitch;
 +	sfbp = console->fb.shadow_fb + offset;
 +	fbp = console->fb.fb + offset;
-@@ -449,6 +449,7 @@
+@@ -470,6 +503,7 @@
  		if (softc->mode == KD_TEXT) {
  			/* Copy from shadow to fb. */
  			src = dest;
@@ -114,7 +114,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +			if (dest != src)
 +				(void) memcpy(dest, src, size);
  		}
-@@ -444,6 +480,15 @@
+@@ -489,6 +523,15 @@
  	int i, j, pitch;
  
 +	if (softc == NULL || ca == NULL || softc->console == NULL)
@@ -130,7 +130,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +		return (EINVAL);
  
  	switch (console->fb.depth) {
-@@ -492,7 +540,7 @@
+@@ -523,7 +566,7 @@
  		data |= ca->bg_color.twentyfour[2];
  		for (i = 0; i < console->fb.screen.y; i++) {
  			fb = console->fb.fb + i * pitch;
@@ -139,7 +139,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +			for (j = 0; j < console->fb.screen.x * 3; j += 3) {
  				if (softc->mode == KD_TEXT) {
  					fb[j] = (data >> 16) & 0xff;
-@@ -521,14 +569,27 @@
+@@ -560,14 +603,27 @@
  bitmap_display_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
  {
  	union gfx_console *console;
@@ -168,11 +168,11 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +		return;
  	size = ca->width * bpp;
  
-@@ -540,2 +601,2 @@
+@@ -578,2 +634,2 @@
 -	offset = ca->col * bpp + ca->row * pitch;
 +	offset = (uint64_t)ca->col * bpp + (uint64_t)ca->row * pitch;
  	switch (console->fb.depth) {
-@@ -540,7 +608,7 @@
+@@ -580,7 +636,7 @@
  	case 8:
  		fg = ca->fg_color.eight;
  		bg = ca->bg_color.eight;
@@ -182,13 +182,13 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
 +			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
  			for (j = 0; j < size; j += 1) {
-@@ -565,3 +627,3 @@
+@@ -602,3 +658,3 @@
 -			    (console->fb.fb + offset + i * pitch);
 +			    (console->fb.fb + offset + (uint64_t)i * pitch);
  			sfb16 = (uint16_t *)
 -			    (console->fb.shadow_fb + offset + i * pitch);
 +			    (console->fb.shadow_fb + offset + (uint64_t)i * pitch);
-@@ -585,11 +653,11 @@
+@@ -614,11 +670,11 @@
  	case 24:
  		fg = ca->fg_color.twentyfour[0] << 16;
  		fg |= ca->fg_color.twentyfour[1] << 8;
@@ -202,13 +202,13 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
 +			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
  			for (j = 0; j < size; j += 3) {
-@@ -605,3 +667,3 @@
+@@ -644,3 +700,3 @@
 -			    (console->fb.fb + offset + i * pitch);
 +			    (console->fb.fb + offset + (uint64_t)i * pitch);
  			sfb32 = (uint32_t *)
 -			    (console->fb.shadow_fb + offset + i * pitch);
 +			    (console->fb.shadow_fb + offset + (uint64_t)i * pitch);
-@@ -622,5 +684,9 @@
+@@ -658,5 +714,9 @@
  bitmap_cons_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
  {
 -	union gfx_console *console = softc->console;
@@ -219,7 +219,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +	console = softc->console;
  
  	switch (ca->action) {
-@@ -631,3 +710,17 @@
+@@ -666,3 +726,17 @@
  		break;
  	case VIS_DISPLAY_CURSOR:
 +		if (console->fb.font_width == 0 || console->fb.font_height == 0 ||
@@ -237,7 +237,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +		    ca->height > console->fb.screen.y - ca->row)
 +			return;
  		/* keep track of cursor position for polled mode */
-@@ -645,6 +767,10 @@
+@@ -692,6 +766,10 @@
  static void
  bitmap_polled_copy(struct vis_polledio_arg *arg, struct vis_conscopy *ca)
  {
@@ -248,8 +248,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  	bitmap_cons_copy(softc, ca);
 +	rotfb_runtime_callback_exit(entered);
  }
-
-@@ -652,6 +778,10 @@
+@@ -699,6 +777,10 @@
  static void
  bitmap_polled_display(struct vis_polledio_arg *arg, struct vis_consdisplay *da)
  {
@@ -260,8 +259,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  	bitmap_cons_display(softc, da);
 +	rotfb_runtime_callback_exit(entered);
  }
-
-@@ -659,6 +789,10 @@
+@@ -706,6 +788,10 @@
  static void
  bitmap_polled_cursor(struct vis_polledio_arg *arg, struct vis_conscursor *ca)
  {
@@ -272,4 +270,3 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  	bitmap_cons_cursor(softc, ca);
 +	rotfb_runtime_callback_exit(entered);
  }
-

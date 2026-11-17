@@ -124,6 +124,7 @@ rotfb_runtime_init(fb_info_t *fb)
 		    (atomic_add_32_nv(&rotfb_callback_gate, 0) &
 		    ROTFB_CALLBACK_QUIESCING) == 0 &&
 		    fb->fb == rotfb_runtime_shadow &&
+		    fb->physical.fb == rotfb_runtime_mapping &&
 		    fb->shadow_fb == rotfb_runtime_shadow &&
 		    fb->fb_size == rotfb_runtime_shadow_size &&
 		    fb->pitch == rotfb_info.logical_pitch &&
@@ -222,13 +223,19 @@ rotfb_runtime_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 	if (fb == NULL || fb != rotfb_runtime_owner ||
 	    fb->fb != rotfb_runtime_shadow ||
 	    fb->shadow_fb != rotfb_runtime_shadow ||
+	    fb->physical.fb != rotfb_runtime_mapping ||
+	    rotfb_info.physical_fb != rotfb_runtime_mapping ||
+	    rotfb_info.logical_fb != rotfb_runtime_shadow ||
 	    fb->fb_size != rotfb_runtime_shadow_size ||
-	    fb->bpp != ROTFB_BYTES_PER_PIXEL ||
 	    fb->pitch != rotfb_info.logical_pitch ||
 	    fb->screen.x != rotfb_info.logical_width ||
 	    fb->screen.y != rotfb_info.logical_height ||
+	    fb->bpp != ROTFB_BYTES_PER_PIXEL || fb->depth != 32 ||
 	    !rotfb_info.runtime_ready || rotfb_runtime_mapping == NULL ||
-	    rotfb_runtime_shadow == NULL || width == 0 || height == 0 ||
+	    rotfb_runtime_shadow == NULL ||
+	    rotfb_runtime_mapping_size != rotfb_info.physical_size ||
+	    rotfb_runtime_shadow_size != rotfb_info.logical_size ||
+	    width == 0 || height == 0 ||
 	    x >= rotfb_info.logical_width || y >= rotfb_info.logical_height)
 		return;
 
@@ -257,6 +264,7 @@ rotfb_runtime_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 			dst[3] = src[3];
 		}
 	}
+	membar_producer();
 }
 
 void
@@ -284,8 +292,19 @@ rotfb_runtime_fini(fb_info_t *fb)
 	 */
 	if (rotfb_saved_state.fb == NULL || rotfb_runtime_shadow == NULL ||
 	    rotfb_runtime_mapping == NULL ||
+	    fb->fb != rotfb_runtime_shadow ||
+	    fb->shadow_fb != rotfb_runtime_shadow ||
+	    fb->physical.fb != rotfb_runtime_mapping ||
+	    rotfb_info.physical_fb != rotfb_runtime_mapping ||
+	    rotfb_info.logical_fb != rotfb_runtime_shadow ||
+	    fb->fb_size != rotfb_runtime_shadow_size ||
+	    fb->pitch != rotfb_info.logical_pitch ||
+	    fb->screen.x != rotfb_info.logical_width ||
+	    fb->screen.y != rotfb_info.logical_height ||
+	    fb->bpp != ROTFB_BYTES_PER_PIXEL || fb->depth != 32 ||
 	    rotfb_runtime_mapping_size != rotfb_info.physical_size ||
-	    rotfb_runtime_shadow_size != rotfb_saved_state.fb_size)
+	    rotfb_runtime_shadow_size != rotfb_saved_state.fb_size ||
+	    rotfb_saved_state.fb_size != rotfb_info.logical_size)
 		return (DDI_FAILURE);
 
 	/*
@@ -305,6 +324,9 @@ rotfb_runtime_fini(fb_info_t *fb)
 	    ROTFB_CALLBACK_COUNT_MASK) != 0)
 		delay(1);
 
+	/* Drain WC writes while the runtime mapping is still valid. */
+	rotfb_runtime_flush_all(fb);
+
 	rotfb_info.runtime_ready = B_FALSE;
 	rotfb_info.boot_ready = B_FALSE;
 	bcopy(rotfb_runtime_shadow, rotfb_saved_state.fb,
@@ -322,9 +344,6 @@ rotfb_runtime_fini(fb_info_t *fb)
 	rotfb_info.physical_fb = rotfb_saved_state.rotfb_physical_fb;
 	rotfb_info.logical_fb = rotfb_saved_state.rotfb_logical_fb;
 	rotfb_info.boot_ready = B_TRUE;
-
-	/* Re-publish the latest runtime image through the restored boot path. */
-	rotfb_boot_flush_all(fb);
 
 	mapping = rotfb_runtime_mapping;
 	map_size = rotfb_runtime_mapping_size;
