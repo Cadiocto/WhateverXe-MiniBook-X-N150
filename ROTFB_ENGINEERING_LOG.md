@@ -1049,3 +1049,15 @@ The next source/workflow commit adds patch 0012 and a C test for the existing al
 - Build #81: Run ID `44423856535`; Job ID `135223486150`; source SHA `38ce3f43610c6eb96665b8a92452735d303b396c`; URL https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44423856535. Job is `in_progress`; no artifact yet. Nightly/final exit codes and link results are not yet available.
 - Build #80 remains BUILD VERIFIED for its exact source SHA `8eb2a6fffc02a638c18a313469cd4aed78052b1f`; the new revision awaits its own validation.
 - No device commands or physical Chuwi operations were performed. Next: observe Build #81 only; inspect the full patch-series log first, then nightly and all six linker records. Do not edit source/workflow while it is active.
+
+
+### 2026-11-18T23:50:18.079Z — Runtime integration audit after Build #80
+
+- Re-read pinned-upstream `gfxp_bitmap.c`, `gfxp_fb.c`, `framebuffer.h`, and `visual_io.h`, plus the complete ROTFB patches 0002, 0005, 0006, 0007, 0008, 0010 and 0011.
+- Confirmed the detach-error path is already correct after the full series: `gfxp_bm_detach()` checks `rotfb_runtime_fini()` under `rotfb_info.configured`; patch 0008 makes `gfxp_fb_detach()` return on failure before removing `primary-controller` or destroying the mutex. The earlier LIFE-002 diagnosis remains retracted.
+- Confirmed runtime initial synchronization is not a self-copy: `rotfb_runtime_init()` copies the boot logical shadow into a newly allocated runtime shadow, publishes the separate WC mapping, and calls `rotfb_runtime_flush_all()` before opening the polled callback gate.
+- Confirmed a redundant but harmless self-copy after runtime initialization: `bitmap_devinit()` calls `bitmap_copy_fb(softc, console->fb.fb, console->fb.shadow_fb)`; ROTFB sets both pointers to the same runtime shadow. `bitmap_copy_fb()` therefore performs row-wise `memmove(p,p,pitch)`. This is a no-op/performance observation, not a correctness failure; no behavior change made.
+- Confirmed the polledio function pointers are installed by `gfxp_bm_attach()`, but are returned to the terminal emulator only at the end of `bitmap_devinit()`, after `rotfb_runtime_init()` has set the callback gate to managed/open. This removes the suspected pre-init callback race for the normal attach path; no race defect established.
+- LIFE-001 production guard in patch 0010 skips the second shadow copy when `dst == sdst` in text mode. Commit `38ce3f43610c6eb96665b8a92452735d303b396c` factors this exact row-copy decision into `rotfb_copy_rows()` and adds direct C coverage. Build #81 is still active, so the exact pinned-upstream application and VM compile remain unverified.
+- No source/workflow changes made during Build #81. The only write in this audit was this root journal update; it is outside workflow path filters.
+- Next: wait for Run `44423856535` / Job `135223486150`; verify patch 0012, 12/12 application, host C output, nightly/final exit bytes, all six real link tuples and artifact digest before considering any further source change.
