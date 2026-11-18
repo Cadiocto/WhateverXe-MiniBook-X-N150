@@ -974,3 +974,64 @@ The same hunk's new-side start was one line short. Previous hunk deltas are +1 (
 - CODE/TEST VERIFIED: NO — existing VIS C and host evidence tests pass, but lifecycle/alias/allocation/rollback/callback/teardown coverage remains incomplete.
 - DEVICE VERIFIED: NO — no physical-device test was performed.
 - Next: run one controlled build for the recovery source revision, inspect the full patch-series log first, then nightly and all six independent linker results. Do not make another source/workflow change while that run is active.
+
+
+### 2026-11-18T23:47:13Z — Build #80 BUILD VERIFIED; LIFE-001 direct C regression work
+
+**Repository:** `Cadiocto/WhateverXe-MiniBook-X-N150`  
+**Branch:** `gop-rotation-hook`  
+**Source HEAD:** `8eb2a6fffc02a638c18a313469cd4aed78052b1f`  
+**Pinned illumos upstream:** `098e95820891f8a83fae679daece7fcf58b7b3a4`
+
+#### Build #80 authoritative result
+
+- Run ID: `44407397142`; Job ID: `135166157203`; source SHA: `8eb2a6fffc02a638c18a313469cd4aed78052b1f`.
+- Workflow conclusion: SUCCESS.
+- Artifact ID: `14478343298`; SHA256: `0f073d60532ad522b10811e9edd81dcb4817b3df68713c30415c1b84249e29d7`.
+- Artifact: 66 files, 7,378,698 bytes compressed; downloaded archive SHA256 independently recomputed and matched GitHub digest.
+- Original OpenIndiana nightly log is present (176,301,411 bytes) and its completed tail shows nightly completion at 2026-11-18T22:50:57Z and `exit 0`.
+- `nightly-exit-code.txt`, `final-build-exit-code.txt`, and `ld-wrapper-watch-exit-code.txt` each contain exactly bytes `30 0a` (ASCII `0\n`).
+- Nightly exit code: `0`; final build/evidence exit code: `0`; linker watcher exit code: `0`.
+- Patch application: **11/11**, lexical order confirmed in both `patch-apply.log` and `patch-series-regression.log`. The patch regression intentionally reproduced the old 0011 failure and applied corrected 0011; `PATCH_SERIES_STATUS=PASS`.
+- All three host regression steps passed: geometry/clipping model, linker evidence, VIS cursor C tests.
+
+#### Six real linker results
+
+All six targets have exactly one command, one status record, and one log file associated by the same process ID. All status records report exit status 0, no command/status pair mismatches, no linker diagnostics, fresh outputs after the 2026-11-18T22:08:40Z build start, non-zero output size and valid ELF magic. The pre-clean evidence records all six targets absent before the build.
+
+| Target | PID | Exit | Fresh output | Size |
+|---|---:|---:|---|---:|
+| dboot i86pc | 87357 | 0 | PASS | 77,508 |
+| dboot i86xpv | 88062 | 0 | PASS | 65,104 |
+| unix.o i86pc | 86354 | 0 | PASS | 19,013,320 |
+| unix.o i86xpv | 87095 | 0 | PASS | 18,587,480 |
+| gfx_private i86pc | 95467 | 0 | PASS | 70,360 |
+| gfx_private i86xpv | 96182 | 0 | PASS | 70,904 |
+
+Actual linker commands include `rotfb_boot.o` in both dboot and both unix.o links, and `rotfb_runtime.o` in both gfx_private links. The corresponding original nightly log includes the compiler/CTF steps and actual linker invocations. Per-target linker log files exist and are zero bytes because the successful linkers emitted no diagnostics.
+
+#### Runtime audit correction
+
+A prior report incorrectly listed `ROTFB-LIFE-002 — DETACH ERROR PROPAGATION` as a confirmed defect. Full patch-series review disproves that finding: patch 0005 explicitly checks `rotfb_runtime_fini()` in `gfxp_bm_detach()` and returns `DDI_FAILURE` on failure; patch 0008 propagates the error through `gfxp_fb_detach()` and defers property removal/mutex destruction until success. **LIFE-002 is not an open defect and must not be carried forward.** The earlier diagnosis was made from patch 0002 without accounting for the later 0005/0008 changes.
+
+#### LIFE-001 direct test improvement
+
+The production copy path in patch 0010 already skips the second shadow `memmove` when `dst == sdst` in text mode. The missing piece is a direct C regression test of the production copy-order/alias logic. A portable helper is being extracted into `illumo_rotfb/rotfb_copy.h`, called by the patched `bitmap_cons_copy()`, and tested for forward/backward overlapping moves, aliased destinations, distinct framebuffer/shadow destinations, and graphics-mode shadow-only copies.
+
+Local disposable test:
+```
+cc -std=c99 -Wall -Wextra -Werror -I/tmp -o /tmp/rotfb-copy-test /tmp/rotfb_copy_test.c
+/tmp/rotfb-copy-test
+ROTFB bitmap copy C tests: PASS
+```
+The 0012 patch also passed `git apply --check` and apply against a disposable synthetic source-context fixture. Full application after patches 0001–0011 remains pending the next OpenIndiana build.
+
+#### Readiness
+
+- **A. BUILD VERIFIED: YES for source revision `8eb2a6fffc02a638c18a313469cd4aed78052b1f` and pinned upstream `098e958...`.** All 11 patches, nightly/final exits, six linker targets, ROTFB link inputs, output freshness and artifact digest are verified.
+- **B. CODE/TEST VERIFIED: NO.** Direct alias-copy coverage is being added; allocation failure, rollback, callback and complete teardown coverage remain incomplete.
+- **C. DEVICE VERIFIED: NO.** No physical Chuwi boot or display test was performed. The supplied MDB snapshot remains the only device evidence; paddr, BAR2 aperture, kernel fb mapping and shadow_fb remain distinct.
+
+#### Next controlled change
+
+The next source/workflow commit adds patch 0012 and a C test for the existing alias-safe row-copy logic. It also corrects the earlier LIFE-002 false positive in this journal. Before committing, recheck branch HEAD and all target runs; do not change source/workflow if any run is queued or active. One Build #81 is permitted for the resulting source SHA.

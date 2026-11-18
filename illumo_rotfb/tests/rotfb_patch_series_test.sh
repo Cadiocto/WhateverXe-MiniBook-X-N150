@@ -37,7 +37,7 @@ trap cleanup EXIT HUP INT TERM
 git -C "$UPSTREAM" worktree add --detach "$TEST_TREE" "$PIN"
 
 set -- "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch
-[ "$#" -eq 11 ] || {
+[ "$#" -eq 12 ] || {
     echo "expected exactly 11 ROTFB patches, found $#" >&2
     exit 1
 }
@@ -53,6 +53,7 @@ EXPECTED_PATCH_ORDER=$(cat <<'EXPECTED_PATCHES'
 0009-gfxp-bitmap-wide-row-offsets.patch
 0010-gfxp-bitmap-vis-safety.patch
 0011-gfxp-bitmap-cursor-state.patch
+0012-gfxp-bitmap-copy-helper.patch
 EXPECTED_PATCHES
 )
 ACTUAL_PATCH_ORDER=$(for p in "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch; do basename "$p"; done)
@@ -103,6 +104,19 @@ git -C "$TEST_TREE" apply --check "$FIXED_PATCH"
 git -C "$TEST_TREE" apply "$FIXED_PATCH"
 echo "APPLIED 0011-gfxp-bitmap-cursor-state.patch"
 
+COPY_PATCH="$PATCH_DIR/0012-gfxp-bitmap-copy-helper.patch"
+[ -f "$COPY_PATCH" ] || {
+    echo "missing 0012 bitmap-copy helper patch" >&2
+    exit 1
+}
+git -C "$TEST_TREE" apply --check "$COPY_PATCH"
+git -C "$TEST_TREE" apply "$COPY_PATCH"
+echo "APPLIED 0012-gfxp-bitmap-copy-helper.patch"
+
+PATCHED_BITMAP="$TEST_TREE/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c"
+grep -F '#include <sys/rotfb_copy.h>' "$PATCHED_BITMAP" >/dev/null
+grep -F 'rotfb_copy_rows(' "$PATCHED_BITMAP" >/dev/null
+
 git -C "$TEST_TREE" diff --check
 
 git -C "$TEST_TREE" diff --name-only | LC_ALL=C sort > "$TMP_PARENT/rotfb-patch-series-actual-$$.txt"
@@ -124,7 +138,7 @@ fi
 rm -f "$TMP_PARENT/rotfb-patch-series-expected-$$.txt" \
     "$TMP_PARENT/rotfb-patch-series-actual-$$.txt"
 
-echo "PATCH_COUNT=11"
+echo "PATCH_COUNT=12"
 echo "UPSTREAM_PIN=$PIN"
 echo "PATCH_PATH_ALLOWLIST=PASS"
 echo "PATCH_SERIES_STATUS=PASS"

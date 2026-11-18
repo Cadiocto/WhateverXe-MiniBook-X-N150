@@ -33,6 +33,11 @@ jobs:
           cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/rotfb-vis-cursor-test" illumo_rotfb/tests/rotfb_vis_cursor_test.c
           "$RUNNER_TEMP/rotfb-vis-cursor-test"
 
+      - name: ROTFB bitmap copy C regression tests
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/rotfb-bitmap-copy-test" illumo_rotfb/tests/rotfb_bitmap_copy_test.c
+          "$RUNNER_TEMP/rotfb-bitmap-copy-test"
+
       - name: Initialize diagnostic artifact staging
         if: always()
         run: |
@@ -198,9 +203,10 @@ jobs:
             mkdir -p usr/src/uts/i86pc/sys usr/src/uts/i86pc/boot usr/src/uts/i86pc/io/gfx_private
             cp "$ROTFB/rotfb.h" usr/src/uts/i86pc/sys/rotfb.h
             cp "$ROTFB/rotfb_vis_cursor.h" usr/src/uts/i86pc/sys/rotfb_vis_cursor.h
+            cp "$ROTFB/rotfb_copy.h" usr/src/uts/i86pc/sys/rotfb_copy.h
             cp "$ROTFB/rotfb_boot.c" usr/src/uts/i86pc/boot/rotfb_boot.c
             cp "$ROTFB/rotfb_runtime.c" usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
-            chmod 0644 usr/src/uts/i86pc/sys/rotfb.h usr/src/uts/i86pc/sys/rotfb_vis_cursor.h usr/src/uts/i86pc/boot/rotfb_boot.c usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
+            chmod 0644 usr/src/uts/i86pc/sys/rotfb.h usr/src/uts/i86pc/sys/rotfb_vis_cursor.h usr/src/uts/i86pc/sys/rotfb_copy.h usr/src/uts/i86pc/boot/rotfb_boot.c usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
 
             cd usr/src
             export CODEMGR_WS="$WORKSPACE/illumos-gate"
