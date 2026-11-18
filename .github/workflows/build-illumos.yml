@@ -402,7 +402,7 @@ jobs:
             find "$LOGDIR" -type f ! -name 'runner-error-index.txt' -print0 |
             while IFS= read -r -d '' f; do
               if grep -Iq . "$f"; then
-                matches=$(grep -n -i -B 5 -A 10 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|ld:[[:space:]]+fatal:|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|cannot|failed|killed|out of memory|panic|segmentation fault|ssh exited' "$f" 2>/dev/null)
+                matches=$(grep -n -i -B 5 -A 10 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|ld:[[:space:]]+fatal:|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|(^|[^[:alnum:]_])(cannot|failed|killed)([^[:alnum:]_]|$)|out of memory|panic(:|\[)|segmentation fault|ssh exited' "$f" 2>/dev/null)
                 if [ -n "$matches" ]; then
                   printf '\n===== %s =====\n%s\n' "$f" "$matches"
                 fi
