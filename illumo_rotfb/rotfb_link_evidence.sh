@@ -51,10 +51,10 @@ prepare)
         case "$arch:$target" in
             i86pc:dboot) path="$WORKSPACE/usr/src/uts/i86pc/unix/dboot/obj64/dboot" ;;
             i86pc:unix.o) path="$WORKSPACE/usr/src/uts/i86pc/unix/obj64/unix.o" ;;
-            i86pc:gfx_private) path="$WORKSPACE/usr/src/uts/i86pc/io/gfx_private/obj64/gfx_private" ;;
+            i86pc:gfx_private) path="$WORKSPACE/usr/src/uts/i86pc/gfx_private/obj64/gfx_private" ;;
             i86xpv:dboot) path="$WORKSPACE/usr/src/uts/i86xpv/unix/dboot/obj64/dboot" ;;
             i86xpv:unix.o) path="$WORKSPACE/usr/src/uts/i86xpv/unix/obj64/unix.o" ;;
-            i86xpv:gfx_private) path="$WORKSPACE/usr/src/uts/i86xpv/io/gfx_private/obj64/gfx_private" ;;
+            i86xpv:gfx_private) path="$WORKSPACE/usr/src/uts/i86xpv/gfx_private/obj64/gfx_private" ;;
         esac
         record_file_state "$arch.$target" "$path" >> "$LOGDIR/target-preclean-state.tsv"
         if [ -e "$path" ] || [ -L "$path" ]; then
@@ -133,7 +133,7 @@ case "$arch:$out" in
         ;;
     i86pc:obj64/gfx_private|i86xpv:obj64/gfx_private)
         case "$PWD" in
-        */usr/src/uts/i86pc/io/gfx_private|*/usr/src/uts/i86xpv/io/gfx_private)
+        */usr/src/uts/i86pc/gfx_private|*/usr/src/uts/i86xpv/gfx_private)
             target=gfx_private.$arch
             expected=obj64/rotfb_runtime.o
             ;;
@@ -280,6 +280,8 @@ finalize)
         label=$1
         path=$2
         expected=$3
+        expected_cwd=$4
+        expected_output=$5
         command_count=0
         status_count=0
         log_count=0
@@ -289,17 +291,34 @@ finalize)
         for f in "$LOGDIR/linker-output/$label."*.cmd; do
             [ -f "$f" ] || continue
             command_count=$((command_count + 1))
-            base=${f%.cmd}
+            base=$(printf '%s' "$f" | sed 's/\.cmd$//')
             [ -f "$base.status" ] && [ -f "$base.log" ] || pair_bad_count=$((pair_bad_count + 1))
-            grep -q '^object_argument_present=YES$' "$f" || object_bad_count=$((object_bad_count + 1))
+            cmd_target=$(sed -n 's/^target=//p' "$f" | tail -n 1)
+            cmd_cwd=$(sed -n 's/^cwd=//p' "$f" | tail -n 1)
+            cmd_output=$(sed -n 's/^output=//p' "$f" | tail -n 1)
+            cmd_expected=$(sed -n 's/^expected_object=//p' "$f" | tail -n 1)
+            cmd_has_object=$(sed -n 's/^object_argument_present=//p' "$f" | tail -n 1)
+            if [ "$cmd_target" != "$label" ] || [ "$cmd_cwd" != "$expected_cwd" ] ||
+                [ "$cmd_output" != "$expected_output" ] || [ "$cmd_expected" != "$expected" ]; then
+                pair_bad_count=$((pair_bad_count + 1))
+            fi
+            if [ "$cmd_has_object" != YES ]; then
+                object_bad_count=$((object_bad_count + 1))
+            fi
         done
         for f in "$LOGDIR/linker-output/$label."*.status; do
             [ -f "$f" ] || continue
             status_count=$((status_count + 1))
-            base=${f%.status}
+            base=$(printf '%s' "$f" | sed 's/\.status$//')
             [ -f "$base.cmd" ] && [ -f "$base.log" ] || pair_bad_count=$((pair_bad_count + 1))
             rc=$(awk -F '\t' '{print $3}' "$f")
             [ "$rc" = 0 ] || bad_rc_count=$((bad_rc_count + 1))
+            if ! awk -F '\t' -v label="$label" -v out="$expected_output" -v cwd="$expected_cwd" '
+                $2 != label || $4 != out || $5 != "YES" || $6 != cwd { bad = 1 }
+                END { exit (bad ? 1 : 0) }
+            ' "$f"; then
+                pair_bad_count=$((pair_bad_count + 1))
+            fi
         done
         for f in "$LOGDIR/linker-output/$label."*.log; do
             [ -f "$f" ] || continue
@@ -331,15 +350,15 @@ finalize)
             diagnostics=INCOMPLETE
         fi
         object_present=NO
-        if [ "$command_count" -gt 0 ] && [ "$object_bad_count" -eq 0 ]; then
+        if [ "$command_count" -eq 1 ] && [ "$object_bad_count" -eq 0 ]; then
             object_present=YES
         fi
         linker_status=INCOMPLETE
-        if [ "$command_count" -gt 0 ] && [ "$status_count" -eq "$command_count" ] &&
-            [ "$log_count" -eq "$command_count" ] && [ "$pair_bad_count" -eq 0 ]; then
-            if [ "$bad_rc_count" -gt 0 ]; then
-                linker_status=NONZERO
-            elif [ "$object_present" = YES ]; then
+        if [ "$bad_rc_count" -gt 0 ]; then
+            linker_status=NONZERO
+        elif [ "$command_count" -eq 1 ] && [ "$status_count" -eq 1 ] &&
+            [ "$log_count" -eq 1 ] && [ "$pair_bad_count" -eq 0 ]; then
+            if [ "$object_present" = YES ]; then
                 linker_status=0
             else
                 linker_status=OBJECT_MISSING
@@ -352,13 +371,15 @@ finalize)
             OVERALL=FAIL
         elif [ "$fresh" != YES ] || [ "$elf" != YES ] ||
             [ "$object_present" != YES ] || [ "$linker_status" != 0 ] ||
-            [ "$diagnostics" != NONE ]; then
+            [ "$diagnostics" != NONE ] || [ "$pair_bad_count" -ne 0 ]; then
             status=INCOMPLETE
             [ "$OVERALL" = FAIL ] || OVERALL=INCOMPLETE
         fi
         {
             printf '[%s]\n' "$label"
             printf 'target_path=%s\n' "$path"
+            printf 'expected_working_directory=%s\n' "$expected_cwd"
+            printf 'expected_output=%s\n' "$expected_output"
             printf 'expected_object_argument=%s\n' "$expected"
             printf 'linker_command_detected_count=%s\n' "$command_count"
             printf 'linker_status_record_count=%s\n' "$status_count"
@@ -375,12 +396,12 @@ finalize)
         } >> "$EVIDENCE"
     }
 
-    check_target dboot.i86pc "$WORKSPACE/usr/src/uts/i86pc/unix/dboot/obj64/dboot" dboot/obj64/rotfb_boot.o
-    check_target unix.o.i86pc "$WORKSPACE/usr/src/uts/i86pc/unix/obj64/unix.o" obj64/rotfb_boot.o
-    check_target gfx_private.i86pc "$WORKSPACE/usr/src/uts/i86pc/io/gfx_private/obj64/gfx_private" obj64/rotfb_runtime.o
-    check_target dboot.i86xpv "$WORKSPACE/usr/src/uts/i86xpv/unix/dboot/obj64/dboot" dboot/obj64/rotfb_boot.o
-    check_target unix.o.i86xpv "$WORKSPACE/usr/src/uts/i86xpv/unix/obj64/unix.o" obj64/rotfb_boot.o
-    check_target gfx_private.i86xpv "$WORKSPACE/usr/src/uts/i86xpv/io/gfx_private/obj64/gfx_private" obj64/rotfb_runtime.o
+    check_target dboot.i86pc "$WORKSPACE/usr/src/uts/i86pc/unix/dboot/obj64/dboot" dboot/obj64/rotfb_boot.o "$WORKSPACE/usr/src/uts/i86pc/unix" dboot/obj64/dboot
+    check_target unix.o.i86pc "$WORKSPACE/usr/src/uts/i86pc/unix/obj64/unix.o" obj64/rotfb_boot.o "$WORKSPACE/usr/src/uts/i86pc/unix" obj64/unix.o
+    check_target gfx_private.i86pc "$WORKSPACE/usr/src/uts/i86pc/gfx_private/obj64/gfx_private" obj64/rotfb_runtime.o "$WORKSPACE/usr/src/uts/i86pc/gfx_private" obj64/gfx_private
+    check_target dboot.i86xpv "$WORKSPACE/usr/src/uts/i86xpv/unix/dboot/obj64/dboot" dboot/obj64/rotfb_boot.o "$WORKSPACE/usr/src/uts/i86xpv/unix" dboot/obj64/dboot
+    check_target unix.o.i86xpv "$WORKSPACE/usr/src/uts/i86xpv/unix/obj64/unix.o" obj64/rotfb_boot.o "$WORKSPACE/usr/src/uts/i86xpv/unix" obj64/unix.o
+    check_target gfx_private.i86xpv "$WORKSPACE/usr/src/uts/i86xpv/gfx_private/obj64/gfx_private" obj64/rotfb_runtime.o "$WORKSPACE/usr/src/uts/i86xpv/gfx_private" obj64/gfx_private
 
     if [ -s "$LOGDIR/linker-status.tsv" ]; then
         echo "linker_status_records=$(wc -l < "$LOGDIR/linker-status.tsv" | tr -d ' ')" >> "$EVIDENCE"
@@ -414,10 +435,10 @@ finalize)
     if [ -f "$LOGDIR/patch-apply.log" ]; then
         APPLIED=$(grep -c '^APPLIED ' "$LOGDIR/patch-apply.log" || true)
         PATCH_ORDER=$(awk '/^APPLIED / { if (n++) printf ","; printf "%s", $2 }' "$LOGDIR/patch-apply.log")
-        EXPECTED_ORDER='0001-framebuffer-metadata.patch,0002-boot-fb-rotation.patch,0003-gfxp-bitmap-tem-rotation.patch,0004-Makefile-files.patch,0005-rotfb-lifecycle-hardening.patch,0006-rotfb-console-contract-and-copy-safety.patch,0007-gfxp-bitmap-bounds-hardening.patch,0008-gfxp-detach-failure-safety.patch,0009-gfxp-bitmap-wide-row-offsets.patch,0010-gfxp-bitmap-vis-safety.patch'
+        EXPECTED_ORDER='0001-framebuffer-metadata.patch,0002-boot-fb-rotation.patch,0003-gfxp-bitmap-tem-rotation.patch,0004-Makefile-files.patch,0005-rotfb-lifecycle-hardening.patch,0006-rotfb-console-contract-and-copy-safety.patch,0007-gfxp-bitmap-bounds-hardening.patch,0008-gfxp-detach-failure-safety.patch,0009-gfxp-bitmap-wide-row-offsets.patch,0010-gfxp-bitmap-vis-safety.patch,0011-gfxp-bitmap-cursor-state.patch'
         echo "patches_applied=$APPLIED" >> "$EVIDENCE"
         echo "patch_order=$PATCH_ORDER" >> "$EVIDENCE"
-        if [ "$APPLIED" -ne 10 ] || [ "$PATCH_ORDER" != "$EXPECTED_ORDER" ]; then
+        if [ "$APPLIED" -ne 11 ] || [ "$PATCH_ORDER" != "$EXPECTED_ORDER" ]; then
             OVERALL=FAIL
             echo "patch_order_match=NO" >> "$EVIDENCE"
         else
