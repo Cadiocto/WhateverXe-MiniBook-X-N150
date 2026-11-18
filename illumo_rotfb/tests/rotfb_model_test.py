@@ -12,6 +12,7 @@ LOGICAL_HEIGHT = 1200
 LOGICAL_PITCH = 7680
 BPP = 4
 UINT32_MAX = (1 << 32) - 1
+SHRT_MIN = -(1 << 15)
 
 
 def map_cw(logical_x, logical_y):
@@ -26,6 +27,95 @@ def clip_rect(x, y, width, height):
     width = min(width, LOGICAL_WIDTH - x)
     height = min(height, LOGICAL_HEIGHT - y)
     return (x, y, x + width, y + height)
+
+
+
+def vis_rect_valid(col, row, width, height):
+    if col < 0 or row < 0 or width <= 0 or height <= 0:
+        return False
+    return (
+        col < LOGICAL_WIDTH
+        and row < LOGICAL_HEIGHT
+        and width <= LOGICAL_WIDTH - col
+        and height <= LOGICAL_HEIGHT - row
+    )
+
+
+def vis_copy_valid(s_col, s_row, e_col, e_row, t_col, t_row):
+    if min(s_col, s_row, e_col, e_row, t_col, t_row) < 0:
+        return False
+    if s_col > e_col or s_row > e_row:
+        return False
+    width = e_col - s_col + 1
+    height = e_row - s_row + 1
+    return (
+        s_col < LOGICAL_WIDTH
+        and e_col < LOGICAL_WIDTH
+        and s_row < LOGICAL_HEIGHT
+        and e_row < LOGICAL_HEIGHT
+        and t_col < LOGICAL_WIDTH
+        and t_row < LOGICAL_HEIGHT
+        and width <= LOGICAL_WIDTH - t_col
+        and height <= LOGICAL_HEIGHT - t_row
+    )
+
+
+def _memmove(dst, dst_offset, src, src_offset, length):
+    data = bytes(src[src_offset:src_offset + length])
+    dst[dst_offset:dst_offset + length] = data
+
+
+def _vis_copy_model(fb, shadow, source, destination, length, text_mode):
+    if text_mode:
+        _memmove(fb, destination, shadow, source, length)
+    if shadow is not fb or not text_mode:
+        _memmove(shadow, destination, shadow, source, length)
+
+
+def test_vis_signed_argument_validation():
+    assert vis_rect_valid(0, 0, 1, 1)
+    for bad in (-1, SHRT_MIN):
+        assert not vis_rect_valid(bad, 0, 1, 1)
+        assert not vis_rect_valid(0, bad, 1, 1)
+        assert not vis_rect_valid(0, 0, bad, 1)
+        assert not vis_rect_valid(0, 0, 1, bad)
+
+        invalid_copies = (
+            (bad, 0, 1, 1, 0, 0),
+            (0, bad, 1, 1, 0, 0),
+            (bad - 1, 0, bad, 1, 0, 0),
+            (0, bad - 1, 1, bad, 0, 0),
+            (0, 0, 1, 1, bad, 0),
+            (0, 0, 1, 1, 0, bad),
+        )
+        for args in invalid_copies:
+            assert not vis_copy_valid(*args)
+    assert vis_copy_valid(0, 0, LOGICAL_WIDTH - 1,
+                          LOGICAL_HEIGHT - 1, 0, 0)
+
+
+def test_vis_copy_alias_overlap_safety():
+    original = bytearray(b"abcdefgh")
+    expected_forward = bytearray(b"ababcdgh")
+    aliased = bytearray(original)
+    _vis_copy_model(aliased, aliased, 0, 2, 4, True)
+    assert aliased == expected_forward
+
+    expected_backward = bytearray(b"cdefefgh")
+    aliased = bytearray(original)
+    _vis_copy_model(aliased, aliased, 2, 0, 4, True)
+    assert aliased == expected_backward
+
+    physical = bytearray(b"........")
+    shadow = bytearray(original)
+    _vis_copy_model(physical, shadow, 0, 2, 4, True)
+    assert physical == bytearray(b"..abcd..")
+    assert shadow == expected_forward
+
+    graphics_shadow = bytearray(original)
+    _vis_copy_model(graphics_shadow, graphics_shadow, 0, 2, 4, False)
+    assert graphics_shadow == expected_forward
+
 
 
 def test_corners():
@@ -167,8 +257,9 @@ def test_patch_contracts():
     patch6 = (root / "patches" / "0006-rotfb-console-contract-and-copy-safety.patch").read_text()
     patch7 = (root / "patches" / "0007-gfxp-bitmap-bounds-hardening.patch").read_text()
     patch9 = (root / "patches" / "0009-gfxp-bitmap-wide-row-offsets.patch").read_text()
+    patch10 = (root / "patches" / "0010-gfxp-bitmap-vis-safety.patch").read_text()
 
-    for patch in sorted((root / "patches").glob("000*.patch")):
+    for patch in sorted((root / "patches").glob("*.patch")):
         assert patch.read_text().endswith("\n"), f"{patch.name} lacks final newline"
         _assert_patch_hunks_well_formed(patch)
 
@@ -185,16 +276,30 @@ def test_patch_contracts():
     boot_import = boot_source.split(
         "rotfb_boot_import(fb_info_t *fb)", 1
     )[1].split("\n}\n", 1)[0]
+    boot_flush = boot_source.split(
+        "rotfb_boot_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,", 1
+    )[1].split("\n}\n", 1)[0]
     assert "fb->fb = rotfb_info.logical_fb;" in boot_init
     assert boot_init.index("fb->fb = rotfb_info.logical_fb;") < boot_init.index(
         "rotfb_info.boot_ready = B_TRUE;"
     )
     assert "fb->fb != rotfb_info.logical_fb" in boot_import
+    assert "#include <sys/atomic.h>" in boot_source
+    assert "membar_producer();" in boot_flush
+    assert boot_flush.index("membar_producer();") > boot_flush.index("for (yy = y;")
     assert "@@ -677,8 +721,8 @@" in patch6
     assert "c_copy.s_col = fb_info.cursor.origin.x;" in patch6
     assert "c_copy.t_col = fb_info.cursor.origin.x + chars * boot_fb_font.vf_width;" in patch6
     assert "uint64_t row_offset = (uint64_t)i * console->fb.pitch;" in patch9
     assert "uint32_t i, j, pitch;" in patch9
+    assert "ma->s_col < 0 || ma->s_row < 0" in patch10
+    assert "ma->e_col < 0 || ma->e_row < 0" in patch10
+    assert "ma->t_col < 0 || ma->t_row < 0" in patch10
+    assert "da->col < 0 || da->row < 0" in patch10
+    assert "da->width <= 0 || da->height <= 0" in patch10
+    assert "ca->col < 0 || ca->row < 0" in patch10
+    assert "ca->width <= 0 || ca->height <= 0" in patch10
+    assert patch10.count("sdst != dst || softc->mode != KD_TEXT") == 2
 
 if __name__ == "__main__":
     test_corners()
@@ -202,5 +307,7 @@ if __name__ == "__main__":
     test_last_pixel_offsets()
     test_clipping_boundaries_and_overflow_inputs()
     test_wide_framebuffer_row_offsets()
+    test_vis_signed_argument_validation()
+    test_vis_copy_alias_overlap_safety()
     test_patch_contracts()
     print("ROTFB model tests: PASS")

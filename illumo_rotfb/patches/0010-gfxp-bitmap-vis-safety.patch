@@ -1,0 +1,59 @@
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -361,6 +361,9 @@
+ 	    (uint64_t)console->fb.screen.x * console->fb.bpp ||
+ 	    console->fb.fb_size <
+ 	    (uint64_t)console->fb.pitch * console->fb.screen.y ||
++	    ma->s_col < 0 || ma->s_row < 0 ||
++	    ma->e_col < 0 || ma->e_row < 0 ||
++	    ma->t_col < 0 || ma->t_row < 0 ||
+ 	    ma->s_col > ma->e_col || ma->s_row > ma->e_row ||
+ 	    ma->s_col >= console->fb.screen.x ||
+ 	    ma->e_col >= console->fb.screen.x ||
+@@ -391,8 +394,10 @@
+ 				(void) memmove(dst + increment,
+ 				    src + increment, width);
+ 			}
+-			(void) memmove(sdst + increment, src + increment,
+-			    width);
++			if (sdst != dst || softc->mode != KD_TEXT) {
++				(void) memmove(sdst + increment, src + increment,
++				    width);
++			}
+ 		}
+ 	} else {
+ 		for (i = height - 1; i >= 0; i--) {
+@@ -401,8 +406,10 @@
+ 				(void) memmove(dst + increment,
+ 				    src + increment, width);
+ 			}
+-			(void) memmove(sdst + increment, src + increment,
+-			    width);
++			if (sdst != dst || softc->mode != KD_TEXT) {
++				(void) memmove(sdst + increment, src + increment,
++				    width);
++			}
+ 		}
+ 	}
+ 	if (rotfb_info.runtime_ready && softc->mode == KD_TEXT) {
+@@ -476,7 +483,8 @@
+ 	console = softc->console;
+ 	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
+ 	    console->fb.bpp == 0 || console->fb.pitch == 0 ||
+-	    da->width == 0 || da->height == 0 ||
++	    da->col < 0 || da->row < 0 ||
++	    da->width <= 0 || da->height <= 0 ||
+ 	    da->col >= console->fb.screen.x ||
+ 	    da->row >= console->fb.screen.y ||
+ 	    da->width > console->fb.screen.x - da->col ||
+@@ -624,7 +632,8 @@
+ 	bpp = console->fb.bpp;
+ 	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
+ 	    bpp == 0 || pitch == 0 || console->fb.screen.x == 0 ||
+-	    console->fb.screen.y == 0 || ca->width == 0 || ca->height == 0 ||
++	    console->fb.screen.y == 0 || ca->col < 0 || ca->row < 0 ||
++	    ca->width <= 0 || ca->height <= 0 ||
+ 	    ca->col >= console->fb.screen.x ||
+ 	    ca->row >= console->fb.screen.y ||
+ 	    ca->width > console->fb.screen.x - ca->col ||

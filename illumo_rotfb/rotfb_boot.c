@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
 #include <sys/framebuffer.h>
 #include <sys/bootconf.h>
 #include <sys/rotfb.h>
@@ -267,6 +268,7 @@ rotfb_boot_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 			dst[3] = src[3];
 		}
 	}
+	membar_producer();
 }
 
 void
