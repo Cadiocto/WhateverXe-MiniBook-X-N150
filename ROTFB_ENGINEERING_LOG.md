@@ -473,3 +473,28 @@
 * GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
 * Hardware validation: **NOT PERFORMED**. No physical Chuwi result is claimed.
 * Next action: wait for Build #70 to complete, then retrieve its full job log and artifact; verify patch application, the VM `git diff --check`, compile/link evidence for i86pc and i86xpv, and the new boot-import regression test. Do not modify source/workflow or start another target build while #70 is queued or active.
+
+
+## ROTFB POST-BUILD #70 AUDIT / DIAG-003
+
+* Timestamp UTC: 2026-11-18T12:11:55Z.
+* Branch: `gop-rotation-hook`.
+* Branch HEAD before this journal append: `612516f4a1a1b5f964aaec22290f2b2df351a2d8` (journal-only commit; the tested source commit remains `d0d53a475f63e10239a2046d8f0fb967a10dc63f`).
+* Target workflow inventory: repository branch query returned 99 runs across workflows (99 on this page); filtering the exact path `.github/workflows/build-illumos.yml` and branch `gop-rotation-hook` yielded 70 target runs: 7 success, 63 failure, 0 queued, 0 in progress. No target run is active.
+* Build #70 / Run ID `44288142299` / tested source commit `d0d53a475f63e10239a2046d8f0fb967a10dc63f`: **SUCCESS**. Job ID `134746050977`; completed at `2026-11-18T11:30:57Z`. Run URL: https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44288142299.
+* Full job log retrieved: 1,661,627 characters / 12,208 lines. Artifact `illumos-framebuffer-build-logs-44288142299` downloaded and inspected: 7,077,052 bytes, 35 files, SHA-256 `4ce583a2c4dff92166a63a3222dc3de0a91b8f14f1b8d3b4d06a35bd80ec6d00`.
+* Build evidence:
+  * ROTFB model geometry/clipping test step: SUCCESS.
+  * `patch-apply.log` confirms patches 0001–0009 each passed `git apply --check` and were applied in lexical order.
+  * VM ran `git diff --check` before build; the VM job completed successfully.
+  * Nightly exit code: `0`; final build exit code: `0`; nightly distributed build completed at `2026-11-18T11:29:29Z`.
+  * Compile command counts: 3 each for `rotfb_boot`, `rotfb_runtime`, `gfxp_bitmap`, and `gfxp_fb` on both i86pc and i86xpv. Link command counts: 2 each for boot `unix.o` and the three gfx_private objects. `ROTFB/framebuffer compile-link evidence: PASS`.
+  * `compiler-error-index.txt` is empty apart from section headers. Targeted scan of both full nightly logs found no compiler/linker failure signature. Build #70 has no build root cause; it completed successfully.
+  * The boot-import regression assertion was exercised by the successful model-test step; this is source/model validation, not a physical boot test.
+* Re-audited all nine patch files in lexical order: 71 hunks total, all declared old/new hunk counts match their actual bodies, all nine files end with a newline. No patch content changed.
+* Workflow invariants: branch/path filters remain limited to `gop-rotation-hook`, `illumo_rotfb/**`, and `.github/workflows/build-illumos.yml`; concurrency remains `rotfb-single-build` with `cancel-in-progress: false`; upstream checkout remains pinned to `098e95820891f8a83fae679daece7fcf58b7b3a4`. Root journal remains outside target path filters.
+* Confirmed DIAG-003 in the completed artifact: the runner diagnostic's generic standalone `cannot` alternative matches the benign illumos source comment `Since we cannot set property values by applying a profile yet` in both nightly log copies. This creates two false-positive source matches in the runner-side scan. A narrower `cannot` verb list was replayed against every text file in the Build #70 artifact: 0 matches on the clean artifact, while 13/13 synthetic failure examples (fatal error, linker fatal, undefined symbol, syntax error, failed target, cannot find/open, OOM, panic, segmentation fault, SSH exit, killed process) remained detectable. This is a diagnostic-index quality defect only; it did not affect build success or build gating.
+* No source or patch changes were made in this cycle. The only planned code change is the single runner diagnostic regex in the dedicated workflow, to be committed only after a fresh all-runs check confirms no queued or active target run. No manual dispatch, rerun, cancellation, or issue creation was performed.
+* The OpenIndiana VM successfully cloned the pinned upstream and performed patch application plus the full nightly build. The separate local container still cannot resolve `github.com`; no local full-upstream clone/build is claimed.
+* GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
+* Hardware validation: **NOT PERFORMED**. No physical Chuwi result is claimed.
