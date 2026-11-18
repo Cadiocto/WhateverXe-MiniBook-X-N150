@@ -704,3 +704,29 @@
 
 * The workflow path filter contains only `illumo_rotfb/**` and `.github/workflows/build-illumos.yml`; root-level `ROTFB_ENGINEERING_LOG.md` is outside those push filters.
 * At the pre-write recheck there were no queued or active target builds. This entry changes only the root-level engineering journal. No source, patch, test, Makefile, script, workflow, branch, or build state was changed; no run was dispatched, rerun, cancelled, or approved.
+
+
+## ROTFB AUTONOMOUS REPAIR CYCLE — DBOOT SFENCE AND REGRESSION TEST
+
+* Timestamp UTC: 2026-11-18T15:28:40Z.
+* Branch: `gop-rotation-hook`. Source HEAD: `dd3155227799a2ea0479d93e351b7a719f316cb4`. Pinned upstream remains `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+* Root cause from Build #72 is confirmed against pinned illumos source: x86 `membar_producer()` is implemented as `sfence` in `usr/src/uts/intel/ml/lock_prim.S`; the dboot link does not include kernel atomic objects, so an external `membar_producer` reference cannot resolve. The boot AMD64 cpufunc header also defines an inline `sfence()` with a compiler memory clobber.
+* Commit `f71907dc6c40f6afbc7d99304d7678057963341d` removes `<sys/atomic.h>` from `rotfb_boot.c`, adds a local boot helper containing the hardware `sfence` instruction plus compiler memory clobber, and calls it after physical framebuffer stores. This preserves the WC store-ordering semantics of the pinned x86 `membar_producer` implementation without an external kernel symbol.
+* A regression test was added to extract and compile the actual helper body for `-Di86pc` and `-D__i86xpv`, disassemble the object to require `sfence`, and require no undefined symbols. An independent local GCC probe with `-m64 -O2 -ffreestanding -fno-pic -mno-sse -mno-mmx` produced `mov; sfence; ret` for both defines; `nm -u` was empty. This is a host-toolchain probe, not an illumos dboot build.
+* Build #73: Run ID `44335478142`, source `f71907dc6c40f6afbc7d99304d7678057963341d`, FAILURE before OpenIndiana VM. First cause: old `test_patch_contracts()` still asserted that `<sys/atomic.h>` and `membar_producer()` must be present. No upstream build was attempted.
+* Commit `177e60cb038a5907c05bd27e8b9d1d1723510397` updated those stale source-contract assertions. Build #74: Run ID `44335650407`, FAILURE before VM because the new Python assertion contained over-escaped quote sequences and caused a SyntaxError at line 342. No upstream build was attempted.
+* Commit `dd3155227799a2ea0479d93e351b7a719f316cb4` fixes the Python assertion using a single-quoted Python literal. Build #75: Run ID `44335792313`, Job ID `134912017496`, is IN_PROGRESS. Geometry/clipping and the full Python test step completed PASS; OpenIndiana VM build is currently running. No artifact or nightly/final exit code is available yet.
+* The current target run list was rechecked: #75 is the only active target build; no other queued or active target run exists. No further source/workflow changes will be made until #75 completes.
+* Current patch set remains 10 patches (0001–0010) in lexical order. Build #72 applied all 10, but failed both final dboot links due the unresolved external. Build #75 is the first build candidate containing the inline SFENCE fix; its patch-apply and i86pc/i86xpv compile/link results remain pending.
+* CI evidence issue ROTFB-CI-EVIDENCE-001 remains open: current evidence counts linker command lines but does not validate fresh final dboot outputs or actual linker success. Build #72 artifact confirms this weakness. Proposed workflow correction: remove expected outputs before nightly; after nightly require fresh non-empty `i86pc/unix/dboot/obj64/dboot`, `i86xpv/unix/dboot/obj64/dboot`, both `unix/obj64/unix.o`, and both `unix/obj64/gfx_private` outputs; fail evidence on linker fatal/undefined-symbol diagnostics and preserve actual nightly/final exit codes. This workflow change is deferred until #75 completes to avoid editing during an active build.
+* Workflow push path filters are exactly `illumo_rotfb/**` and `.github/workflows/build-illumos.yml`; root `ROTFB_ENGINEERING_LOG.md` is outside them. This commit updates only the root journal while #75 runs and does not trigger another build. No run was dispatched, rerun, cancelled, or approved by this journal operation.
+
+### Readiness after this cycle
+
+* BUILD VERIFIED: NO — Build #72 failed; #75 is still running.
+* CODE/TEST VERIFIED: NO — SFENCE helper probe and Python regression step pass, but full C/lifecycle coverage remains incomplete.
+* DEVICE VERIFIED: NO — no Chuwi boot or real Multiboot parameter capture has been performed.
+
+### Next action
+
+Wait for Build #75. On completion retrieve the complete job log and artifact, verify patch application, both dboot final links, both `unix.o` and `gfx_private` outputs, and actual nightly/final exit codes. Then correct ROTFB-CI-EVIDENCE-001 in the dedicated workflow only after confirming no active target run, and validate that change with a single subsequent build.
