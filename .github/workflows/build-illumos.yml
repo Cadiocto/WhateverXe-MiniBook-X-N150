@@ -368,11 +368,11 @@ jobs:
             # Flatten compiler errors from every captured log into one index.
             {
               echo "===== nightly.log compiler/error context ====="
-              grep -n -i -B 4 -A 8 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|undefined symbol|syntax error|dmake:.*failed|Don.t know how to make' "$NIGHTLY_LOG" || true
+              grep -n -i -B 4 -A 8 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|ld:[[:space:]]+fatal:|undefined symbol|syntax error|dmake:.*failed|Don.t know how to make' "$NIGHTLY_LOG" || true
               for f in "$BUILD_NOISE_DIR"/*.txt "$GATE_LOG_DIR"/*; do
                 [ -f "$f" ] || continue
                 echo "===== $f ====="
-                grep -n -i -B 4 -A 8 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|undefined symbol|syntax error|dmake:.*failed|Don.t know how to make' "$f" || true
+                grep -n -i -B 4 -A 8 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|ld:[[:space:]]+fatal:|undefined symbol|syntax error|dmake:.*failed|Don.t know how to make' "$f" || true
               done
             } > "$LOGDIR/compiler-error-index.txt"
 
@@ -402,7 +402,7 @@ jobs:
             find "$LOGDIR" -type f ! -name 'runner-error-index.txt' -print0 |
             while IFS= read -r -d '' f; do
               if grep -Iq . "$f"; then
-                matches=$(grep -n -i -B 5 -A 10 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|cannot|failed|killed|out of memory|panic|segmentation fault|ssh exited' "$f" 2>/dev/null)
+                matches=$(grep -n -i -B 5 -A 10 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|ld:[[:space:]]+fatal:|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|cannot|failed|killed|out of memory|panic|segmentation fault|ssh exited' "$f" 2>/dev/null)
                 if [ -n "$matches" ]; then
                   printf '\n===== %s =====\n%s\n' "$f" "$matches"
                 fi
