@@ -322,3 +322,16 @@
 * GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
 * Hardware validation: NOT PERFORMED. No Chuwi hardware result is claimed.
 * Next action: apply the minimal DIAG-001 workflow-only regex extension after one final target-run recheck. The workflow path filter will create at most one validation run; after it appears, stop and wait for the next cycle.
+
+## ROTFB DIAG-001 WORKFLOW REPAIR
+
+* Timestamp UTC: 2026-11-18T07:11:00Z
+* Branch: `gop-rotation-hook`
+* Branch HEAD at workflow commit: `7126f359baa378e9ef76049c081bb806fac19f20`.
+* Confirmed issue: the three workflow diagnostic indexes did not match illumos linker diagnostics beginning with `ld: fatal:`. This left a known diagnostic-coverage gap; it did not affect the build exit code or compile/link evidence gate.
+* Minimal repair: added the ERE alternative `ld:[[:space:]]+fatal:` to all three existing diagnostic grep expressions at workflow lines 371, 375, and 405. No source, patch, upstream pin, path filter, concurrency, permissions, or other workflow behavior changed.
+* Commit: `7126f359baa378e9ef76049c081bb806fac19f20` (`ci(rotfb): capture illumos linker fatal diagnostics`). GitHub commit inspection confirms the only changed path is `.github/workflows/build-illumos.yml`.
+* Local validation: controlled samples confirm bare and timestamp-prefixed `ld: fatal:` messages are matched, ordinary compiler `error:` remains matched, and `directoryError:2` remains excluded. Representative shell block passes `bash -n`; `git diff --check` passes on the exact three-line replacement fixture. The replacement was also checked against the fetched workflow text: exactly three lines changed and the final newline was preserved.
+* Build scheduling: immediately before the workflow update, all 67 target runs were completed and none were queued or active. The workflow-only commit triggered exactly one automatic target run: Build #68 / Run ID `44256656761` / HEAD `7126f359baa378e9ef76049c081bb806fac19f20`, currently **IN_PROGRESS**. No manual dispatch, rerun, cancellation, or second build was issued.
+* Current target inventory: 68 target runs; Build #68 is the sole active target run. Stop source/workflow changes until it completes. The following journal append is root-level and excluded from the workflow path filters.
+* Hardware validation: NOT PERFORMED. No Chuwi hardware result is claimed.
