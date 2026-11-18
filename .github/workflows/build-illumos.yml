@@ -166,6 +166,15 @@ jobs:
             git branch -f rotfb-build HEAD
 
             ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
+            PATCH_REGRESSION_LOG="$LOGDIR/patch-series-regression.log"
+            if ! sh "$ROTFB/tests/rotfb_patch_series_test.sh" \
+              "$WORKSPACE/illumos-gate" "$ROTFB/patches" "$WORKSPACE" \
+              > "$PATCH_REGRESSION_LOG" 2>&1; then
+              cat "$PATCH_REGRESSION_LOG"
+              exit 1
+            fi
+            cat "$PATCH_REGRESSION_LOG"
+
             PATCH_APPLY_LOG="$LOGDIR/patch-apply.log"
             : > "$PATCH_APPLY_LOG"
             for p in "$ROTFB"/patches/*.patch; do
