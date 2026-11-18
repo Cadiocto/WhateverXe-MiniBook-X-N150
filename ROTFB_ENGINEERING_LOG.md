@@ -598,3 +598,32 @@
 * Build #70 remains the latest completed source build: all nine patches applied; nightly and final exit codes 0; compile/link evidence for i86pc and i86xpv. Build #71 changes only the diagnostic workflow and remains pending.
 * No source, patch, Makefile, interface, or workflow changes were made. No manual build was dispatched. Hardware validation on Chuwi MiniBook X N150 remains NOT TESTED.
 * Hourly automation remains enabled. Its prompt still permits low-risk repairs; it has not been switched to audit-only while Build #71 is active. After #71 completes, convert the prompt to audit/journal-only mode while preserving its hourly schedule, and require explicit user approval before source changes.
+
+
+## ROTFB POST-BUILD #71 — VERIFIED RESULT AND LOW-RISK REPAIR PREPARATION
+
+* Timestamp UTC: 2026-11-18T13:38:08Z
+* Branch HEAD before this journal entry: `c3ddcd3110e7f88df3efc66db2ce0c3f46dbb1f2`.
+* Build #71 / Run ID `44302559938`, Job ID `134795747200`, Artifact ID `14430996873`: **SUCCESS**. The run completed at 2026-11-18T13:18:45Z on source commit `f0cebdfd2f2877b83a3b082e507ab73627c5b6b8`.
+* Full job log and artifact were retrieved. The artifact is 7,077,031 bytes (SHA-256 `319c4c6e6d41e86d95583878b38aa5bf78c27460856a91e8784a11481a1e0fd3`). Its captured illumos nightly log is 176,301,459 bytes / 310,262 lines.
+* All nine patches applied in lexical order to pinned upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`. The VM ran `git diff --check`; nightly exit code and final build exit code are both 0.
+* Compile evidence: 3 compile commands each for ROTFB boot, ROTFB runtime, gfxp_bitmap, and gfxp_fb on both i86pc and i86xpv; 2 link commands each for unix boot object, runtime module, bitmap module, and gfxp_fb module.
+* The DIAG-003 workflow expression is confirmed against the real Build #71 artifact: `runner-error-index.txt` is header-only (38 bytes); `compiler-error-index.txt` is 307 bytes with no matched error context. A scan of the captured nightly log found no compiler errors, linker fatals, undefined symbols, panics, segmentation faults, or matched operational failures.
+* Current target-run inventory: 71 total, 8 successful, 63 failed historical runs, 0 queued, 0 active. The complete first page plus page 2 was inspected and filtered to `.github/workflows/build-illumos.yml`.
+
+### Confirmed source defects and validated candidate fixes
+
+* `ROTFB-LIFE-001` — confirmed alias-overlap corruption in `bitmap_cons_copy()`. Runtime init sets `fb->fb == fb->shadow_fb`; the KD_TEXT path performs a framebuffer memmove and then repeats the same memmove to the aliased shadow destination. A local C harness reproduced `abababghi` instead of the correct `ababcdghi` for an overlapping move. Candidate patch `0010-gfxp-bitmap-vis-safety.patch` skips the second copy only when the destinations alias in KD_TEXT, preserving the non-alias and KD_GRAPHICS cases.
+* `ROTFB-MEM-002` — confirmed signed VIS validation gap. `screen_pos_t` / `screen_size_t` are signed short, while framebuffer dimensions are `uint16_t`; both operands promote to signed int, so negative values pass the existing upper-bound comparisons. A local C harness showed the old guard accepts `col=-1` and a later uint64 offset becomes `18446744073709551612`. Candidate patch 0010 rejects negative source/destination coordinates and negative display/cursor coordinates or dimensions before arithmetic.
+* `ROTFB-BOOT-WC-001` — confirmed ordering asymmetry. Pinned dboot maps the Multiboot framebuffer using `PT_NOCACHE` and `PT_PAT_4K` when PAT is available; the latter is the write-combining PAT entry. Runtime flush already calls `membar_producer()`, but boot flush did not. `sys/atomic.h` declares the barrier and Build #71's unix link command contains `atomic.o`; candidate boot fix mirrors the runtime barrier after the completed rectangle writes.
+* `ROTFB-BOOT-GEO-001` remains unresolved: actual Multiboot framebuffer tag width/height/pitch/address and pixel masks from the Chuwi are not captured. Do not claim boot activation or hardware rotation until these values are obtained.
+
+### Local validation before source commit
+
+* Reconstructed the Build #71 pre-0007 bitmap source from the published artifact. The exact workflow patch order 0007, 0009, then candidate 0010 passed local `git apply --check` and application; `git diff --check` passed.
+* Local Python model tests passed for negative VIS values (`-1`, `SHRT_MIN`) across all signed coordinate/size fields and for forward/backward overlapping copies with aliased and separate surfaces.
+* The local C promotion/memmove harness reproduced both old defects and verified the explicit signed guard.
+* The complete illumos build is not available in this runner: DNS resolution to github.com remains unavailable. The OpenIndiana VM build is the authoritative compile/link check.
+* No hardware validation was performed. No issue creation, repository settings, other branches, or unrelated subsystems were touched.
+
+* This entry is root-level journal content outside the workflow path filters and must not trigger a build. Candidate source changes will be committed together in one ROTFB-only commit after a fresh branch/run recheck; at most one Build #72 may be created.
