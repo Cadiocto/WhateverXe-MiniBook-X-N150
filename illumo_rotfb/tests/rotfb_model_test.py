@@ -94,6 +94,9 @@ def test_patch_contracts():
     assert "@@ -189,7 +190,7 @@" in patch4
     assert "if (rotfb_info.configured && rotfb_info.logical_fb != NULL)" in patch6
     assert "if (!rotfb_info.boot_ready)" in patch6
+    assert "@@ -677,8 +721,8 @@" in patch6
+    assert "c_copy.s_col = fb_info.cursor.origin.x;" in patch6
+    assert "c_copy.t_col = fb_info.cursor.origin.x + chars * boot_fb_font.vf_width;" in patch6
 
 if __name__ == "__main__":
     test_corners()

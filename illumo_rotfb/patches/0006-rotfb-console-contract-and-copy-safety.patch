@@ -119,12 +119,17 @@ diff --git a/usr/src/uts/i86pc/boot/boot_fb.c b/usr/src/uts/i86pc/boot/boot_fb.c
  	if (rotfb_info.boot_ready)
  		rotfb_boot_flush_all(&fb_info);
  }
-@@ -680,3 +724,3 @@
+@@ -677,8 +721,8 @@
+ 	c_copy.s_col = fb_info.cursor.origin.x;
+ 	c_copy.s_row = fb_info.cursor.origin.y;
+ 
  	c_copy.e_col = (fb_info.terminal.x - chars) * boot_fb_font.vf_width;
 -	c_copy.e_col += fb_info.terminal_origin.x;
 -	c_copy.e_row = c_copy.s_row + boot_fb_font.vf_height;
 +	c_copy.e_col += fb_info.terminal_origin.x - 1;
 +	c_copy.e_row = c_copy.s_row + boot_fb_font.vf_height - 1;
+ 
+ 	c_copy.t_col = fb_info.cursor.origin.x + chars * boot_fb_font.vf_width;
 @@ -694,13 +738,18 @@
  boot_fb_scroll(void)
  {
