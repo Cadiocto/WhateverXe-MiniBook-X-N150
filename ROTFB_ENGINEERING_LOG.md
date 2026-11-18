@@ -786,3 +786,23 @@ Wait for Build #75. On completion retrieve the complete job log and artifact, ve
 ### Next action
 
 Wait for Build #76 to finish. Retrieve its full artifact and nightly log, verify all six linker status records against the six fresh target files, and inspect the exact per-architecture results. Then make one minimal evidence-only correction for the five items above, add regression fixtures for nonzero/missing linker statuses and patch order, and run exactly one subsequent build after confirming no active target run.
+
+
+## ROTFB-CI-EVIDENCE-001 — Build #76 exit-code serialization defect
+
+* Audit timestamp UTC: 2026-11-18T17:32:21.256Z.
+* Branch HEAD before journal update: `f492d42f3b9e8a0299a27f0b4df1fb04f2c5733e`; branch `gop-rotation-hook`. Pinned upstream remains `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+* Build #76 remains active: Run ID `44353489911`, Job ID `134975230572`, source `5da8f521836211f43bd85bf54ac17457f56745d1`. GitHub reports the geometry/clipping model-test step completed SUCCESS; the OpenIndiana VM step is IN_PROGRESS; diagnostic finalization and artifact upload are pending. No artifact or final build exit code is available yet.
+* Additional confirmed defect in `.github/workflows/build-illumos.yml`: three shell printf formats contain a doubled backslash before `n`: the `ld-wrapper-watch-exit-code.txt` write, the `final-build-exit-code.txt` write, and the appended `final_build_exit_code` evidence field. In a YAML literal block Bash receives both backslashes; `printf '%s\\n' 0` emits bytes `30 5c 6e` (the text `0\\n`), not `30 0a` (the numeric value followed by a newline). This was reproduced locally with `od`. The correct format is a single backslash: `printf '%s\n'`.
+* Consequence: the workflow process still exits using the numeric `BUILD_RC`, so the GitHub job conclusion remains authoritative; however, the final exit-code artifact and appended evidence field are malformed and cannot be consumed as plain numeric/line-oriented evidence. This is a confirmed workflow evidence defect, not evidence that the active build itself failed.
+* Static review also confirms the current helper's `linker_command_detected_count` is calculated from completed `.status` files rather than `.cmd` files; it therefore conflates observed commands with completed linker processes. It records expected ROTFB object arguments but does not inspect the final ELF/object output for ROTFB symbols. The previously logged five evidence corrections (separate command/status counts, explicit FAIL vs INCOMPLETE, exact patch order, cleanup/start ordering, and exact per-target invocation/cwd validation) remain open.
+* The dboot barrier fix remains present in `illumo_rotfb/rotfb_boot.c`: the local `sfence` plus compiler memory clobber runs after the WC pixel-store loop. The pinned upstream `membar_producer` implementation in `usr/src/uts/intel/ml/lock_prim.S` is `sfence; ret`; the dboot final-link inputs in Build #72 omitted the kernel atomic implementation, explaining the original unresolved external. The current Python regression extracts the actual helper body, compiles it for `-Di86pc` and `-D__i86xpv`, disassembles for SFENCE, and checks for no undefined symbol. Build #76's model-test step passed, but its VM compile/link evidence remains pending.
+* Current patch set remains 10 patches in lexical order: 0001-framebuffer-metadata, 0002-boot-fb-rotation, 0003-gfxp-bitmap-tem-rotation, 0004-Makefile-files, 0005-rotfb-lifecycle-hardening, 0006-rotfb-console-contract-and-copy-safety, 0007-gfxp-bitmap-bounds-hardening, 0008-gfxp-detach-failure-safety, 0009-gfxp-bitmap-wide-row-offsets, 0010-gfxp-bitmap-vis-safety.
+* No source, patch, test, Makefile, or workflow file was changed. This is a root-level journal-only update outside the workflow push path filters; it does not trigger a target build. No active run was dispatched, rerun, cancelled, or modified.
+
+### Readiness and next action
+
+* BUILD VERIFIED: NO — Build #76 is still running; its real per-linker statuses and final artifact have not been retrieved.
+* CODE/TEST VERIFIED: NO — direct C/lifecycle, allocator rollback, callback-gate, and teardown coverage remains insufficient.
+* DEVICE VERIFIED: NO — no Chuwi boot or actual Multiboot framebuffer capture has been performed.
+* Wait for Build #76 to complete. Inspect the full job log and artifact, verify all six link results and output freshness, then fix the printf escaping and remaining evidence semantics in one minimal workflow/helper commit. Recheck the run list and branch HEAD immediately before that build-triggering commit; do not edit source/workflow while any target run is active.
