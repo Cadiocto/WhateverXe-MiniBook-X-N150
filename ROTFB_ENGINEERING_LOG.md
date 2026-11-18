@@ -846,3 +846,68 @@ Wait for Build #76 to finish. Retrieve its full artifact and nightly log, verify
 ### Next action
 
 Wait for Build #77 to complete and retrieve its full logs/artifact. Inspect whether the watcher reinstalled after tool bootstrap and whether dboot/unix.o records now contain real linker statuses. Then make one minimal correction for the gfx_private build/output directories and fixture, recheck branch HEAD and all target runs immediately before committing, and run exactly one subsequent build. Do not edit source/workflow while Build #77 is queued or active.
+
+
+### 2026-11-18T20:22:00.102Z — Build #77 post-build audit and recovery commit
+
+**Repository:** `Cadiocto/WhateverXe-MiniBook-X-N150`  
+**Branch:** `gop-rotation-hook`  
+**Pinned illumos upstream:** `098e95820891f8a83fae679daece7fcf58b7b3a4`
+
+#### Build #77 authoritative result
+
+- Run ID: `44370911917`
+- Job ID: `135037112179`
+- Source SHA: `9ff1c2312227f2ce88fbbea5ddf27d18bb1870cb`
+- Artifact ID: `14463159509`
+- Artifact SHA256: `8427f5368f3a... (see GitHub artifact metadata for full digest)`
+- Workflow conclusion: `failure`
+- OpenIndiana nightly exit code: `0`
+- Final workflow exit code: `1`
+- Patch application: `10/10`, lexical order confirmed.
+
+The artifact contains four valid linker status records: dboot i86pc/i86xpv and unix.o i86pc/i86xpv. All four report exit status 0, fresh non-empty ELF targets and the required `rotfb_boot.o` argument.
+
+Both gfx_private targets are **INCOMPLETE**, not PASS. The original nightly log contains their link commands (i86xpv around line 51240 and i86pc around line 53926), with `obj64/rotfb_runtime.o` in the argument list and subsequent ctfmerge/install commands. The linker wrapper did not capture those calls, so no actual linker exit status or independent freshness evidence exists for either target.
+
+#### Confirmed root cause
+
+The pinned upstream has the gfx_private Makefiles and final targets under:
+
+- `usr/src/uts/i86pc/gfx_private/Makefile`
+- `usr/src/uts/i86xpv/gfx_private/Makefile`
+- `usr/src/uts/<arch>/gfx_private/obj64/gfx_private`
+
+Build #77's evidence helper and its test fixture incorrectly used `usr/src/uts/<arch>/io/gfx_private` for the final target, cleanup path and wrapper working-directory classifier. The fixture duplicated the same wrong path, allowing the regression test to pass while the production build evidence missed both link calls.
+
+#### Recovery commit
+
+Commit: `3b58a6a350325ed660a1cb13de56cb2ed0a665e8`
+
+Changed paths (all ROTFB-authorized):
+
+- `.github/workflows/build-illumos.yml`
+- `illumo_rotfb/rotfb_link_evidence.sh`
+- `illumo_rotfb/tests/rotfb_link_evidence_test.sh`
+- `illumo_rotfb/rotfb_vis_cursor.h`
+- `illumo_rotfb/tests/rotfb_vis_cursor_test.c`
+- `illumo_rotfb/patches/0011-gfxp-bitmap-cursor-state.patch`
+
+The evidence helper now uses the actual gfx_private paths and requires one matching command/status/log tuple per target, exact working directory and output path, expected ROTFB object, zero linker exit status, fresh non-empty output and ELF magic. Missing or stale outputs remain INCOMPLETE; a non-zero linker status is FAIL.
+
+Patch 0011 moves VIS cursor validation/state preparation into a portable helper used by the production gfxp_bitmap patch. It rejects negative signed VIS coordinates and non-positive dimensions before unsigned conversion, validates terminal/screen/pitch/framebuffer bounds, and commits position/origin only after all checks succeed. The caller changes visible state only after validation and rendering.
+
+#### Local validation
+
+- Host C regression test compiled with `cc -std=c99 -Wall -Wextra -Werror` and passed.
+- Updated linker evidence test shell syntax: `sh -n` passed.
+- The full linker evidence regression suite and all eleven patch applications remain pending Build #78; no OpenIndiana success is claimed for this commit.
+
+#### Build #78
+
+- Run ID: `44390180897`
+- Source SHA: `3b58a6a350325ed660a1cb13de56cb2ed0a665e8`
+- URL: https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44390180897
+- Initial state after push: queued.
+
+No additional source/workflow changes are permitted until Build #78 completes and its full logs/artifact are audited. No device verification is claimed.
