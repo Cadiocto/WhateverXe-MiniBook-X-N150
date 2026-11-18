@@ -421,3 +421,27 @@
 * Local patch structure and diagnostic-regex checks passed. A separate full local upstream checkout/apply remains blocked: `git ls-remote https://github.com/illumos/illumos-gate.git 098e95820891f8a83fae679daece7fcf58b7b3a4` failed with `Could not resolve host: github.com`. No local full-upstream build is claimed; Build #68's clean OpenIndiana VM run is the authoritative apply/compile/link evidence.
 * GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
 * Hardware validation: **NOT PERFORMED**. No physical Chuwi result is claimed.
+
+## ROTFB POST-BUILD #69 AUDIT
+
+* Timestamp UTC: 2026-11-18T10:23:51.212Z
+* Branch: `gop-rotation-hook`
+* Branch HEAD before journal append: `e609963f2a92733edb2cfbfca210c62a51017f10`.
+* Latest branch commits inspected: `e609963f2a92733edb2cfbfca210c62a51017f10` (DIAG-002 runner diagnostic filter repair), `544e0714b5fb0a9aa75e916b9b8551bd6f6fd682` (Build #68 audit journal), and `d4e1c677b0c797c1f32d543add05759a6337feb2` (Build #68 in-progress journal).
+* Target Actions inventory: repository-wide branch query returned 98 runs; filtering the exact workflow path `.github/workflows/build-illumos.yml` yielded 69 ROTFB runs. Results: 6 success, 63 failure, 0 cancelled, 0 queued/in progress. No target run is queued or active.
+* Build #69 / Run ID `44268167584` / tested commit `e609963f2a92733edb2cfbfca210c62a51017f10`: **SUCCESS**. Job ID `134677782252`; completed at `2026-11-18T09:22:51Z`. All nine job steps completed successfully, including geometry/clipping tests, OpenIndiana VM build, runner diagnostic finalization, and artifact upload.
+  * Full decoded job log retrieved: 1,666,178 characters / 12,261 lines. The job log contains no failed step or build failure. Both full gate-log copies were scanned for compiler/linker failure forms (`error:`, `ld: fatal:`, undefined symbol, syntax error, dmake failure, and missing make target); zero matches.
+  * Artifact ID `14413194199`, 7,371,055 compressed bytes; SHA-256 `dc372190dc67c63c7772018a7031af2920d8ec62f5ba0ecd0b6bae9ccaccf85c`. Downloaded and extracted; 36 files / 361,478,298 uncompressed bytes.
+  * `build-metadata.txt` confirms pinned upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+  * `patch-apply.log` confirms all nine patches (0001–0009) passed `git apply --check` and were applied in lexical order. The VM build script executes `git diff --check`; the job completed successfully.
+  * ROTFB model-test step: PASS. `nightly-exit-code.txt=0`; `final-build-exit-code.txt=0`.
+  * Compile evidence: 3 compile-command records for each of `rotfb_boot.o`, `rotfb_runtime.o`, `gfxp_bitmap.o`, and `gfxp_fb.o`, for both i86pc and i86xpv. Link evidence: 2 `unix.o` boot-object link commands and 2 `gfx_private` link commands for each runtime/bitmap/framebuffer object. The workflow evidence gate reports PASS.
+  * Build #69 has no build root cause because it completed successfully; no failed compile, link, patch application, or model-test step was found.
+* DIAG-002 verification: `runner-error-index.txt` is 5,761 bytes / 37 lines, down from 3,141,306 bytes / 4,809 lines in Build #68 (99.8166% smaller). The five previously confirmed false-positive filename/path patterns (`__failed_count.o`, `DES_FAILED.3ext`, `tst.exitkilled.ksh`, `libvarpd_panic.o`, and `/os/panic.c`) are absent. The only remaining matches are two copies of the benign upstream comment “we cannot set property”; no build failure is indicated. `compiler-error-index.txt` contains only its section headings and no diagnostics. The one-line boundary-aware filter repair is therefore validated by the real Build #69 artifact.
+* Patch audit at current branch HEAD: fetched all nine patches in lexical application order. A local unified-diff parser verified 71 total hunks with declared old/new counts matching actual bodies; all nine patch files end with a newline. The earlier correction from 77 to 71 hunks remains accurate.
+* Test/source audit: fetched `rotfb_model_test.py`, `rotfb.h`, `rotfb_boot.c`, and `rotfb_runtime.c`. The model test covers clockwise corner mapping, full mapping bijection, last-pixel bounds, clipping/overflow inputs, wide row-offset arithmetic, and patch contracts. Independent local Python model checks passed for all 2,304,000 pixels, 9,216,000-byte framebuffer geometry, clipping boundaries, and the 64-bit offset `8,589,803,520 > UINT32_MAX`.
+* Workflow audit: the branch/path filters remain limited to `gop-rotation-hook`, `illumo_rotfb/**`, and `.github/workflows/build-illumos.yml`; concurrency remains `rotfb-single-build` with `cancel-in-progress: false`; the upstream pin is unchanged. The root journal remains outside the workflow path filters.
+* No source, patch, or workflow changes were required in this cycle. No build was dispatched, rerun, cancelled, or otherwise modified. The journal-only update does not match workflow path filters.
+* Local full-upstream checkout/patch application remains unavailable because the execution environment previously failed outbound GitHub DNS resolution. No separate local illumos build is claimed; the successful OpenIndiana VM build is the authoritative clean-upstream patch/compile/link evidence.
+* GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
+* Hardware validation: **NOT PERFORMED**. No physical Chuwi result is claimed.
