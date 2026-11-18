@@ -151,3 +151,33 @@
 * Issues fallback: GitHub Issues remain disabled (HTTP 410); no issue creation was retried and no repository settings were changed.
 * Hardware validation: NOT PERFORMED. No physical Chuwi result is claimed.
 * Next action: after #64 completes, inspect its full job log and artifact, compare the captured pre-0007 file and Git version against the pinned-source reconstruction, then make only a proven minimal patch repair. Do not dispatch another build while #64 is active.
+
+
+## ROTFB AUTONOMOUS ENGINEERING REPORT
+
+* Timestamp UTC: 2026-11-18T02:39:03.066Z
+* Branch: `gop-rotation-hook`
+* HEAD before repair: `4d36e1e4afc820bcb1d531069d565e0c98e7dfcc`
+* Source repair commit: `8bd6e933f417322ee47acf9e08c92f66a1210dc0`
+* Latest completed target run inspected: Build #64 / Run ID `44218726339` / tested commit `be4b8ab4be49affe9f7dbfba98d9c6b57edd461d` — FAILURE.
+  * Job ID: `134514982792`; full decoded job log retrieved (1,597,503 bytes).
+  * Artifact ID: `14390221378`; 296,601 bytes; SHA-256 `0389302d178d1a640e6fac7dfe5d446e30ec91bc31f3b6b2ad06adf9f8acc225`.
+  * OpenIndiana Git version: `git version 2.56.0`.
+  * Exact pre-0007 source captured from the VM: `gfxp_bitmap.c`, 20,636 bytes; POSIX checksum `3495084633 20636`.
+  * Patches 0001–0006 applied successfully. The first failure was `git apply --check 0007-gfxp-bitmap-bounds-hardening.patch` at `usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c:442`. Compilation and linking were not reached.
+* Confirmed root cause: three 0007 hunks (old starts 442, 602, and 644) ended immediately after changed lines and had no trailing unchanged context. Using the exact VM-captured pre-0007 file, the unmodified patch reproduced the failure at hunk 442. Adding trailing context only to hunk 442 advanced the failure to hunk 602; adding context to all three hunks made the complete 0007 patch pass `git apply --check`. This resolves the apparent mismatch between textually matching old-side lines and Git's patch-application failure.
+* Minimal repairs:
+  * `0007-gfxp-bitmap-bounds-hardening.patch`: added two exact following source-context lines to each of hunks 442, 602, and 644; updated counts to 22/32, 5/5, and 5/5 respectively. No C logic changed.
+  * `0004-Makefile-files.patch`: corrected the i86xpv hunk header from 7/7 to 9/9. The pinned upstream block at lines 189–197 contains nine old/new lines; the prior header left the final two context lines outside the declared hunk.
+  * `rotfb_model_test.py`: added unified-diff hunk-count validation across all lexical ROTFB patches and explicit trailing-context checks for the three 0007 hunks; preserved existing geometry and 0006 contract checks.
+* Validation:
+  * ROTFB clockwise mapping, bijection, last-pixel offsets, and clipping model tests: PASS in local validation harness.
+  * Python syntax compilation for the updated test logic: PASS.
+  * All eight current patch files were inspected in lexical order; after the two metadata repairs, every hunk's declared old/new counts match its body and every patch has a final newline.
+  * Complete 0007 patch `git apply --check` and application against the exact Build #64 pre-0007 VM file: PASS; resulting `git diff --check`: PASS. Local Git was 2.47.3; the captured OpenIndiana VM uses Git 2.56.0.
+  * Corrected 0004 i86xpv 9/9 hunk: PASS against a fixture containing the exact pinned-upstream lines fetched from commit `098e95820891f8a83fae679daece7fcf58b7b3a4`; `git diff --check`: PASS.
+  * Full 0001–0008 application on a complete local upstream clone remains unverified because this execution container cannot resolve outbound GitHub DNS. CI #64 confirms 0001–0006 apply; the next target run must confirm 0007 and 0008 and continue into compile/link.
+* Workflow audit: `.github/workflows/build-illumos.yml` remains pinned to `098e95820891f8a83fae679daece7fcf58b7b3a4`, path-filtered to `illumo_rotfb/**` and itself, with `rotfb-single-build` and `cancel-in-progress: false`. Root-level journal is outside the trigger paths.
+* Build scheduling: all 64 existing target runs were rechecked immediately before the source commit; zero were queued or active. One atomic source commit was pushed to `gop-rotation-hook`; it changes only the two ROTFB patches and the ROTFB model test. No manual dispatch or concurrent build was issued. The path-filtered push created Build #65 / Run ID `44224788164` with status `in_progress` for HEAD `8bd6e933f417322ee47acf9e08c92f66a1210dc0`. The next cycle must inspect the resulting run and artifacts; do not dispatch while it is queued or active.
+* Issues fallback: GitHub Issues remain disabled (HTTP 410); no issue creation was retried and no repository settings were changed.
+* Hardware validation: NOT PERFORMED. No physical Chuwi result is claimed.
