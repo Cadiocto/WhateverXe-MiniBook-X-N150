@@ -217,3 +217,55 @@
 * No second build was dispatched and no build state was changed. The only write in this report is this root-level journal update; the root journal is outside the workflow's push path filters, so it does not trigger another target build. Do not inspect or alter #66 until a later cycle finds it completed.
 * Previous source validation remains Build #65 / Run ID `44224788164` — SUCCESS: all eight patches applied to pinned upstream, geometry/clipping tests passed, full nightly exited 0, and compile/link evidence passed for i86pc and i86xpv. No hardware validation was performed or claimed.
 * GitHub Issues remain disabled (HTTP 410); no issue creation or repository-setting changes were attempted.
+
+
+## ROTFB POST-BUILD #66 DEEP ENGINEERING AUDIT
+
+* Timestamp UTC: 2026-11-18T06:01:28.345Z
+* Branch: `gop-rotation-hook`
+* HEAD/source commit: `f97f44f2e61558cc1866155bc8a04d03356215b2`
+* Build #66: Run ID `44236793138`, commit `b2b0021bcc03913b83e5bd9eabd0611ceb7a21c0`, SUCCESS.
+* New validation: Build #67 / Run ID `44248223071`, commit `f97f44f2e61558cc1866155bc8a04d03356215b2`, currently IN_PROGRESS. No concurrent run was dispatched.
+
+### Build #66 evidence
+
+* Downloaded artifact ID `14402025444` (7.2 MiB) and inspected the extracted evidence.
+* All patches 0001–0008 applied in lexical order; `git diff --check` completed in the VM.
+* `nightly-exit-code=0`; `final-build-exit-code=0`.
+* Compile evidence: rotfb_boot.o, rotfb_runtime.o, gfxp_bitmap.o and gfxp_fb.o compiled for both i86pc and i86xpv.
+* Link evidence: the log contains the i86xpv and i86pc unix link commands with rotfb_boot.o, and the i86xpv and i86pc gfx_private link commands with rotfb_runtime.o, gfxp_bitmap.o and gfxp_fb.o.
+* Build #66 remains a CI compile/link checkpoint only; no hardware validation.
+
+### Audit findings by stage
+
+* A — Geometry/memory: fixed ROTFB geometry and mapping remain 1200x1920 / 4800-byte physical pitch and 1920x1200 / 7680-byte logical pitch. The clockwise mapping is unchanged. Existing ROTFB geometry checks use 64-bit size/offset arithmetic and subtraction-based clipping. No target-geometry overflow defect found.
+* B — Boot lifecycle: inspected xbi_fb_init -> boot_fb_init -> boot_fb_shadow_init. Patch 0005 explicitly calls boot_fb_init(0) after successful ROTFB shadow allocation, causing import and terminal/cursor geometry recalculation for the logical surface. Boot cursor, blit, erase and scroll flush paths are present. No missing initial boot reinitialization found.
+* C — Runtime: inspected init/fini, bitmap_devinit, VIS_DEVFINI and detach. bitmap_devinit's fb-to-shadow copy is a self-memmove in ROTFB runtime (same pointer), which is redundant but safe. Runtime init performs initial physical flush; fini flushes before unmapping and copies the final logical image back to the persistent boot shadow. Callback gate closes and drains active polled callbacks. Potential DDI framework serialization between VIS_DEVFINI and DDI_DETACH remains unproven from this code-only audit; no speculative locking change made.
+* D — DDI/mapping: gfxp_map_kernel_space page-aligns the physical base, maps rounded pages with HAT_MERGING_OK | HAT_PLAT_NOCACHE for write-combined access, and gfxp_unmap_kernel_space reverses the offset/page calculation. ROTFB devmap is rejected because the rotated logical view is not physically contiguous. No mapping-size mismatch found for the fixed target geometry.
+* E — Polled/cursor: polled callbacks enter/exit the ROTFB callback gate; runtime flushes are issued by the callback paths. The x86 membar_producer implementation is sfence, so the runtime WC write flush has an ordering fence. Boot cursor flush is present in patch 0005.
+* F — Build integration: Build #66 logs show per-architecture compile commands and separate i86xpv/i86pc link paths, not merely object-file existence.
+
+### Confirmed defect and repair
+
+* ID: ROTFB-AUD-001
+* Severity: Medium (shared gfxp_bitmap framebuffer callback arithmetic; the fixed MiniBook ROTFB dimensions do not reach the overflow threshold, but the affected framebuffer interface permits 64-bit fb_size and uint32_t pitch).
+* Location: patched `usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c`, bitmap_cons_display(), bitmap_cons_clear(), bitmap_display_cursor().
+* Scenario: for a valid large-pitch framebuffer, row * pitch or row * source-line-size was evaluated in 32-bit arithmetic; bitmap_cons_clear also stored uint32_t pitch in signed int. This can wrap row addresses or reject a valid pitch above INT_MAX.
+* Repair: added lexical patch `0009-gfxp-bitmap-wide-row-offsets.patch`; row/data offsets are computed as uint64_t and pitch/loop variables retain uint32_t width.
+* Test: added a wide-row-offset model case proving 0xffff * 0x20000 = 8,589,803,520 (> UINT32_MAX), while the fixed ROTFB final row remains exactly within the 9,216,000-byte logical allocation.
+* Local validation: exact Build #66 pre-0007 gfxp_bitmap.c snapshot was used; current 0007 was applied, then 0009 `git apply --check` and application passed; 0009's 11 hunk counts passed; `git diff --check` passed; isolated wide-offset model passed. Full local upstream checkout remains blocked by container DNS; CI is the full clean-upstream validator.
+
+### Diagnostic matcher audit
+
+* The Build #66 diagnostic index is non-empty because the broad runner scan matches the substring `panic` in object names such as `panic.o`; this is noise, not a build failure.
+* The compiler/linker matcher does not explicitly match the illumos linker form `ld: fatal: ...` unless a later line also contains `undefined symbol`. This is a diagnostic coverage gap, not a build-status mask: nightly's exit code and compile/link evidence still determine the job result.
+* Controlled samples: standalone `error:` and `fatal error:` are matched; `directoryError:2` is excluded; `ld: fatal: symbol referencing errors` is not matched by the current narrow expression. Record as DIAG-001 for a separate workflow-only repair after Build #67 completes. No workflow change was mixed into the row-offset source fix.
+
+### Commit and scheduling
+
+* Source commit: `f97f44f2e61558cc1866155bc8a04d03356215b2` — `fix(rotfb): widen bitmap row offset arithmetic`.
+* Changed files: `illumo_rotfb/patches/0009-gfxp-bitmap-wide-row-offsets.patch`, `illumo_rotfb/tests/rotfb_model_test.py`.
+* Before moving the branch ref, rechecked all 66 target runs: zero queued/active. Exactly one push-triggered Build #67 then appeared for this HEAD.
+* Current target inventory: 67 runs; Build #67 is IN_PROGRESS. No manual dispatch or second build.
+* Root log is outside the workflow path filters; this journal-only update does not start another target build.
+* No upstream change, no unrelated subsystem change, no hardware validation.
