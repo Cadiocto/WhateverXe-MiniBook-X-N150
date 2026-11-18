@@ -627,3 +627,30 @@
 * No hardware validation was performed. No issue creation, repository settings, other branches, or unrelated subsystems were touched.
 
 * This entry is root-level journal content outside the workflow path filters and must not trigger a build. Candidate source changes will be committed together in one ROTFB-only commit after a fresh branch/run recheck; at most one Build #72 may be created.
+
+
+## ROTFB BUILD #71 EVIDENCE CORRECTION — PATCH 0010 AND BOOT BARRIER NOT INCLUDED
+
+* Timestamp UTC: 2026-11-18T13:57:30Z.
+* Read-only post-build audit retrieved Build #71 / Run ID `44302559938`, Job ID `134795747200`, Artifact ID `14430996873`. Run conclusion: SUCCESS; source commit: `f0cebdfd2f2877b83a3b082e507ab73627c5b6b8`.
+* The complete job log (1,662,383 characters) and artifact ZIP (7,077,031 bytes; SHA-256 `319c4c6e6d41e86d95583878b38aa5bf78c27460856a91e8784a11481a1e0fd3`) were retrieved. Artifact contains the original nightly log (176,301,459 bytes), patch-apply log, compile/link command evidence, and actual exit-code files.
+* Actual `nightly-exit-code.txt=0`; `final-build-exit-code.txt=0`. Original nightly log records distributed build completion at 2026-11-18 13:18:12 UTC and OS-Net source build completion at 13:17:59 UTC. These exit codes and original logs are primary evidence; diagnostic indexes are secondary.
+* Patch application log records CHECK and APPLIED for exactly the nine patches 0001–0009 in lexical order. All nine applied to pinned upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`; `git diff --check` was part of the VM build step.
+* Compile evidence records three compile commands per architecture for each of rotfb_boot, rotfb_runtime, gfxp_bitmap, and gfxp_fb (i86pc and i86xpv); link evidence records two commands each for unix boot object, runtime module, bitmap module, and gfxp_fb module. The run completed successfully.
+* Diagnostic indexes: runner index is header-only (38 bytes); compiler index is 307 bytes. This only reports no matches for those configured patterns and does NOT establish absence of all possible errors.
+
+### Important source/build boundary correction
+
+* Build #71 was built from `f0cebdfd2f2877b83a3b082e507ab73627c5b6b8`. Its `patch-apply.log` proves only patches 0001–0009 were applied. It does NOT validate patch `0010-gfxp-bitmap-vis-safety.patch`.
+* Commit `ebac4d529814ce7e9e46a8f8e9f914a73647bf4a` subsequently introduced patch 0010 and the boot `membar_producer()` change. Therefore Build #71 must not be cited as compile/link validation for ROTFB-LIFE-001 / ROTFB-MEM-002 candidate changes or ROTFB-BOOT-WC-001 barrier change. Build #72 / Run ID `44318770892` is IN_PROGRESS; its VM job is active and no artifact is published yet.
+
+### Known issue status after read-only source inspection
+
+* ROTFB-LIFE-001: candidate guard exists in patch 0010 for the two aliased memmove sites. Not validated by Build #71; await Build #72 patch application and compile/link evidence. Python model is not a C-level test.
+* ROTFB-MEM-002: patch 0010 adds negative-coordinate/positive-dimension guards to VIS copy/display/cursor paths. Not validated by Build #71; await Build #72 evidence and direct C-level tests remain absent.
+* ROTFB-BOOT-WC-001: current branch `rotfb_boot.c` contains `sys/atomic.h` and `membar_producer()` after boot flush writes. Commit `ebac4d5` introduced this change after Build #71, so #71 does not validate it; await Build #72 compile/link evidence.
+* ROTFB-BOOT-GEO-001: unresolved hardware/input-data blocker. Actual Chuwi Multiboot framebuffer width, height, pitch, physical address, and pixel masks remain uncollected.
+* ROTFB-TEST-001: unresolved test-coverage limitation. Current tests model behavior in Python and assert patch text; they do not execute the C implementation or exercise real lifecycle/callback concurrency.
+
+* The dedicated workflow path filter includes only `illumo_rotfb/**` and `.github/workflows/build-illumos.yml`; root-level `ROTFB_ENGINEERING_LOG.md` is outside those push path filters. This is a journal-only correction; no source, patch, Makefile, test, or workflow file was changed.
+* No build was dispatched, rerun, cancelled, or otherwise modified during this audit.
