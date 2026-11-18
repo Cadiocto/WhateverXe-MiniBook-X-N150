@@ -445,3 +445,31 @@
 * Local full-upstream checkout/patch application remains unavailable because the execution environment previously failed outbound GitHub DNS resolution. No separate local illumos build is claimed; the successful OpenIndiana VM build is the authoritative clean-upstream patch/compile/link evidence.
 * GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
 * Hardware validation: **NOT PERFORMED**. No physical Chuwi result is claimed.
+
+## ROTFB BOOT IMPORT CONTRACT FIX / BUILD #70 STATUS
+
+* Timestamp UTC: 2026-11-18T10:44:31.801Z
+* Branch: `gop-rotation-hook`
+* Branch HEAD before this journal append: `d0d53a475f63e10239a2046d8f0fb967a10dc63f`.
+* Previous HEAD: `efbff3414f0197cc504a80033a7b96e57bb09a06`.
+* Target workflow inventory: 70 runs for `.github/workflows/build-illumos.yml` on `gop-rotation-hook`: 6 success, 63 failure, 0 cancelled, 0 queued, 1 in progress. The only active target run is Build #70.
+* Build #70 / Run ID `44288142299` / tested commit `d0d53a475f63e10239a2046d8f0fb967a10dc63f`: **IN_PROGRESS** (created `2026-11-18T10:43:53Z`). Job ID `134746050977`. The geometry/clipping model-test step completed **SUCCESS**; the OpenIndiana VM step is still running. No logs or artifact are available for this active job yet.
+* Confirmed boot-path root cause:
+  * `rotfb_boot_import()` explicitly rejects the call unless `fb->fb == rotfb_info.logical_fb`.
+  * The `boot_fb_init()` path first resets `fb_info.fb` to the physical GOP address, calls `rotfb_boot_init()`, and then calls `rotfb_boot_import()`; the old `rotfb_boot_init()` populated only `fb->physical.fb` and left `fb->fb` pointing at the physical address.
+  * The assignment to `rotfb_info.logical_fb` in the caller occurred only after `rotfb_boot_import()`. Therefore the import precondition was unsatisfied and the failure branch in patch 0006 disabled ROTFB and restored the physical geometry. This was a boot-path logic defect not exercised by the prior compile/link-only evidence.
+* Minimal repair committed as `d0d53a475f63e10239a2046d8f0fb967a10dc63f`:
+  * `illumo_rotfb/rotfb_boot.c`: `rotfb_boot_init()` now assigns `fb->fb = rotfb_info.logical_fb` after validating/publishing the physical mapping and before setting `boot_ready`. This makes the state satisfy the existing import contract; the physical mapping remains separately recorded in `fb->physical.fb`.
+  * `illumo_rotfb/tests/rotfb_model_test.py`: added a regression assertion that the logical framebuffer is installed by `rotfb_boot_init()` before `boot_ready`, and that `rotfb_boot_import()` enforces the matching pointer precondition.
+  * GitHub compare confirms exactly two changed files, 14 insertions, 0 deletions. No patch files, workflow, upstream pin, unrelated subsystem, or settings were changed.
+* Pre-commit validation:
+  * Confirmed the branch had no queued or active target run immediately before the update; the branch ref was advanced with expected-HEAD protection.
+  * Local Python syntax check for the added regression assertion: PASS.
+  * Independent model checks: PASS for all 2,304,000 logical pixels (bijective clockwise mapping), four corners, clipping edges, and 64-bit row offset `8,589,803,520 > UINT32_MAX`.
+  * Re-audited all nine patches in lexical order: 71 hunks total, 0 declared-count mismatches, all patch files end with newline. Existing patch contents were not changed.
+  * Local source/test whitespace and final-newline checks: PASS. A separate local upstream apply/build is still unavailable because this execution environment cannot resolve `github.com`; Build #70's OpenIndiana VM is the authoritative next patch/build validation.
+* Workflow invariants rechecked: push branch/path filters still target `gop-rotation-hook` and `illumo_rotfb/**`; concurrency remains `rotfb-single-build` with `cancel-in-progress: false`; pinned upstream remains `098e95820891f8a83fae679daece7fcf58b7b3a4`. The journal remains outside the target path filters.
+* No manual dispatch, rerun, cancellation, or other build-state operation was issued. The single Build #70 was automatically created by the real source/test commit. No second build will be started while it is active.
+* GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
+* Hardware validation: **NOT PERFORMED**. No physical Chuwi result is claimed.
+* Next action: wait for Build #70 to complete, then retrieve its full job log and artifact; verify patch application, the VM `git diff --check`, compile/link evidence for i86pc and i86xpv, and the new boot-import regression test. Do not modify source/workflow or start another target build while #70 is queued or active.
