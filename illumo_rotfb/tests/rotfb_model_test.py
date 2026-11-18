@@ -3,6 +3,9 @@
 
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 
 PHYS_WIDTH = 1200
 PHYS_HEIGHT = 1920
@@ -116,6 +119,54 @@ def test_vis_copy_alias_overlap_safety():
     _vis_copy_model(graphics_shadow, graphics_shadow, 0, 2, 4, False)
     assert graphics_shadow == expected_forward
 
+
+
+
+def test_boot_wc_store_barrier_emits_sfence():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "rotfb_boot.c").read_text()
+    assert "#include <sys/atomic.h>" not in source
+    assert "membar_producer();" not in source
+    match = re.search(
+        r"static void\nrotfb_boot_wc_store_barrier\(void\)\n\{.*?\n\}",
+        source,
+        re.S,
+    )
+    assert match is not None, "boot WC barrier helper missing"
+    compiler = shutil.which("gcc") or shutil.which("cc")
+    objdump = shutil.which("objdump")
+    nm = shutil.which("nm")
+    assert compiler and objdump and nm, "C toolchain/binutils required"
+    with tempfile.TemporaryDirectory(prefix="rotfb-wc-barrier-") as tmp:
+        cfile = Path(tmp) / "barrier.c"
+        cfile.write_text(
+            "#include <stdint.h>\n"
+            + match.group(0)
+            + "\nvoid rotfb_probe(volatile uint32_t *fb) {"
+              "*fb = 0x12345678U; rotfb_boot_wc_store_barrier(); }\n"
+        )
+        for arch_define in ("-Di86pc", "-D__i86xpv"):
+            objfile = Path(tmp) / (arch_define[2:] + ".o")
+            subprocess.run(
+                [compiler, "-m64", "-O2", "-ffreestanding", "-fno-pic",
+                 "-mno-sse", "-mno-mmx", arch_define, "-c", str(cfile),
+                 "-o", str(objfile)],
+                check=True, capture_output=True, text=True,
+            )
+            disassembly = subprocess.run(
+                [objdump, "-d", str(objfile)], check=True,
+                capture_output=True, text=True,
+            ).stdout
+            assert re.search(r"\bsfence\b", disassembly), (
+                f"{arch_define}: hardware SFENCE instruction missing"
+            )
+            undefined = subprocess.run(
+                [nm, "-u", str(objfile)], check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            assert not undefined, (
+                f"{arch_define}: unexpected external references: {undefined}"
+            )
 
 
 def test_corners():
@@ -309,5 +360,6 @@ if __name__ == "__main__":
     test_wide_framebuffer_row_offsets()
     test_vis_signed_argument_validation()
     test_vis_copy_alias_overlap_safety()
+    test_boot_wc_store_barrier_emits_sfence()
     test_patch_contracts()
     print("ROTFB model tests: PASS")

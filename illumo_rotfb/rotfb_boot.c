@@ -1,6 +1,5 @@
 #include <sys/types.h>
 #include <sys/systm.h>
-#include <sys/atomic.h>
 #include <sys/framebuffer.h>
 #include <sys/bootconf.h>
 #include <sys/rotfb.h>
@@ -226,6 +225,18 @@ rotfb_boot_import(fb_info_t *fb)
 	return (0);
 }
 
+/*
+ * dboot cannot call membar_producer(): that symbol is provided by the
+ * kernel atomic objects, which are not linked into dboot. Match the x86
+ * producer barrier (SFENCE) locally so prior WC stores reach the display
+ * framebuffer before the flush returns.
+ */
+static void
+rotfb_boot_wc_store_barrier(void)
+{
+	__asm__ __volatile__("sfence" : : : "memory");
+}
+
 void
 rotfb_boot_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
     uint32_t width, uint32_t height)
@@ -268,7 +279,7 @@ rotfb_boot_flush_rect(fb_info_t *fb, uint32_t x, uint32_t y,
 			dst[3] = src[3];
 		}
 	}
-	membar_producer();
+	rotfb_boot_wc_store_barrier();
 }
 
 void
