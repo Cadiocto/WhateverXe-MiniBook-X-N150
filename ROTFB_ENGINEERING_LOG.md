@@ -730,3 +730,15 @@
 ### Next action
 
 Wait for Build #75. On completion retrieve the complete job log and artifact, verify patch application, both dboot final links, both `unix.o` and `gfx_private` outputs, and actual nightly/final exit codes. Then correct ROTFB-CI-EVIDENCE-001 in the dedicated workflow only after confirming no active target run, and validate that change with a single subsequent build.
+
+
+## ROTFB-MEM-002 — VIS CURSOR WRAPPER VALIDATION GAP
+
+* Timestamp UTC: 2026-11-18T15:35:26.624Z.
+* Inspected HEAD: `75386a7948a8b95efc9489eea4718c0a511d9fed`; source under test in Build #75 remains `dd3155227799a2ea0479d93e351b7a719f316cb4`. Pinned upstream remains `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+* Build #75 Run ID `44335792313`, Job ID `134912017496`, remains IN_PROGRESS. Model/regression test step passed; OpenIndiana VM step is active. No source or workflow files were changed while that build runs.
+* Confirmed signed-dimension gap: the VIS ABI defines `screen_size_t` as signed `short`. In patched `bitmap_cons_cursor()`, the VIS_DISPLAY_CURSOR guard checks `ca->width == 0` and `ca->height == 0`, not `<= 0`. Because `console->fb.screen.x/y` are unsigned 16-bit values promoted to signed `int`, negative widths/heights can pass the upper-bound comparison. The function then updates cursor position/origin and sets `cursor.visible = B_TRUE`; the lower-level `bitmap_display_cursor()` rejects nonpositive dimensions before pointer arithmetic. This is a confirmed cursor-state inconsistency, not a confirmed out-of-bounds framebuffer write.
+* Proposed minimal fix after #75 completes: reject negative col/row and `width <= 0` / `height <= 0` in `bitmap_cons_cursor()` before any cursor-state mutation. Add a C-level regression asserting position, origin, and visibility remain unchanged for `-1` and `SHRT_MIN` dimensions. Keep the lower-level `bitmap_display_cursor()` guard.
+* ROTFB-MEM-002 remains partially unresolved until this wrapper path is fixed and tested.
+* Correction to the previous proposed CI output paths: `gfx_private` outputs are `usr/src/uts/i86pc/gfx_private/obj64/gfx_private` and `usr/src/uts/i86xpv/gfx_private/obj64/gfx_private`, not under each architecture's `unix/obj64` directory. The `unix.o` outputs are under `usr/src/uts/{i86pc,i86xpv}/unix/obj64/unix.o`; dboot outputs are under `usr/src/uts/{i86pc,i86xpv}/unix/dboot/obj64/dboot`.
+* The workflow push path filters were verified as `illumo_rotfb/**` and `.github/workflows/build-illumos.yml`. This commit changes only the root journal and does not dispatch a new target build.
