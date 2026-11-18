@@ -339,7 +339,7 @@ def test_patch_contracts():
         "rotfb_boot_wc_store_barrier(void)", 1
     )[1].split("\\n}\\n", 1)[0]
     assert "#include <sys/atomic.h>" not in boot_source
-    assert "__asm__ __volatile__(\\"sfence\\" : : : \\"memory\\");" in boot_barrier
+    assert '__asm__ __volatile__("sfence" : : : "memory");' in boot_barrier
     assert "rotfb_boot_wc_store_barrier();" in boot_flush
     assert boot_flush.index("rotfb_boot_wc_store_barrier();") > boot_flush.index(
         "for (yy = y;"
