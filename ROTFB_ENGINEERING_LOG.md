@@ -911,3 +911,20 @@ Patch 0011 moves VIS cursor validation/state preparation into a portable helper 
 - Initial state after push: queued.
 
 No additional source/workflow changes are permitted until Build #78 completes and its full logs/artifact are audited. No device verification is claimed.
+
+
+### 2026-11-18T20:22:16.591Z — Build #77 artifact digest correction and Build #78 observation
+
+The full SHA256 of Build #77 artifact `14463159509` (`build77-diagnostics.zip`) is:
+
+`8427f53600c0d64b81caff62e228eb3209d8d0c86b822421aa53d03566556330`
+
+This replaces the abbreviated digest in the preceding entry; no artifact contents or conclusions changed.
+
+Build #78 remains active:
+- Run ID: `44390180897`
+- Job ID: `135105385542`
+- Source SHA: `3b58a6a350325ed660a1cb13de56cb2ed0a665e8`
+- Current step: ROTFB linker evidence regression tests.
+
+No source, patch, test, Makefile or workflow changes were made after Build #78 started. Only this journal correction was committed.
