@@ -756,3 +756,33 @@ Wait for Build #75. On completion retrieve the complete job log and artifact, ve
 * The helper also records compile-command evidence, patch count/order, nightly exit status, per-target command files and linker diagnostics. It does not remove source, common build outputs, or caches.
 * Local helper validation: shell syntax check PASS; synthetic six-target run PASS; injected linker exit code 9 plus `ld: fatal` diagnostic correctly produced `linker_exit_status=NONZERO`, `linker_diagnostics=FOUND`, and overall INCOMPLETE. These are harness tests, not an OpenIndiana build.
 * No C source, rotation formula, framebuffer geometry, shadow-buffer architecture, or unrelated subsystem was changed in this CI-evidence commit. C-level ROTFB tests remain the next separate engineering stage after this evidence workflow is validated by one complete build.
+
+
+## ROTFB-CI-EVIDENCE-001 — Live audit of Build #76 instrumentation
+
+* Audit timestamp UTC: 2026-11-18T17:09:09Z.
+* Branch HEAD: `5da8f521836211f43bd85bf54ac17457f56745d1`, branch `gop-rotation-hook`; pinned upstream remains `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+* Build #76: Run ID `44353489911`, Job ID `134975230572`, source `5da8f521836211f43bd85bf54ac17457f56745d1`, status IN_PROGRESS. The geometry/clipping model test step is PASS; the OpenIndiana VM step is still running. No artifact is available yet. This is the only active target build; no second build was started.
+* The live workflow now calls `illumo_rotfb/rotfb_link_evidence.sh`. Its `prepare` mode removes only six exact target files: dboot, unix.o, and gfx_private for i86pc and i86xpv. It records the pre-clean state and checks that each path is absent afterward; it does not remove source, object directories, common build outputs, or caches.
+* Its `watch` mode waits for the exact onbld amd64 linker path used by the build, preserves the original linker as `.rotfb-real`, and installs a temporary pass-through wrapper. For each recognized dboot, unix.o, and gfx_private invocation the wrapper writes a command record before executing the original linker, captures combined diagnostics, writes the actual linker return code afterward, and returns that same code to dmake. This is materially stronger than Build #75's grep-only evidence.
+* The `finalize` mode checks the six final target paths for nonzero size and mtime after the recorded build start, verifies the expected ROTFB object argument in the wrapper status, and scans each target's captured linker output for fatal/undefined/relocation diagnostics. The command and status files are preserved separately in `linker-output/`.
+* Remaining evidence defects identified by static review, to correct only after Build #76 completes:
+  1. `linker_command_detected_count` is currently derived from completed `.status` records, so command observation and completed linker status are still conflated in the evidence summary even though separate `.cmd` files exist. Report command count from `.cmd` and actual completion/exit status from `.status` independently.
+  2. A nonzero linker exit and nonzero nightly exit currently collapse to INCOMPLETE. A known nonzero exit must be FAIL; reserve INCOMPLETE for missing or ambiguous proof.
+  3. Patch validation checks only that ten patches applied, not that the exact expected `0001`–`0010` names applied in lexical order.
+  4. The build-start epoch is recorded before target pre-clean. Move the start marker to immediately after successful cleanup, before nightly begins.
+  5. Require the expected invocation count and verify the wrapper's recorded cwd/output path matches each of the six expected targets.
+* Pinned-upstream WC barrier semantics independently verified: `usr/src/uts/intel/ml/lock_prim.S` at upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`, lines 648–651, implements `membar_producer` as `sfence; ret`. Current `rotfb_boot.c` implements the same SFENCE with a compiler memory clobber, and `rotfb_boot_flush_rect()` calls it after completing the pixel-store loops. Therefore the instruction semantics and placement are VERIFIED; actual framebuffer mapping attributes and Chuwi device behavior remain PARTIAL. Do not close BOOT-WC-001 as a device-level issue.
+* Patch 0010 currently contains negative cursor coordinate guards and `ca->width <= 0` / `ca->height <= 0` guards in the cursor callback hunk. This conflicts with the older journal note claiming that only zero dimensions were rejected. Treat that older claim as requiring re-verification against the post-patch source in the completed VM workspace; do not add a duplicate fix or close MEM-002 without a C-level regression.
+* ROTFB-TEST-001 remains PARTIAL: the existing Python geometry/alias/clipping tests and SFENCE assembly probe are not a direct C implementation or lifecycle test. No C-level harness has been added in this cycle. The next test step remains direct C coverage of boot import/flush, VIS callback guards/alias copy, runtime allocation rollback, callback gate, and teardown.
+* No source or workflow files were changed during this live audit. This entry changes only the root engineering journal, which is outside the workflow path filters and does not trigger a build.
+
+### Current readiness during Build #76
+
+* BUILD VERIFIED: NO — Build #76 is still running; its final linker evidence and artifact are not yet available.
+* CODE/TEST VERIFIED: NO — critical C-level lifecycle and callback tests are still missing.
+* DEVICE VERIFIED: NO — no Chuwi boot or real Multiboot capture has been performed.
+
+### Next action
+
+Wait for Build #76 to finish. Retrieve its full artifact and nightly log, verify all six linker status records against the six fresh target files, and inspect the exact per-architecture results. Then make one minimal evidence-only correction for the five items above, add regression fixtures for nonzero/missing linker statuses and patch order, and run exactly one subsequent build after confirming no active target run.
