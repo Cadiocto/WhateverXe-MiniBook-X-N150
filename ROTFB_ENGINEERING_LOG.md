@@ -1035,3 +1035,17 @@ The 0012 patch also passed `git apply --check` and apply against a disposable sy
 #### Next controlled change
 
 The next source/workflow commit adds patch 0012 and a C test for the existing alias-safe row-copy logic. It also corrects the earlier LIFE-002 false positive in this journal. Before committing, recheck branch HEAD and all target runs; do not change source/workflow if any run is queued or active. One Build #81 is permitted for the resulting source SHA.
+
+### 2026-11-18T23:48:46.775Z — LIFE-001 C regression commit and Build #81 start
+
+- HEAD before: `8eb2a6fffc02a638c18a313469cd4aed78052b1f`.
+- Source commit: `38ce3f43610c6eb96665b8a92452735d303b396c` (`test(rotfb): cover aliased bitmap row copies`).
+- HEAD after: `38ce3f43610c6eb96665b8a92452735d303b396c`.
+- Changed paths are limited to the ROTFB workflow, ROTFB patch series, ROTFB C/header tests, and this journal: `.github/workflows/build-illumos.yml`, `illumo_rotfb/patches/0012-gfxp-bitmap-copy-helper.patch`, `illumo_rotfb/rotfb_copy.h`, `illumo_rotfb/tests/rotfb_bitmap_copy_test.c`, `illumo_rotfb/tests/rotfb_patch_series_test.sh`, `ROTFB_ENGINEERING_LOG.md`.
+- Local C regression command: `cc -std=c99 -Wall -Wextra -Werror -I/tmp -o /tmp/rotfb-copy-test /tmp/rotfb_copy_test.c && /tmp/rotfb-copy-test`; output: `ROTFB bitmap copy C tests: PASS`.
+- The test calls the same `rotfb_copy_rows()` helper used by the production `bitmap_cons_copy()` patch and checks forward/backward overlap ordering, aliased destination copy count, separate framebuffer/shadow copies, graphics-mode shadow-only behavior, and invalid arguments.
+- Local patch-format test: `git apply --check /tmp/0012-gfxp-bitmap-copy-helper.patch`, followed by apply and `git diff --check` on a disposable source-context fixture; result: PASS. Full exact pinned-upstream patch-series application is pending Build #81.
+- Patch series is now expected to contain 12 patches. The updated VM regression checks exact order, replays the pre-fix 0011 failure, applies corrected 0011 and then 0012, and asserts the production source includes/calls `rotfb_copy_rows()`.
+- Build #81: Run ID `44423856535`; Job ID `135223486150`; source SHA `38ce3f43610c6eb96665b8a92452735d303b396c`; URL https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44423856535. Job is `in_progress`; no artifact yet. Nightly/final exit codes and link results are not yet available.
+- Build #80 remains BUILD VERIFIED for its exact source SHA `8eb2a6fffc02a638c18a313469cd4aed78052b1f`; the new revision awaits its own validation.
+- No device commands or physical Chuwi operations were performed. Next: observe Build #81 only; inspect the full patch-series log first, then nightly and all six linker records. Do not edit source/workflow while it is active.
