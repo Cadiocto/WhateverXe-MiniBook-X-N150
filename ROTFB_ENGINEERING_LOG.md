@@ -105,3 +105,24 @@
 * Build scheduling: rechecked all 61 target runs immediately before moving the branch ref; zero were queued/in progress. Pushed one source commit, which is covered by the workflow's `illumo_rotfb/**` path filter and should create one automatic target run. No manual dispatch or concurrent build was issued. The next cycle must inspect that run and confirm patch application through 0008 before assessing compilation/linking.
 * Issues fallback: GitHub Issues remain disabled (HTTP 410); this append-only root log remains the durable engineering record and is outside the target workflow path filters.
 * Hardware validation: NOT PERFORMED. No claim of Chuwi hardware success.
+
+
+## ROTFB AUTONOMOUS ENGINEERING REPORT
+
+* Timestamp UTC: 2026-11-18T00:23Z
+* Branch: `gop-rotation-hook`
+* HEAD before repair: `7645f5971a6d580d0c7bcb33860c5cb0e26d99f1`
+* Repair commit: `ee13395843657c844abdcb682db4575156db45ba`
+* Target run inventory: 62 ROTFB runs (#1–#62); all 62 were completed at the pre-push recheck. No queued or active target run remained.
+* Build #62 / Run `44200842413` / commit `40d901eee5fc5fd2ffb94af0b5e492b7095191ad`: FAILURE.
+  * Full job log retrieved: job `134454182028`, 11,372 lines / 1,597,331 bytes.
+  * Diagnostic artifact retrieved: artifact `14380134859`, 287,643 bytes.
+  * `patch-apply.log`: patches 0001–0005 applied; patch 0006 failed at `usr/src/uts/i86pc/boot/boot_fb.c:680` with `patch does not apply`.
+  * First root cause: the boot-console shiftline hunk in 0006 could not match its one-line context in the file after patches 0001–0005. The VM stopped in patch application; no compilation or linking occurred.
+* Build #61 / Run `44193836335` was also rechecked with its full job log and artifact `14379285258`: patches 0001–0003 applied, then 0004 failed. Build #62 confirms the preceding 0004 context repair worked: 0004 now applies, as does 0005.
+* Minimal repair: expanded the 0006 shiftline hunk from a single context line to the surrounding `s_col`, `s_row`, `e_col`, and `t_col` function-local context; updated its hunk range to `@@ -677,8 +721,8 @@`. The two corrected off-by-one assignments are unchanged. Added model-test assertions for the expanded hunk anchor. Only `illumo_rotfb/patches/0006-rotfb-console-contract-and-copy-safety.patch` and `illumo_rotfb/tests/rotfb_model_test.py` changed.
+* Patch/workflow audit: all eight patches were inspected in lexical application order; ROTFB sources and the model test were reviewed. `.github/workflows/build-illumos.yml` remains pinned to upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`, uses the `illumo_rotfb/**` and workflow path filters, and has non-cancelling single-build concurrency. Root-level journal remains outside those path filters.
+* Local validation: geometry/clipping model tests PASS; Python syntax compilation PASS; expanded shiftline hunk `git apply --check` and application PASS against a local fixture carrying the pinned-upstream function context; fixture `git diff --check` PASS. Full sequential application of 0001–0008 against a complete local upstream checkout remains unavailable because outbound DNS is blocked in this execution container.
+* Build scheduling: immediately before updating the branch ref, rechecked all 62 target runs and confirmed zero queued/in progress. Moved the branch once to `ee13395843657c844abdcb682db4575156db45ba`; the two source/test paths match the automatic workflow filter. No manual dispatch or concurrent build was issued. The next cycle must inspect the resulting run and its artifact; do not dispatch another build while it is queued or active.
+* Issues fallback: GitHub Issues remain disabled (HTTP 410); this append-only file remains the durable record. No settings were changed.
+* Hardware validation: NOT PERFORMED. No Chuwi hardware result is claimed.
