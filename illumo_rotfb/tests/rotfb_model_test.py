@@ -178,6 +178,18 @@ def test_patch_contracts():
     assert "@@ -644,5 +700,5 @@" in patch7
     assert "if (rotfb_info.configured && rotfb_info.logical_fb != NULL)" in patch6
     assert "if (!rotfb_info.boot_ready)" in patch6
+    boot_source = (root / "rotfb_boot.c").read_text()
+    boot_init = boot_source.split(
+        "rotfb_boot_init(fb_info_t *fb, uint8_t *physical_fb)", 1
+    )[1].split("\n}\n", 1)[0]
+    boot_import = boot_source.split(
+        "rotfb_boot_import(fb_info_t *fb)", 1
+    )[1].split("\n}\n", 1)[0]
+    assert "fb->fb = rotfb_info.logical_fb;" in boot_init
+    assert boot_init.index("fb->fb = rotfb_info.logical_fb;") < boot_init.index(
+        "rotfb_info.boot_ready = B_TRUE;"
+    )
+    assert "fb->fb != rotfb_info.logical_fb" in boot_import
     assert "@@ -677,8 +721,8 @@" in patch6
     assert "c_copy.s_col = fb_info.cursor.origin.x;" in patch6
     assert "c_copy.t_col = fb_info.cursor.origin.x + chars * boot_fb_font.vf_width;" in patch6
