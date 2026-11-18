@@ -513,3 +513,58 @@
 * Integration evidence remains limited to Build #70's successful OpenIndiana VM compile/link for i86pc and i86xpv. DIAG-001 was exercised by Build #68, DIAG-002 by Build #69; DIAG-003's latest regex change is on Build #71's commit and awaits its completed artifact for real-log confirmation.
 * Status: no newly confirmed source defect; no code changes recommended from this static pass. Next action is to wait for Build #71, then retrieve its complete job log and artifact, verify DIAG-003 false-positive count and build exit codes, and only then consider further changes.
 * Limitations: local container DNS still prevents a separate local upstream clone/build; OpenIndiana VM build evidence is available from completed runs. Physical Chuwi hardware validation has not been performed.
+
+
+## ROTFB POST-BUILD #71 INDEPENDENT AUDIT — INTERIM, AUDIT-ONLY
+
+* Timestamp UTC: 2026-11-18T12:59:41.967Z
+* Branch: `gop-rotation-hook`
+* HEAD at report time: `5d014620e42956c1b0fd631cc47919ae3807c4d6` (journal-only commit; source tree remains the Build #71 source at `f0cebdfd2f2877b83a3b082e507ab73627c5b6b8`)
+* Pinned upstream: `098e95820891f8a83fae679daece7fcf58b7b3a4`
+* Build #71 / Run ID: `44302559938`, still IN_PROGRESS at the time of this entry. Model/clipping step PASS; OpenIndiana VM step still running; no artifact or completed job log available. No new build dispatched.
+* Build #70 / Run ID `44288142299`: SUCCESS; full job log and artifact `14423481233` downloaded and inspected. 35 artifact files, 12,208 job-log lines, SHA-256 `4ce583a2c4dff92166a63a3222dc3de0a91b8f14f1b8d3b4d06a35bd80ec6d00`. Patches 0001–0009 applied; VM `git diff --check`; model tests PASS; nightly and final exit codes 0.
+* Build #70 compile/link evidence: both i86pc and i86xpv ROTFB boot/runtime objects compile; the `unix.o` commands include `rotfb_boot.o`; the `gfx_private` commands include `rotfb_runtime.o`, `gfxp_bitmap.o`, and `gfxp_fb.o`. Artifact command context distinguishes i86xpv and i86pc builds. This is compile/link evidence, not hardware validation.
+* Commit history from Build #66 to current HEAD: only ROTFB source, ROTFB patches, the dedicated `build-illumos.yml`, tests, and the root engineering log changed. No unrelated subsystem changes. Source commits: `f97f44f` (0009 wide row offsets; Build #67 SUCCESS), `7126f35` (DIAG-001 linker fatal capture; Build #68 SUCCESS), `e609963` (DIAG-002 token boundaries; Build #69 SUCCESS), `d0d53a4` (publish logical fb before boot import; Build #70 SUCCESS), `f0cebdf` (DIAG-003 cannot matcher; Build #71 pending). Other commits in this range are journal-only.
+* Patch structure audit: nine patches in lexical order, 71 hunks total; declared hunk counts match; every patch ends with newline. Full clean-upstream application is confirmed by Build #70; no local full upstream clone available because this environment cannot resolve GitHub DNS.
+
+### Confirmed runtime alias defects — no code changed
+
+* `ROTFB-LIFE-001`, Severity Medium: patched `gfxp_bitmap.c::bitmap_cons_copy()` in patch 0007 performs both `memmove(dst + increment, src + increment, width)` and `memmove(sdst + increment, src + increment, width)`. ROTFB runtime deliberately aliases `fb->fb == fb->shadow_fb`, so `dst == sdst`. For valid overlapping horizontal VIS_CONSCOPY rectangles, the second memmove repeats the move using already modified source bytes and corrupts the result. A local isolated memmove simulation reproduced corruption for left and right overlap. Standard TEM scrolling currently copies full-width rows vertically, for which the duplicate is normally idempotent; the generic VIS_CONSCOPY rectangle contract remains broken for horizontal overlap. Proposed minimal fix: skip the second copy when destination pointers alias; add left/right overlap tests.
+* `ROTFB-LIFE-002`, Severity Medium: patched `gfxp_bitmap.c::bitmap_display_cursor()` in patch 0007 applies the same XOR transform to both framebuffer and shadow pointers for 8/16/24/32 bpp. ROTFB aliases these pointers, so each pixel is transformed twice and restored to its original value. A local isolated XOR simulation reproduced the no-op. This affects runtime VIS_DISPLAY_CURSOR and VIS_HIDE_CURSOR. Proposed minimal fix: perform the second buffer update only when the pointers differ; add alias tests at all supported depths.
+
+### Boot WC ordering gap
+
+* `ROTFB-BOOT-001`, Severity Medium / hardware manifestation unverified: dboot maps the framebuffer using `PT_NOCACHE | PT_PAT_4K`; `PT_PAT_4K` is documented in `mach_mmu.h` as the write-combining PAT bit. `rotfb_boot_flush_rect()` writes to that WC mapping but returns without `membar_producer()`; the runtime flush explicitly calls `membar_producer()`, implemented as `sfence` on amd64. Proposed minimal fix: issue one producer barrier at the end of each successful boot rectangle flush. The code-level ordering gap is confirmed; visible stale/delayed output on target hardware has not been tested.
+
+### Other lifecycle findings
+
+* Boot call path verified against pinned upstream: `_start()` -> `bcons_init()` -> `boot_fb()` -> initial physical `boot_fb_init()`; after boot allocator initialization, `boot_fb_shadow_init()` allocates logical shadow and re-enters `boot_fb_init(0)`. Build #70 change `d0d53a4` sets `fb->fb = rotfb_info.logical_fb` before `boot_ready`; `rotfb_boot_import()` then validates and imports physical pixels into the logical surface. Source-level PASS; no real boot test.
+* Runtime init/fini and callback gate are source-level coherent: allocation/mapping occur before publication, initial flush precedes opening the gate, fini closes gate and drains active callbacks before restoring boot pointers and freeing runtime resources. Polled callbacks do not take mutexes; wait occurs in fini process/ioctl/detach context. No dynamic callback stress test.
+* `bitmap_devinit()` retains a redundant exact self-`memmove` through `bitmap_copy_fb()` because fb and shadow alias. Exact same-pointer memmove is safe/no-op; this is not the overlapping duplicate-copy defect above.
+* DDI detach versus ioctl serialization still relies on framework/lifecycle guarantees; no independent stress test proves the interaction. No teardown race is claimed as confirmed.
+* Boot cursor boundary validation retains upstream `>` rather than `>=` checks. A one-past terminal cursor position could be unsafe if supplied by invalid boot metadata; the dboot cursor-position contract must be verified before treating this as a confirmed defect.
+
+### Diagnostic filter audit
+
+* DIAG-001: `ld: fatal:` is present in both compiler and runner scans; controlled linker-fatal sample matches.
+* DIAG-002: boundary-aware `failed|killed` matching excludes identifier/file-name substrings; controlled filename samples do not match.
+* DIAG-003: current `cannot` matcher limits matches to known failure verbs. Replaying the current expression against the full Build #70 artifact produced zero matches; 13/13 controlled positive samples matched and known benign comment/file-name samples did not. Build #70 itself used the pre-DIAG-003 expression and contained two benign `cannot set property` matches. Build #71 is the real-artifact confirmation and remains pending.
+* No committed automated diagnostic-regex fixture test exists in `build-illumos.yml`; the workflow's model test does not test diagnostic regex behavior. Add controlled fixtures only in a later authorized cycle.
+* Diagnostic indexes are observational; nightly and final exit codes determine build success. No grep filter masks the actual nightly exit status.
+
+### Automation control
+
+* Hourly automation `ROTFB hourly engineering` remains enabled. Its prompt does not yet contain AUDIT-ONLY restrictions and still authorizes low-risk source/workflow repairs after a build completes.
+* The latest automation cycle created commit `5d014620e42956c1b0fd631cc47919ae3807c4d6`, changing only `ROTFB_ENGINEERING_LOG.md`; no source, patch, or workflow files changed, and no additional target run appeared.
+* The prompt was not modified while Build #71 is active. Once #71 completes, switch the automation prompt to read-only audit/journal mode while keeping its hourly schedule enabled, so it cannot apply fixes before explicit user approval.
+
+### Status and next steps
+
+* Geometry/memory arithmetic for fixed target dimensions: source/model PASS; C behavior not dynamically exercised.
+* Boot lifecycle: SOURCE-LEVEL PASS; actual boot BLOCKED pending hardware.
+* Runtime lifecycle: FAIL for the two alias defects above; lifecycle ownership/rollback otherwise source-level PASS.
+* Shadow synchronization: SOURCE-LEVEL PASS; runtime self-copy is harmless; no real framebuffer round-trip test.
+* Polled callbacks: lifetime gate SOURCE-LEVEL PASS; functional cursor/copy defects apply to polled paths; no stress test.
+* i86pc/i86xpv: Build #70 compile/link PASS; Build #71 still running and changes only the diagnostic workflow.
+* Hardware: NOT TESTED on Chuwi MiniBook X N150.
+* No source, patch, or workflow modifications were made during this audit. This journal-only commit is outside the dedicated workflow path filters and is not intended to trigger a build.
