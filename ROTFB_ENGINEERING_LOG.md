@@ -269,3 +269,30 @@
 * Current target inventory: 67 runs; Build #67 is IN_PROGRESS. No manual dispatch or second build.
 * Root log is outside the workflow path filters; this journal-only update does not start another target build.
 * No upstream change, no unrelated subsystem change, no hardware validation.
+
+
+## ROTFB AUTONOMOUS ENGINEERING REPORT
+
+* Timestamp UTC: 2026-11-18T06:17:30.100Z
+* Branch: `gop-rotation-hook`
+* Branch HEAD before journal append: `92d972a7caf84e10f5189653775410da719fdf64`; compare against the Build #67 source commit confirms the only intervening change is this root-level engineering journal.
+* Target workflow inventory: 67 runs for `.github/workflows/build-illumos.yml` on `gop-rotation-hook`: 3 successful, 63 failed, and 1 in progress; no queued run.
+* Latest completed target run remains Build #66 / Run ID `44236793138` — SUCCESS. Its full job log and artifact were inspected in the preceding report; this cycle rechecked the completed job and artifact metadata. No newly completed target run is available.
+* Current target run: Build #67 / Run ID `44248223071`, source commit `f97f44f2e61558cc1866155bc8a04d03356215b2`, **IN_PROGRESS**. Job ID `134612250193`. The geometry/clipping model-test step completed successfully; the OpenIndiana VM build step remains in progress. Finalization and artifact upload have not started.
+* No manual dispatch, rerun, cancellation, or other build-state operation was issued. No source or workflow change was made while Build #67 is active.
+
+### Patch, test, and workflow audit
+
+* Retrieved and inspected the nine ROTFB patches in lexical application order, 0001–0009. A local unified-diff parser confirmed all 77 hunks have matching declared/actual old and new line counts; all nine patches end with a newline. No malformed hunk was found.
+* Patches 0001–0008 are unchanged from the previously audited Build #66 source. Patch 0009 is the new wide-row-offset repair. Its 11 hunks are internally consistent and change only `gfxp_bitmap.c` row/data offset arithmetic and the related unsigned loop/pitch handling.
+* Reviewed `rotfb_model_test.py`: it covers clockwise corner mapping, bijection, last-pixel bounds, clipping/overflow inputs, 64-bit wide-row multiplication, and patch hunk/contract assertions. The exact workflow test step passed in Build #67. Independent local mathematical checks of the same geometry, clipping, and wide-offset cases also passed.
+* Reviewed `rotfb.h`, boot/runtime ROTFB implementation markers, and `.github/workflows/build-illumos.yml`. The shadow-framebuffer design and fixed 1200x1920 physical / 1920x1200 logical geometry remain unchanged.
+* Workflow invariants remain intact: upstream commit `098e95820891f8a83fae679daece7fcf58b7b3a4`, push filters limited to `illumo_rotfb/**` and the workflow itself, concurrency group `rotfb-single-build`, and `cancel-in-progress: false`. The root journal remains outside the trigger paths.
+* Local full-upstream patch application and `git diff --check` could not be run: `git ls-remote` failed because this execution environment cannot resolve `github.com`. The CI VM is currently performing the authoritative clean-upstream apply/build validation. No claim of local full-tree patch application is made.
+
+### Deferred diagnostic item
+
+* DIAG-001 remains confirmed but non-blocking: the current workflow compiler-error expression catches standalone `error:` / `fatal error:` forms but does not explicitly catch illumos linker diagnostics such as `ld: fatal: ...`. This is diagnostic-index coverage, not evidence of a build failure or a masked build result. Defer the minimal workflow-only correction until Build #67 completes so no concurrent target run is introduced.
+
+* GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
+* Hardware validation: NOT PERFORMED. No physical Chuwi result is claimed.
