@@ -25,6 +25,9 @@ jobs:
       - name: ROTFB geometry and clipping model tests
         run: python3 illumo_rotfb/tests/rotfb_model_test.py
 
+      - name: ROTFB linker evidence regression tests
+        run: sh illumo_rotfb/tests/rotfb_link_evidence_test.sh
+
       - name: Initialize diagnostic artifact staging
         if: always()
         run: |
@@ -286,17 +289,15 @@ jobs:
             done
             wait "$BUILD_PID" || BUILD_RC=$?
 
-            # Do not wait indefinitely for a missing linker path after nightly has ended.
+            # Keep the watcher alive through nightly; tools bootstrap may replace ld.
+            : > "$LOGDIR/ld-wrapper-stop"
             LD_WATCHER_RC=0
-            if [ -f "$LOGDIR/ld-wrapper-ready.txt" ]; then
-              wait "$LD_WATCHER_PID" || LD_WATCHER_RC=$?
-            else
-              kill "$LD_WATCHER_PID" 2>/dev/null || true
-              wait "$LD_WATCHER_PID" 2>/dev/null || true
+            wait "$LD_WATCHER_PID" || LD_WATCHER_RC=$?
+            if [ ! -f "$LOGDIR/ld-wrapper-ready.txt" ]; then
               LD_WATCHER_RC=1
               echo "linker wrapper did not install before nightly completed" > "$LOGDIR/ld-wrapper-install-failure.txt"
             fi
-            printf '%s\\n' "$LD_WATCHER_RC" > "$LOGDIR/ld-wrapper-watch-exit-code.txt"
+            printf '%s\n' "$LD_WATCHER_RC" > "$LOGDIR/ld-wrapper-watch-exit-code.txt"
 
             printf '%s\n' "$BUILD_RC" > "$LOGDIR/nightly-exit-code.txt"
             # NIGHTLY_LOG is already on the NFS-shared workspace; it is persisted during the build.
@@ -324,10 +325,10 @@ jobs:
             wait "$LOG_MONITOR_PID" 2>/dev/null || true
 
             # Preserve compile command lines as supplementary evidence only.
-            grep -E ' -c -o obj64/rotfb_boot\\.o .*rotfb_boot\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-boot-compile-commands.txt" || true
-            grep -E ' -c -o obj64/rotfb_runtime\\.o .*rotfb_runtime\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-runtime-compile-commands.txt" || true
-            grep -E ' -c -o obj64/gfxp_bitmap\\.o .*gfxp_bitmap\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-bitmap-compile-commands.txt" || true
-            grep -E ' -c -o obj64/gfxp_fb\\.o .*gfxp_fb\\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-fb-compile-commands.txt" || true
+            grep -E ' -c -o obj64/rotfb_boot\.o .*rotfb_boot\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-boot-compile-commands.txt" || true
+            grep -E ' -c -o obj64/rotfb_runtime\.o .*rotfb_runtime\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/rotfb-runtime-compile-commands.txt" || true
+            grep -E ' -c -o obj64/gfxp_bitmap\.o .*gfxp_bitmap\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-bitmap-compile-commands.txt" || true
+            grep -E ' -c -o obj64/gfxp_fb\.o .*gfxp_fb\.c' "$GATE_LOG_DIR/nightly.log" > "$LOGDIR/gfxp-fb-compile-commands.txt" || true
 
             # The evidence helper verifies fresh target files, exact ROTFB link inputs,
             # and the exit status returned by the actual linker process.
@@ -341,11 +342,10 @@ jobs:
             if [ "$EVIDENCE_RC" -ne 0 ]; then
               BUILD_RC=1
             fi
-            printf '%s\\n' "$BUILD_RC" > "$LOGDIR/final-build-exit-code.txt"
-            printf 'final_build_exit_code=%s\\n' "$BUILD_RC" >> "$LOGDIR/rotfb-build-evidence.txt"
+            printf '%s\n' "$BUILD_RC" > "$LOGDIR/final-build-exit-code.txt"
+            printf 'final_build_exit_code=%s\n' "$BUILD_RC" >> "$LOGDIR/rotfb-build-evidence.txt"
             if [ "$BUILD_RC" -ne 0 ]; then
-              sed 's/^overall_status=PASS$/overall_status=INCOMPLETE/' \\
-                "$LOGDIR/rotfb-build-evidence.txt" > "$LOGDIR/rotfb-build-evidence.txt.tmp"
+              sed 's/^overall_status=PASS$/overall_status=INCOMPLETE/' "$LOGDIR/rotfb-build-evidence.txt" > "$LOGDIR/rotfb-build-evidence.txt.tmp"
               mv "$LOGDIR/rotfb-build-evidence.txt.tmp" "$LOGDIR/rotfb-build-evidence.txt"
             fi
 
