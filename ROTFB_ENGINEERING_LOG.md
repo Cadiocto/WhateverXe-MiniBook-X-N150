@@ -654,3 +654,53 @@
 
 * The dedicated workflow path filter includes only `illumo_rotfb/**` and `.github/workflows/build-illumos.yml`; root-level `ROTFB_ENGINEERING_LOG.md` is outside those push path filters. This is a journal-only correction; no source, patch, Makefile, test, or workflow file was changed.
 * No build was dispatched, rerun, cancelled, or otherwise modified during this audit.
+
+
+## ROTFB BUILD #72 POST-BUILD AUDIT — DBOOT LINK FAILURE
+
+* Audit timestamp UTC: 2026-11-18T15:16:25.707Z.
+* Branch: `gop-rotation-hook`; pre-journal HEAD: `36fa1f636360f2ec9455b5859b03fb449d60cede`.
+* Recent commits and paths: `36fa1f636360f2ec9455b5859b03fb449d60cede` changes only `ROTFB_ENGINEERING_LOG.md`; its parent `ebac4d529814ce7e9e46a8f8e9f914a73647bf4a` changes `illumo_rotfb/patches/0010-gfxp-bitmap-vis-safety.patch`, `illumo_rotfb/rotfb_boot.c`, and `illumo_rotfb/tests/rotfb_model_test.py`; preceding `ada201915c395f1055365c17dde06fcd0b326280` changes only the engineering log.
+* Pinned upstream remains `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+
+### Build #72 — completed failure
+
+* Run ID: `44318770892`; job ID: `134851820291`; source commit: `ebac4d529814ce7e9e46a8f8e9f914a73647bf4a`; artifact ID: `14437498860`.
+* Run conclusion: FAILURE. Actual `nightly-exit-code.txt=1`; actual `final-build-exit-code.txt=1`. Model test step passed; OpenIndiana VM build step failed; diagnostic finalization and artifact upload completed.
+* Full job log: 1,717,843 characters. Artifact: 6,791,138 bytes, SHA-256 `9f28b40212531d2610354b3ab0677dce9ebf25fc59cf04466d6309831748490f`, 34 files. Original captured gate nightly log: 176,283,272 bytes; second gate copy: 176,271,533 bytes.
+* First root cause in chronological nightly output: i86xpv dboot final link fails at log line 50570 with `Undefined ... membar_producer ... dboot/obj64/rotfb_boot.o`; second occurrence is i86pc dboot final link at line 53086 with the same unresolved symbol. Both fail to produce `dboot/obj64/dboot`. This is the direct cause of the nightly and final exit code 1; later dmake errors are consequences.
+* Root-cause explanation verified against pinned upstream headers and actual dboot compiler/link commands: `rotfb_boot.c` calls `membar_producer()`. `sys/atomic.h` declares it as an external function. Its `asm/atomic.h` include is conditional on `_KERNEL && _ASM_INLINES`; the dboot compile command uses `-U_KERNEL`, so no kernel inline implementation is included. The dboot link input list does not include kernel `atomic.o`. Thus `rotfb_boot.o` retains an unresolved external symbol in both dboot targets.
+* Build #72 is the first completed build that applied the new boot barrier and patch 0010. The barrier candidate currently blocks both architecture boot-image links. ROTFB-BOOT-WC-001 is therefore NOT fixed; it is a confirmed current build blocker.
+
+### Patch application and compile/link evidence
+
+* Actual current patch set: 10 files in lexical order: 0001-framebuffer-metadata; 0002-boot-fb-rotation; 0003-gfxp-bitmap-tem-rotation; 0004-Makefile-files; 0005-rotfb-lifecycle-hardening; 0006-rotfb-console-contract-and-copy-safety; 0007-gfxp-bitmap-bounds-hardening; 0008-gfxp-detach-failure-safety; 0009-gfxp-bitmap-wide-row-offsets; 0010-gfxp-bitmap-vis-safety.
+* Patch hunk counts are respectively 7, 8, 1, 4, 12, 10, 17, 1, 11, and 5: 10 patches / 76 hunks total. Build #72 `patch-apply.log` contains CHECK and APPLIED for all ten in that lexical order, followed by `git diff --check` in the VM script.
+* The artifact records three compile command occurrences per architecture for each of `rotfb_boot`, `rotfb_runtime`, `gfxp_bitmap`, and `gfxp_fb`. The boot objects compile far enough to reach the final dboot link; the dboot link then fails for both i86pc and i86xpv on `membar_producer`.
+* The artifact records two `ld -r -o obj64/unix.o` command occurrences and two `ld -ztype=kmod ... gfx_private` command occurrences. The latter are followed by CTF merge commands in the original log. However, the full build is failed and no final dboot image is produced for either architecture. Do not describe overall i86pc/i86xpv build or final boot link as PASS.
+* The workflow's `rotfb-build-evidence.txt` says `ROTFB/framebuffer compile-link evidence: PASS`, but source inspection shows that this status is based only on grep counts of command lines. `BOOT_LINK_COUNT` counts `ld -r -o obj64/unix.o`, not the final `ld ... -o dboot/obj64/dboot`; runtime/module link counters also count command lines rather than checking command exit status. This PASS label is evidence-presence only and contradicts the actual failed dboot link if read as a successful-link result.
+
+### New confirmed CI evidence issue — ROTFB-CI-EVIDENCE-001
+
+* Classification: confirmed reporting/evidence semantics defect in `.github/workflows/build-illumos.yml` (read-only finding; no workflow change made).
+* Scenario: a ROTFB object/module command is present in the nightly log, but a later architecture-specific dboot link fails. The counter-based script still emits a generic compile-link `PASS` because it checks command occurrence counts, not successful return status or final dboot link outputs.
+* Recommended owner-authorized remediation: distinguish `COMMANDS_PRESENT` from `LINK_SUCCESS`; explicitly capture both i86pc and i86xpv dboot final-link status and verify expected output files; retain nightly/final exit codes as authoritative. Add a fixture regression using the Build #72 pattern: all ROTFB compile commands present plus unresolved `membar_producer` at dboot link must never produce an overall link PASS.
+
+### Known issue status
+
+* ROTFB-LIFE-001: patch 0010 is present and was applied. It guards the two aliased memmove sites. Build #72 records gfxp_bitmap compile commands for both architectures, but the model test is Python-only and the complete build fails later at dboot link. Status: fix candidate applied; NOT verified fixed under the required direct-C-test criterion. Proposed direct test: compile/run the actual C copy routine with aliased source/destination and overlapping forward/backward ranges in text and graphics modes.
+* ROTFB-MEM-002: patch 0010 adds negative-coordinate and non-positive-dimension checks to VIS copy/display/cursor paths and was applied. Build #72 model step passed; no C-level test exists. Status: fix candidate applied; NOT verified fixed. Proposed tests: exercise actual VIS handlers with -1, SHRT_MIN, zero/negative sizes, upper-bound coordinates, and verify rejection occurs before unsigned conversion/pointer arithmetic.
+* ROTFB-BOOT-WC-001: current `rotfb_boot_flush_rect()` contains `membar_producer()`, but the call is unresolved in both dboot links. Status: confirmed current build blocker; candidate is not linkable in the boot environment. Proposed remediation plan: identify a dboot-supported store-ordering primitive or boot-linked implementation with correct WC semantics for both i86pc and i86xpv; verify no undefined external remains in either dboot link and retain runtime kernel barrier separately.
+* ROTFB-BOOT-GEO-001: unresolved hardware/input-data blocker. Actual Chuwi Multiboot framebuffer address, width, height, pitch, bpp/depth, RGB masks, and reported framebuffer size remain unknown.
+* ROTFB-TEST-001: unresolved coverage limitation. Python model tests now cover mapping, alias-copy model, and signed VIS input model, but do not execute the C implementation or cover complete boot import/rollback, runtime allocation failures, callback races, detach, and concurrent fini/flush teardown.
+
+### Diagnostic indexes and build inventory
+
+* `compiler-error-index.txt` is 12,698 bytes and `runner-error-index.txt` is 47,448 bytes; both include the unresolved `membar_producer` dboot link failures and associated dmake failures. The indexes are secondary aids; original full logs and exit-code files are authoritative.
+* Fresh run inventory: 72 runs for `.github/workflows/build-illumos.yml` on this branch; 8 success, 64 failure, 0 queued/active. Latest completed run is #72 FAILURE; latest successful run is #71 SUCCESS (Run ID `44302559938`, nightly/final exit 0, nine patches 0001–0009 applied).
+* No hardware validation was performed. Actual Multiboot parameters remain a device-data blocker.
+
+### Journal/write boundary
+
+* The workflow path filter contains only `illumo_rotfb/**` and `.github/workflows/build-illumos.yml`; root-level `ROTFB_ENGINEERING_LOG.md` is outside those push filters.
+* At the pre-write recheck there were no queued or active target builds. This entry changes only the root-level engineering journal. No source, patch, test, Makefile, script, workflow, branch, or build state was changed; no run was dispatched, rerun, cancelled, or approved.
