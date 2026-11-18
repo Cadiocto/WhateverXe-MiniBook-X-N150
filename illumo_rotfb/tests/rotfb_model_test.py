@@ -335,9 +335,15 @@ def test_patch_contracts():
         "rotfb_info.boot_ready = B_TRUE;"
     )
     assert "fb->fb != rotfb_info.logical_fb" in boot_import
-    assert "#include <sys/atomic.h>" in boot_source
-    assert "membar_producer();" in boot_flush
-    assert boot_flush.index("membar_producer();") > boot_flush.index("for (yy = y;")
+    boot_barrier = boot_source.split(
+        "rotfb_boot_wc_store_barrier(void)", 1
+    )[1].split("\\n}\\n", 1)[0]
+    assert "#include <sys/atomic.h>" not in boot_source
+    assert "__asm__ __volatile__(\\"sfence\\" : : : \\"memory\\");" in boot_barrier
+    assert "rotfb_boot_wc_store_barrier();" in boot_flush
+    assert boot_flush.index("rotfb_boot_wc_store_barrier();") > boot_flush.index(
+        "for (yy = y;"
+    )
     assert "@@ -677,8 +721,8 @@" in patch6
     assert "c_copy.s_col = fb_info.cursor.origin.x;" in patch6
     assert "c_copy.t_col = fb_info.cursor.origin.x + chars * boot_fb_font.vf_width;" in patch6
