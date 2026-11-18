@@ -296,3 +296,29 @@
 
 * GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
 * Hardware validation: NOT PERFORMED. No physical Chuwi result is claimed.
+
+## ROTFB POST-BUILD #67 ENGINEERING AUDIT
+
+* Timestamp UTC: 2026-11-18T07:08:00Z
+* Branch: `gop-rotation-hook`
+* Branch HEAD at inspection: `a4349bb7da0627965339b3dce9501f97211e4655` (journal-only commit after the tested source commit).
+* Target workflow inventory: 67 runs for `.github/workflows/build-illumos.yml`; 4 successful, 63 failed, 0 queued, 0 in progress. The repository-wide Actions endpoint returned 96 runs across all workflows; filtering by the exact target workflow path produced the 67-run inventory above.
+* Build #67 / Run ID `44248223071` / tested commit `f97f44f2e61558cc1866155bc8a04d03356215b2`: **SUCCESS**. Job ID `134612250193`; attempt 1; completed at 2026-11-18T06:46:21Z.
+  * Full decoded job log retrieved and inspected: 15,765 lines / 3,962,643 bytes.
+  * Artifact ID `14405031365`, 7,519,616 compressed bytes, SHA-256 `d218f372fade43f510e46f108cee9026757ebe7b26f3f6fa3df861829bdcaeb2`; downloaded and extracted. The archive contains 36 files / 363,460,752 uncompressed bytes.
+  * Artifact `build-metadata.txt` confirms pinned upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+  * `patch-apply.log` confirms all nine patches, 0001–0009, passed `git apply --check` and were applied in lexical order. VM `git diff --check` completed successfully.
+  * ROTFB geometry/clipping model test step: PASS.
+  * `nightly-exit-code.txt=0`; `final-build-exit-code.txt=0`. The complete gate log ends with “Nightly distributed build completed” at 2026-11-18 06:44:45 UTC (38:12 build time).
+  * Compile evidence: 3 compile-command records each for `rotfb_boot.o`, `rotfb_runtime.o`, `gfxp_bitmap.o`, and `gfxp_fb.o`, for both i86pc and i86xpv.
+  * Link evidence: 2 `unix.o` link commands containing `rotfb_boot.o`; 2 `gfx_private` link commands each containing `rotfb_runtime.o`, `gfxp_bitmap.o`, and `gfxp_fb.o`. The workflow's explicit compile/link evidence gate reports PASS.
+  * The compiler-error index contains no compiler/linker diagnostics. A boundary-aware scan of the full 176,301,356-byte gate log found no fatal compiler error, undefined symbol, syntax error, dmake failure, or linker fatal diagnostic.
+  * The patched upstream diffstat contains only the six expected ROTFB integration targets: i86pc/i86xpv Makefile.files, boot_fb.c, gfxp_bitmap.c, gfxp_fb.c, and framebuffer.h.
+* Patch audit at current branch HEAD: inspected all nine patch files in lexical order. The local unified-diff parser found 77 hunks with matching declared/actual old and new line counts; all nine files have final newlines. No malformed hunk was found.
+* Test/source audit: reviewed `rotfb_model_test.py`, `rotfb.h`, `rotfb_boot.c`, and `rotfb_runtime.c`. Build #67's model test passed; the 1200x1920 physical / 1920x1200 logical clockwise shadow-framebuffer architecture remains unchanged. No source or patch defect requiring speculative modification was found in this cycle.
+* Confirmed non-blocking diagnostic defect DIAG-001: all three workflow diagnostic grep expressions still omit the illumos linker form `ld: fatal:`. This is a coverage gap in diagnostic indexes, not a failure hidden by the build gate; Build #67 itself completed and its full log contains no linker fatal. A local controlled grep test of the proposed additional alternative `ld:[[:space:]]+fatal:` passes for bare and timestamp-prefixed linker errors, continues to match ordinary compiler errors, and does not reintroduce the `directoryError:2` false positive. The three expressions are the only planned workflow change; no source logic or patch is involved.
+* Validation limitations: the full clean-upstream patch/build validation is authoritative in Build #67's OpenIndiana VM. A separate full local upstream clone/apply remains unavailable because this execution environment cannot resolve outbound GitHub DNS. The local controlled regex and shell-syntax checks passed.
+* Scheduling: the latest target-run recheck found all 67 target runs completed and zero queued/in progress. No rerun, cancellation, manual dispatch, or build-state operation was issued. The root journal is outside workflow path filters.
+* GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
+* Hardware validation: NOT PERFORMED. No Chuwi hardware result is claimed.
+* Next action: apply the minimal DIAG-001 workflow-only regex extension after one final target-run recheck. The workflow path filter will create at most one validation run; after it appears, stop and wait for the next cycle.
