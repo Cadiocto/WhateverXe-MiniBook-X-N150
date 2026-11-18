@@ -928,3 +928,49 @@ Build #78 remains active:
 - Current step: ROTFB linker evidence regression tests.
 
 No source, patch, test, Makefile or workflow changes were made after Build #78 started. Only this journal correction was committed.
+
+
+### 2026-11-18T22:00:57.739Z — Build #79 patch-context forensic result and 0011 recovery
+
+**Repository:** `Cadiocto/WhateverXe-MiniBook-X-N150`  
+**Branch:** `gop-rotation-hook`  
+**HEAD before recovery:** `2c25c6dedb948ccbf72afeb3d0972a868cac6d78`  
+**Pinned upstream:** `098e95820891f8a83fae679daece7fcf58b7b3a4`
+
+#### Build #79 authoritative result
+
+- Run ID: `44399431071`; Job ID: `135138083340`; source SHA: `2c25c6dedb948ccbf72afeb3d0972a868cac6d78`.
+- Workflow conclusion: FAILURE. Geometry/model, linker-evidence, and VIS cursor C regression host steps all PASS.
+- Artifact ID: `14472319186`; verified downloaded ZIP SHA256: `b9afb13cd37c5cbbf70ed0090070ff8ee016d75e48d9b24d5de1d15dc17d5cce` (matches GitHub artifact digest).
+- Original `patch-series-regression.log` confirms patches 0001–0010 applied in lexical order. The altered-offset negative case failed at `gfxp_bitmap.c:714`; the actual 0011 from this source revision failed at `gfxp_bitmap.c:730`.
+- OpenIndiana VM stopped in patch-series regression and SSH exited 1. Nightly was not invoked. Nightly/final exit codes and compile/link evidence are NOT AVAILABLE; no runtime-link failure is established.
+
+#### Exact 0011 root cause
+
+The pinned-upstream `usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c` has a blank line between `console->fb.cursor.origin.y = ca->row;` and `bitmap_display_cursor(softc, ca);`. The 0011 hunk deleted the origin assignment and immediately expected the display call, but omitted representation of the unchanged blank line. Consequently the hunk could not match the actual post-0001–0010 source even with old-side start 730. The 14 VIS guard lines added by 0007 match the corresponding removed lines in 0011 byte-for-byte; they are not the context mismatch. This is a patch-context defect, not a runtime or linker defect.
+
+The same hunk's new-side start was one line short. Previous hunk deltas are +1 (include), +45 (helper insertion), and -9 (lower guard replacement), net +37; old start 730 therefore maps to new start 767, not 766.
+
+#### Minimal recovery committed
+
+- `illumo_rotfb/patches/0011-gfxp-bitmap-cursor-state.patch`: explicitly replace the old blank line with a new blank line after the cursor update helper, avoiding a whitespace-only context line; update final hunk counts to old 34/new 15 and new-side start to 767. No behavior or architecture changed.
+- `illumo_rotfb/tests/fixtures/0011-before-blank-context-fix.patch`: preserve the exact pre-fix 0011 from parent revision `2c25c6dedb948ccbf72afeb3d0972a868cac6d78` as a negative regression fixture.
+- `illumo_rotfb/tests/rotfb_patch_series_test.sh`: remove the misleading sed-based offset rewrite; apply the exact pre-fix fixture after patches 0001–0010 and require its recorded failure at `gfxp_bitmap.c:730`, then apply corrected 0011. Assert exactly 11 patch files and their exact lexical order.
+
+#### Local validation
+
+- Build #79 artifact SHA256 independently recomputed and matched: PASS.
+- Full Build #79 job log and original patch-series regression log inspected: PASS.
+- Exact pinned-upstream blank-line context verified: PASS.
+- Corrected unified-diff counts old 34/new 15 and new start 767 verified: PASS.
+- Disposable synthetic source-context test: exact pre-fix fixture fails at `gfxp_bitmap.c:730`; corrected patch passes `git apply --check` and applies: PASS.
+- Updated patch-series test `sh -n`: PASS.
+- Full application of all 11 patches against the actual pinned upstream remains pending Build #80. No compile, nightly, or linker result is claimed for Build #79.
+- No device commands were run. The supplied Chuwi MDB snapshot remains accepted as measured evidence; physical paddr, BAR2 aperture, kernel fb mapping, and shadow_fb remain distinct.
+
+#### Readiness and next step
+
+- BUILD VERIFIED: NO — patch 0011 did not apply in Build #79; nightly was not run.
+- CODE/TEST VERIFIED: NO — existing VIS C and host evidence tests pass, but lifecycle/alias/allocation/rollback/callback/teardown coverage remains incomplete.
+- DEVICE VERIFIED: NO — no physical-device test was performed.
+- Next: run one controlled build for the recovery source revision, inspect the full patch-series log first, then nightly and all six independent linker results. Do not make another source/workflow change while that run is active.

@@ -70,7 +70,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +	if (!bitmap_cursor_valid(console, ca))
 +		return;
  	size = ca->width * bpp;
-@@ -730,33 +766,14 @@
+@@ -730,34 +767,15 @@
  	switch (ca->action) {
  	case VIS_HIDE_CURSOR:
 +		if (!bitmap_cursor_valid(console, ca))
@@ -104,6 +104,8 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 -		console->fb.cursor.origin.y = ca->row;
 +		if (!bitmap_cursor_update(console, ca))
 +			return;
+-
++
  		bitmap_display_cursor(softc, ca);
  		console->fb.cursor.visible = B_TRUE;
  		break;

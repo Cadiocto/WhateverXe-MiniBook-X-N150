@@ -1,0 +1,110 @@
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -29,2 +29,3 @@
+ #include <sys/rotfb.h>
++#include <sys/rotfb_vis_cursor.h>
+ #include <sys/gfx_private.h>
+@@ -618,3 +618,48 @@
++static boolean_t
++bitmap_cursor_geometry(union gfx_console *console,
++    rotfb_vis_cursor_geometry_t *geometry)
++{
++	if (console == NULL || geometry == NULL ||
++	    console->fb.fb == NULL || console->fb.shadow_fb == NULL)
++		return (B_FALSE);
++	geometry->screen_width = console->fb.screen.x;
++	geometry->screen_height = console->fb.screen.y;
++	geometry->terminal_origin_x = console->fb.terminal_origin.x;
++	geometry->terminal_origin_y = console->fb.terminal_origin.y;
++	geometry->terminal_width = console->fb.terminal.x;
++	geometry->terminal_height = console->fb.terminal.y;
++	geometry->font_width = console->fb.font_width;
++	geometry->font_height = console->fb.font_height;
++	geometry->bpp = console->fb.bpp;
++	geometry->pitch = console->fb.pitch;
++	geometry->fb_size = console->fb.fb_size;
++	return (B_TRUE);
++}
++
++static boolean_t
++bitmap_cursor_valid(union gfx_console *console, struct vis_conscursor *ca)
++{
++	rotfb_vis_cursor_geometry_t geometry;
++
++	if (ca == NULL || !bitmap_cursor_geometry(console, &geometry))
++		return (B_FALSE);
++	return (rotfb_vis_cursor_validate(&geometry, ca->col, ca->row,
++	    ca->width, ca->height) ? B_TRUE : B_FALSE);
++}
++
++static boolean_t
++bitmap_cursor_update(union gfx_console *console, struct vis_conscursor *ca)
++{
++	rotfb_vis_cursor_geometry_t geometry;
++
++	if (ca == NULL || !bitmap_cursor_geometry(console, &geometry))
++		return (B_FALSE);
++	return (rotfb_vis_cursor_update(&geometry, ca->col, ca->row,
++	    ca->width, ca->height, &console->fb.cursor.pos.x,
++	    &console->fb.cursor.pos.y, &console->fb.cursor.origin.x,
++	    &console->fb.cursor.origin.y) ? B_TRUE : B_FALSE);
++}
++
+ static void
+ bitmap_display_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
+ {
+@@ -648,13 +693,4 @@
+ 	bpp = console->fb.bpp;
+-	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
+-	    bpp == 0 || pitch == 0 || console->fb.screen.x == 0 ||
+-	    console->fb.screen.y == 0 || ca->col < 0 || ca->row < 0 ||
+-	    ca->width <= 0 || ca->height <= 0 ||
+-	    ca->col >= console->fb.screen.x ||
+-	    ca->row >= console->fb.screen.y ||
+-	    ca->width > console->fb.screen.x - ca->col ||
+-	    ca->height > console->fb.screen.y - ca->row ||
+-	    (uint64_t)pitch < (uint64_t)console->fb.screen.x * bpp ||
+-	    console->fb.fb_size < (uint64_t)pitch * console->fb.screen.y)
+-		return;
++	if (!bitmap_cursor_valid(console, ca))
++		return;
+ 	size = ca->width * bpp;
+@@ -730,33 +766,14 @@
+ 	switch (ca->action) {
+ 	case VIS_HIDE_CURSOR:
++		if (!bitmap_cursor_valid(console, ca))
++			return;
+ 		bitmap_display_cursor(softc, ca);
+ 		console->fb.cursor.visible = B_FALSE;
+ 		break;
+ 	case VIS_DISPLAY_CURSOR:
+-		if (console->fb.font_width == 0 || console->fb.font_height == 0 ||
+-		    ca->col < console->fb.terminal_origin.x ||
+-		    ca->row < console->fb.terminal_origin.y ||
+-		    (uint32_t)(ca->col - console->fb.terminal_origin.x) >=
+-		    (uint32_t)console->fb.terminal.x * console->fb.font_width ||
+-		    (uint32_t)(ca->row - console->fb.terminal_origin.y) >=
+-		    (uint32_t)console->fb.terminal.y * console->fb.font_height)
+-			return;
+-		if (ca->width == 0 || ca->height == 0 ||
+-		    ca->col >= console->fb.screen.x ||
+-		    ca->row >= console->fb.screen.y ||
+-		    ca->width > console->fb.screen.x - ca->col ||
+-		    ca->height > console->fb.screen.y - ca->row)
+-			return;
+-		/* keep track of cursor position for polled mode */
+-		console->fb.cursor.pos.x =
+-		    (ca->col - console->fb.terminal_origin.x) /
+-		    console->fb.font_width;
+-		console->fb.cursor.pos.y =
+-		    (ca->row - console->fb.terminal_origin.y) /
+-		    console->fb.font_height;
+-		console->fb.cursor.origin.x = ca->col;
+-		console->fb.cursor.origin.y = ca->row;
++		if (!bitmap_cursor_update(console, ca))
++			return;
+ 		bitmap_display_cursor(softc, ca);
+ 		console->fb.cursor.visible = B_TRUE;
+ 		break;
+ 	case VIS_GET_CURSOR:

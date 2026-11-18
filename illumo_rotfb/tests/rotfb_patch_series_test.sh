@@ -25,15 +25,42 @@ fi
 
 mkdir -p "$TMP_PARENT"
 TEST_TREE="$TMP_PARENT/rotfb-patch-series-$$"
-OLD_PATCH="$TMP_PARENT/0011-original-offsets-$$.patch"
-OLD_LOG="$TMP_PARENT/0011-original-offsets-$$.log"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+OLD_PATCH="$SCRIPT_DIR/fixtures/0011-before-blank-context-fix.patch"
+OLD_LOG="$TMP_PARENT/0011-before-blank-context-fix.log"
 cleanup() {
     git -C "$UPSTREAM" worktree remove --force "$TEST_TREE" >/dev/null 2>&1 || true
-    rm -f "$OLD_PATCH" "$OLD_LOG"
+    rm -f "$OLD_LOG"
 }
 trap cleanup EXIT HUP INT TERM
 
 git -C "$UPSTREAM" worktree add --detach "$TEST_TREE" "$PIN"
+
+set -- "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch
+[ "$#" -eq 11 ] || {
+    echo "expected exactly 11 ROTFB patches, found $#" >&2
+    exit 1
+}
+EXPECTED_PATCH_ORDER=$(cat <<'EXPECTED_PATCHES'
+0001-framebuffer-metadata.patch
+0002-boot-fb-rotation.patch
+0003-gfxp-bitmap-tem-rotation.patch
+0004-Makefile-files.patch
+0005-rotfb-lifecycle-hardening.patch
+0006-rotfb-console-contract-and-copy-safety.patch
+0007-gfxp-bitmap-bounds-hardening.patch
+0008-gfxp-detach-failure-safety.patch
+0009-gfxp-bitmap-wide-row-offsets.patch
+0010-gfxp-bitmap-vis-safety.patch
+0011-gfxp-bitmap-cursor-state.patch
+EXPECTED_PATCHES
+)
+ACTUAL_PATCH_ORDER=$(for p in "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch; do basename "$p"; done)
+if [ "$ACTUAL_PATCH_ORDER" != "$EXPECTED_PATCH_ORDER" ]; then
+    echo "ROTFB patch order mismatch" >&2
+    printf '%s\n' "$ACTUAL_PATCH_ORDER" >&2
+    exit 1
+fi
 
 count=0
 for p in "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch; do
@@ -57,23 +84,20 @@ FIXED_PATCH="$PATCH_DIR/0011-gfxp-bitmap-cursor-state.patch"
     exit 1
 }
 
-# Recreate the exact hunk coordinates from Build #78.
-sed \
-    -e 's/^@@ -618,3 +618,48 @@$/@@ -603,3 +603,48 @@/' \
-    -e 's/^@@ -648,13 +693,4 @@$/@@ -632,13 +677,4 @@/' \
-    -e 's/^@@ -730,33 +766,14 @@$/@@ -714,33 +750,14 @@/' \
-    "$FIXED_PATCH" > "$OLD_PATCH"
-
+# Reproduce Build #79's actual pre-fix patch-context failure. The fixture
+# is the exact 0011 patch from the parent commit, before the missing blank
+# line after cursor.origin.y was restored.
 if git -C "$TEST_TREE" apply --check "$OLD_PATCH" > "$OLD_LOG" 2>&1; then
-    echo "REGRESSION FAILED: original 0011 offsets unexpectedly apply" >&2
+    echo "REGRESSION FAILED: pre-fix 0011 unexpectedly applies" >&2
     exit 1
 fi
-if ! grep -F 'gfxp_bitmap.c:714' "$OLD_LOG" >/dev/null; then
-    echo "REGRESSION FAILED: old 0011 did not reproduce the Build #78 failure point" >&2
+if ! grep -F 'patch failed: usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c:730' "$OLD_LOG" >/dev/null ||
+    ! grep -F 'patch does not apply' "$OLD_LOG" >/dev/null; then
+    echo "REGRESSION FAILED: pre-fix 0011 did not reproduce the Build #79 context failure" >&2
     cat "$OLD_LOG" >&2
     exit 1
 fi
-echo "EXPECTED_FAILURE original 0011 offsets reproduce gfxp_bitmap.c:714"
+echo "EXPECTED_FAILURE pre-fix 0011 reproduces missing blank line at gfxp_bitmap.c:730"
 
 git -C "$TEST_TREE" apply --check "$FIXED_PATCH"
 git -C "$TEST_TREE" apply "$FIXED_PATCH"
