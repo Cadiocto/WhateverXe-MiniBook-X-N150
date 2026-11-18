@@ -205,3 +205,15 @@
 * Diagnostic follow-up: the broad `error:` substring scan in the workflow's diagnostic indexes falsely matches the xgettext keyword `directoryError:2`. A boundary-aware grep pattern was tested locally: real compiler-style `error:` and `fatal error:` lines remain matched while `directoryError:2` is excluded. This is diagnostic noise only; Build #65 itself succeeded. A minimal workflow-only correction is the next low-risk change.
 * Scheduling: the latest recheck found no queued or active target run. No manual dispatch was used. The source commit tested by #65 is unchanged; current HEAD differs only by the root journal, which is outside path filters. No hardware validation was performed or claimed.
 * GitHub Issues remain disabled (HTTP 410); no issue creation or repository-setting changes were attempted.
+
+
+## ROTFB AUTONOMOUS ENGINEERING REPORT
+
+* Timestamp UTC: 2026-11-18T04:22:25Z
+* Branch: `gop-rotation-hook`
+* HEAD at inspection: `b2b0021bcc03913b83e5bd9eabd0611ceb7a21c0`.
+* Workflow-only diagnostic cleanup: the preceding commit `b2b0021bcc03913b83e5bd9eabd0611ceb7a21c0` changed only `.github/workflows/build-illumos.yml`, tightening three grep call sites to match standalone `error:` / `fatal error:` diagnostics rather than substrings such as xgettext's `directoryError:2`. The exact text replacement was checked (3 lines only); local grep samples confirmed true compiler-style errors remain matched and `directoryError:2` is excluded. No YAML structure, path filters, upstream pin, or concurrency settings changed.
+* Build scheduling: the push-triggered validation run appeared after the initial API poll. Current target inventory: 66 runs. Build #66 / Run ID `44236793138` is **IN_PROGRESS** for current HEAD `b2b0021bcc03913b83e5bd9eabd0611ceb7a21c0`: https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44236793138
+* No second build was dispatched and no build state was changed. The only write in this report is this root-level journal update; the root journal is outside the workflow's push path filters, so it does not trigger another target build. Do not inspect or alter #66 until a later cycle finds it completed.
+* Previous source validation remains Build #65 / Run ID `44224788164` — SUCCESS: all eight patches applied to pinned upstream, geometry/clipping tests passed, full nightly exited 0, and compile/link evidence passed for i86pc and i86xpv. No hardware validation was performed or claimed.
+* GitHub Issues remain disabled (HTTP 410); no issue creation or repository-setting changes were attempted.
