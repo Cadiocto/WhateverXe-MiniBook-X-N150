@@ -33,7 +33,7 @@ diff --git a/usr/src/uts/i86xpv/Makefile.files b/usr/src/uts/i86xpv/Makefile.fil
  	boot_xconsole.o		\
  	dboot_multiboot2.o	\
  	$(FONT_OBJS)
-@@ -189,7 +190,7 @@
+@@ -189,9 +190,9 @@
  BALLOON_OBJS += balloon_drv.o
  DOMCAPS_OBJS += domcaps.o
  EVTCHN_OBJS += evtchn_dev.o

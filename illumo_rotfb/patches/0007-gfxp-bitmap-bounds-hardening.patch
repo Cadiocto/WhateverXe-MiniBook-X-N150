@@ -65,7 +65,7 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
  			if (softc->mode == KD_TEXT) {
  				(void) memmove(dst + increment,
  				    src + increment, width);
-@@ -442,20 +465,30 @@
+@@ -442,22 +465,32 @@
  bitmap_cons_display(struct gfxp_fb_softc *softc, struct vis_consdisplay *da)
  {
  	union gfx_console *console;
@@ -105,6 +105,8 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +	    (uint64_t)da->row * console->fb.pitch;
 +	sfbp = console->fb.shadow_fb + offset;
 +	fbp = console->fb.fb + offset;
+ 
+ 	/* write all scanlines in rectangle */
 @@ -470,6 +503,7 @@
  		if (softc->mode == KD_TEXT) {
  			/* Copy from shadow to fb. */
@@ -182,12 +184,14 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
 +			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
  			for (j = 0; j < size; j += 1) {
-@@ -602,3 +658,3 @@
+@@ -602,5 +658,5 @@
 -			    (console->fb.fb + offset + i * pitch);
 +			    (console->fb.fb + offset + (uint64_t)i * pitch);
  			sfb16 = (uint16_t *)
 -			    (console->fb.shadow_fb + offset + i * pitch);
 +			    (console->fb.shadow_fb + offset + (uint64_t)i * pitch);
+ 			for (j = 0; j < ca->width; j++) {
+ 				sfb16[j] = (sfb16[j] ^ (fg & 0xffff)) ^
 @@ -614,11 +670,11 @@
  	case 24:
  		fg = ca->fg_color.twentyfour[0] << 16;
@@ -202,12 +206,14 @@ diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/
 +			fb8 = console->fb.fb + offset + (uint64_t)i * pitch;
 +			sfb8 = console->fb.shadow_fb + offset + (uint64_t)i * pitch;
  			for (j = 0; j < size; j += 3) {
-@@ -644,3 +700,3 @@
+@@ -644,5 +700,5 @@
 -			    (console->fb.fb + offset + i * pitch);
 +			    (console->fb.fb + offset + (uint64_t)i * pitch);
  			sfb32 = (uint32_t *)
 -			    (console->fb.shadow_fb + offset + i * pitch);
 +			    (console->fb.shadow_fb + offset + (uint64_t)i * pitch);
+ 			for (j = 0; j < ca->width; j++) {
+ 				sfb32[j] = (sfb32[j] ^ fg) ^ bg;
 @@ -658,5 +714,9 @@
  bitmap_cons_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
  {

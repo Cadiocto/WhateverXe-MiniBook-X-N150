@@ -2,6 +2,7 @@
 """Host-side mathematical checks for the ROTFB 90-degree clockwise mapping."""
 
 from pathlib import Path
+import re
 
 PHYS_WIDTH = 1200
 PHYS_HEIGHT = 1920
@@ -85,13 +86,79 @@ def test_clipping_boundaries_and_overflow_inputs():
 
 
 
+def _assert_patch_hunks_well_formed(patch):
+    lines = patch.read_text().splitlines()
+    index = 0
+
+    while index < len(lines):
+        match = re.match(
+            r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@",
+            lines[index],
+        )
+        if match is None:
+            index += 1
+            continue
+
+        old_expected = int(match.group(2) or 1)
+        new_expected = int(match.group(4) or 1)
+        old_actual = 0
+        new_actual = 0
+        body = []
+        old_start = int(match.group(1))
+        index += 1
+
+        while (
+            index < len(lines)
+            and not lines[index].startswith("@@ ")
+            and not lines[index].startswith("diff --git ")
+        ):
+            line = lines[index]
+            if line.startswith(" "):
+                old_actual += 1
+                new_actual += 1
+            elif line.startswith("-"):
+                old_actual += 1
+            elif line.startswith("+"):
+                new_actual += 1
+            elif line.startswith("\\"):
+                pass
+            else:
+                break
+            body.append(line)
+            index += 1
+
+        assert old_actual == old_expected, (
+            f"{patch.name} hunk at {old_start}: "
+            f"old count {old_actual} != {old_expected}"
+        )
+        assert new_actual == new_expected, (
+            f"{patch.name} hunk at {old_start}: "
+            f"new count {new_actual} != {new_expected}"
+        )
+
+        if (
+            patch.name == "0007-gfxp-bitmap-bounds-hardening.patch"
+            and old_start in (442, 602, 644)
+        ):
+            assert body and body[-1].startswith(" "), (
+                f"{patch.name} hunk at {old_start} needs trailing context"
+            )
+
+
 def test_patch_contracts():
     root = Path(__file__).resolve().parents[1]
     patch4 = (root / "patches" / "0004-Makefile-files.patch").read_text()
     patch6 = (root / "patches" / "0006-rotfb-console-contract-and-copy-safety.patch").read_text()
+    patch7 = (root / "patches" / "0007-gfxp-bitmap-bounds-hardening.patch").read_text()
+
     for patch in sorted((root / "patches").glob("000*.patch")):
         assert patch.read_text().endswith("\n"), f"{patch.name} lacks final newline"
-    assert "@@ -189,7 +190,7 @@" in patch4
+        _assert_patch_hunks_well_formed(patch)
+
+    assert "@@ -189,9 +190,9 @@" in patch4
+    assert "@@ -442,22 +465,32 @@" in patch7
+    assert "@@ -602,5 +658,5 @@" in patch7
+    assert "@@ -644,5 +700,5 @@" in patch7
     assert "if (rotfb_info.configured && rotfb_info.logical_fb != NULL)" in patch6
     assert "if (!rotfb_info.boot_ready)" in patch6
     assert "@@ -677,8 +721,8 @@" in patch6
