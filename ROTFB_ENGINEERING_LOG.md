@@ -181,3 +181,27 @@
 * Build scheduling: all 64 existing target runs were rechecked immediately before the source commit; zero were queued or active. One atomic source commit was pushed to `gop-rotation-hook`; it changes only the two ROTFB patches and the ROTFB model test. No manual dispatch or concurrent build was issued. The path-filtered push created Build #65 / Run ID `44224788164` with status `in_progress` for HEAD `8bd6e933f417322ee47acf9e08c92f66a1210dc0`. The next cycle must inspect the resulting run and artifacts; do not dispatch while it is queued or active.
 * Issues fallback: GitHub Issues remain disabled (HTTP 410); no issue creation was retried and no repository settings were changed.
 * Hardware validation: NOT PERFORMED. No physical Chuwi result is claimed.
+
+
+## ROTFB AUTONOMOUS ENGINEERING REPORT
+
+* Timestamp UTC: 2026-11-18T04:17:38Z
+* Branch: `gop-rotation-hook`
+* HEAD at inspection before journal update: `1cdfcd05c0629e912e6e2cc041bf2dd84f252387` (journal-only commit; source under test is `8bd6e933f417322ee47acf9e08c92f66a1210dc0`).
+* Target workflow inventory: 65 runs found; 2 successful, 63 failed, 0 queued or in progress at recheck.
+* Latest completed target run: Build #65 / Run ID `44224788164` / source commit `8bd6e933f417322ee47acf9e08c92f66a1210dc0` — **SUCCESS**. Run URL: https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44224788164
+  * Job ID: `134535189637`; complete decoded job log retrieved (4,144,641 bytes).
+  * Artifact ID: `14395752805`; 7,257,504 bytes; SHA-256 `47bf67f80023c84a497ef81cf8552d3419fd6c15187437a500529d2ef9bee786`; 35 files downloaded and inspected.
+  * The artifact's `build-metadata.txt` confirms the exact pinned upstream commit `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+  * `patch-apply.log` confirms all eight patches applied in lexical order: 0001 through 0008. `git diff --check` ran in the VM step, which completed successfully.
+  * ROTFB geometry/clipping model tests: PASS.
+  * `nightly-exit-code.txt=0`; `final-build-exit-code.txt=0`. Full captured gate nightly log is 176,301,477 bytes and ends with “Nightly distributed build completed” at 2026-11-18 03:55:05 UTC (elapsed 1:09:38). No compiler error, fatal error, undefined symbol, syntax error, or dmake failure matched a boundary-aware scan of the full gate log.
+  * Compile evidence: `rotfb_boot.o`, `rotfb_runtime.o`, `gfxp_bitmap.o`, and `gfxp_fb.o` each have 3 compile-command records for both i86pc and i86xpv. Link evidence: 2 `unix.o` commands including `rotfb_boot.o`, and 2 `gfx_private` link commands including `rotfb_runtime.o`, `gfxp_bitmap.o`, and `gfxp_fb.o`. Workflow evidence file reports PASS.
+  * The upstream patch status/diffstat shows only the expected six files modified by the ROTFB patch series.
+* Patch/test/workflow audit at current branch HEAD:
+  * Inspected all eight patch files in lexical application order. All hunks have matching declared/actual old and new line counts; all patches end with a newline. The Build #65 VM run is the authoritative confirmation that the full series applies to the pinned source.
+  * Inspected `rotfb_model_test.py`; its geometry, bijection, last-pixel, clipping/overflow, patch hunk-count, and patch-contract checks passed in Build #65.
+  * Inspected `.github/workflows/build-illumos.yml`: pinned upstream unchanged; push path filters remain `illumo_rotfb/**` and the workflow file; root-level journal is excluded; concurrency remains `rotfb-single-build` with `cancel-in-progress: false`.
+* Diagnostic follow-up: the broad `error:` substring scan in the workflow's diagnostic indexes falsely matches the xgettext keyword `directoryError:2`. A boundary-aware grep pattern was tested locally: real compiler-style `error:` and `fatal error:` lines remain matched while `directoryError:2` is excluded. This is diagnostic noise only; Build #65 itself succeeded. A minimal workflow-only correction is the next low-risk change.
+* Scheduling: the latest recheck found no queued or active target run. No manual dispatch was used. The source commit tested by #65 is unchanged; current HEAD differs only by the root journal, which is outside path filters. No hardware validation was performed or claimed.
+* GitHub Issues remain disabled (HTTP 410); no issue creation or repository-setting changes were attempted.
