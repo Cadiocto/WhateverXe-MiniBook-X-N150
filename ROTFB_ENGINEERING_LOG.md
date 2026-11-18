@@ -126,3 +126,28 @@
 * Build scheduling: immediately before updating the branch ref, rechecked all 62 target runs and confirmed zero queued/in progress. Moved the branch once to `ee13395843657c844abdcb682db4575156db45ba`; the two source/test paths match the automatic workflow filter. No manual dispatch or concurrent build was issued. The next cycle must inspect the resulting run and its artifact; do not dispatch another build while it is queued or active.
 * Issues fallback: GitHub Issues remain disabled (HTTP 410); this append-only file remains the durable record. No settings were changed.
 * Hardware validation: NOT PERFORMED. No Chuwi hardware result is claimed.
+
+
+## ROTFB AUTONOMOUS ENGINEERING REPORT
+
+* Timestamp UTC: 2026-11-18T01:40:38Z
+* Branch: `gop-rotation-hook`
+* HEAD at inspection: `be4b8ab4be49affe9f7dbfba98d9c6b57edd461d`
+* Previous source commit tested by Build #63: `ee13395843657c844abdcb682db4575156db45ba`
+* Target workflow inventory: 64 runs (#1–#64); Build #64 is the only queued/in-progress target run at the final check.
+* Latest completed run: #63 / Run ID `44209198579` / commit `ee13395843657c844abdcb682db4575156db45ba` — FAILURE.
+  * Job ID: `134482907109`; full decoded job log retrieved.
+  * Artifact ID: `14384543969`; 287,663 bytes; SHA-256 `9991bcb0be4ee74e3530ebcf0e6c69ee1161737f241a404dcc1a3927c58de755`.
+  * Geometry/clipping model test step: PASS.
+  * OpenIndiana VM started and checked out pinned upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+  * `patch-apply.log` confirms 0001–0006 applied. The first failing operation was `git apply --check 0007-gfxp-bitmap-bounds-hardening.patch`, which returned `error: patch failed: usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c:442` / `patch does not apply`.
+  * No compiler or linker stage was reached. The VM step exited with code 1.
+* Root-cause status: the first CI failure is confirmed as patch-application failure in 0007 at the `gfxp_bitmap.c` hunk starting at line 442. The exact source/context discrepancy is not yet proven. A text-level reconstruction using the pinned raw upstream file plus patches 0002, 0005, and 0006 found exact old-context matches for all 17 hunks in 0007 at their declared positions; an isolated local `git apply --check` fixture for the failing display hunk also passed. This does not reproduce the OpenIndiana VM's failure, so no speculative 0007 edit was made.
+* Additional patch audit: all eight patches were inspected in lexical order; all end with a newline. Patch 0007 has 17 hunks with internally consistent declared counts. A separate non-blocking formatting defect remains in 0004: the i86xpv Makefile hunk declares 7/7 lines but contains 9/9 lines. Local Git accepts the current hunk while ignoring its final two context lines; changing the header to 9/9 passes the isolated fixture. This was not changed while the primary 0007 failure remains unresolved and the diagnostic build is active.
+* Tests and workflow inspected: `.github/workflows/build-illumos.yml`, `illumo_rotfb/tests/rotfb_model_test.py`, `rotfb.h`, `rotfb_boot.c`, `rotfb_runtime.c`, and patches 0001–0008. The workflow remains pinned to the required upstream commit, retains the non-cancelling `rotfb-single-build` concurrency group, and its path filters still exclude this root-level journal.
+* Local checks: geometry/clipping model functions PASS; Python syntax compilation PASS; isolated 0007 display-hunk fixture `git apply --check` PASS; pre-0007 diagnostic shell snippet `sh -n` PASS; workflow static checks confirmed unchanged path filters/concurrency and no trailing whitespace. A full local upstream checkout and the OpenIndiana-packaged Git executable are unavailable here because outbound DNS to GitHub is blocked.
+* Diagnostic workflow change: commit `be4b8ab4be49affe9f7dbfba98d9c6b57edd461d` modifies only `.github/workflows/build-illumos.yml`. Immediately before attempting 0007 it now captures the OpenIndiana Git version, checksum, exact pre-0007 `gfxp_bitmap.c`, relevant context lines, and the exact 0007 patch into the diagnostic artifact. This is intended to resolve the mismatch between the CI result and the local context reconstruction.
+* Build scheduling: before the workflow commit, all 63 existing target runs were completed and zero were queued/in progress. The workflow commit triggered exactly one new target run: #64 / Run `44218726339` / HEAD `be4b8ab4be49affe9f7dbfba98d9c6b57edd461d`. It is currently IN_PROGRESS. No manual dispatch or second build was issued. This report is journal-only and does not match the workflow path filters.
+* Issues fallback: GitHub Issues remain disabled (HTTP 410); no issue creation was retried and no repository settings were changed.
+* Hardware validation: NOT PERFORMED. No physical Chuwi result is claimed.
+* Next action: after #64 completes, inspect its full job log and artifact, compare the captured pre-0007 file and Git version against the pinned-source reconstruction, then make only a proven minimal patch repair. Do not dispatch another build while #64 is active.
