@@ -1,0 +1,79 @@
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+index 9ce3fa6..86e7e76 100644
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -470,3 +470,3 @@ bitmap_cons_display(struct gfxp_fb_softc *softc, struct vis_consdisplay *da)
+ 	uint8_t *fbp, *sfbp;	/* fb + calculated offset */
+-	int i;
++	uint32_t i;
+ 
+@@ -497,4 +497,6 @@ bitmap_cons_display(struct gfxp_fb_softc *softc, struct vis_consdisplay *da)
+ 	for (i = 0; i < da->height; i++) {
+-		uint8_t *dest = sfbp + i * console->fb.pitch;
+-		uint8_t *src = da->data + i * size;
++		uint64_t row_offset = (uint64_t)i * console->fb.pitch;
++		uint64_t data_offset = (uint64_t)i * size;
++		uint8_t *dest = sfbp + row_offset;
++		uint8_t *src = da->data + data_offset;
+ 
+@@ -505,3 +507,3 @@ bitmap_cons_display(struct gfxp_fb_softc *softc, struct vis_consdisplay *da)
+ 			src = dest;
+-			dest = fbp + i * console->fb.pitch;
++			dest = fbp + row_offset;
+ 			if (dest != src)
+@@ -522,3 +524,4 @@ bitmap_cons_clear(struct gfxp_fb_softc *softc, struct vis_consclear *ca)
+ 	uint32_t data, *fb32, *sfb32;
+-	int i, j, pitch;
++	uint32_t i, j, pitch;
++	uint64_t row_offset;
+ 
+@@ -529,3 +532,3 @@ bitmap_cons_clear(struct gfxp_fb_softc *softc, struct vis_consclear *ca)
+ 	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
+-	    console->fb.bpp == 0 || pitch <= 0 ||
++	    console->fb.bpp == 0 || pitch == 0 ||
+ 	    console->fb.screen.x == 0 || console->fb.screen.y == 0 ||
+@@ -540,7 +543,8 @@ bitmap_cons_clear(struct gfxp_fb_softc *softc, struct vis_consclear *ca)
+ 		for (i = 0; i < console->fb.screen.y; i++) {
++			row_offset = (uint64_t)i * pitch;
+ 			if (softc->mode == KD_TEXT) {
+-				fb = console->fb.fb + i * pitch;
++				fb = console->fb.fb + row_offset;
+ 				(void) memset(fb, data, pitch);
+ 			}
+-			fb = console->fb.shadow_fb + i * pitch;
++			fb = console->fb.shadow_fb + row_offset;
+ 			(void) memset(fb, data, pitch);
+@@ -553,4 +557,5 @@ bitmap_cons_clear(struct gfxp_fb_softc *softc, struct vis_consclear *ca)
+ 		for (i = 0; i < console->fb.screen.y; i++) {
+-			fb16 = (uint16_t *)(console->fb.fb + i * pitch);
+-			sfb16 = (uint16_t *)(console->fb.shadow_fb + i * pitch);
++			row_offset = (uint64_t)i * pitch;
++			fb16 = (uint16_t *)(console->fb.fb + row_offset);
++			sfb16 = (uint16_t *)(console->fb.shadow_fb + row_offset);
+ 			for (j = 0; j < console->fb.screen.x; j++) {
+@@ -567,4 +572,5 @@ bitmap_cons_clear(struct gfxp_fb_softc *softc, struct vis_consclear *ca)
+ 		for (i = 0; i < console->fb.screen.y; i++) {
+-			fb = console->fb.fb + i * pitch;
+-			sfb = console->fb.shadow_fb + i * pitch;
++			row_offset = (uint64_t)i * pitch;
++			fb = console->fb.fb + row_offset;
++			sfb = console->fb.shadow_fb + row_offset;
+ 			for (j = 0; j < console->fb.screen.x * 3; j += 3) {
+@@ -585,4 +591,5 @@ bitmap_cons_clear(struct gfxp_fb_softc *softc, struct vis_consclear *ca)
+ 		for (i = 0; i < console->fb.screen.y; i++) {
+-			fb32 = (uint32_t *)(console->fb.fb + i * pitch);
+-			sfb32 = (uint32_t *)(console->fb.shadow_fb + i * pitch);
++			row_offset = (uint64_t)i * pitch;
++			fb32 = (uint32_t *)(console->fb.fb + row_offset);
++			sfb32 = (uint32_t *)(console->fb.shadow_fb + row_offset);
+ 			for (j = 0; j < console->fb.screen.x; j++) {
+@@ -610,3 +617,3 @@ bitmap_display_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
+ 	uint8_t *fb8, *sfb8;
+-	int i, j, bpp, pitch;
++	uint32_t i, j, bpp, pitch;
+ 
+@@ -618,3 +625,3 @@ bitmap_display_cursor(struct gfxp_fb_softc *softc, struct vis_conscursor *ca)
+ 	if (console->fb.fb == NULL || console->fb.shadow_fb == NULL ||
+-	    bpp <= 0 || pitch <= 0 || console->fb.screen.x == 0 ||
++	    bpp == 0 || pitch == 0 || console->fb.screen.x == 0 ||
+ 	    console->fb.screen.y == 0 || ca->width == 0 || ca->height == 0 ||

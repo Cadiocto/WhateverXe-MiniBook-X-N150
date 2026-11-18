@@ -86,6 +86,22 @@ def test_clipping_boundaries_and_overflow_inputs():
 
 
 
+
+def test_wide_framebuffer_row_offsets():
+    # The row index and pitch are uint32_t in gfxp_bitmap. Their product
+    # must be evaluated in 64 bits before pointer arithmetic.
+    row = 0xFFFF
+    pitch = 0x20000
+    wide_offset = row * pitch
+    assert wide_offset == 8_589_803_520
+    assert wide_offset > UINT32_MAX
+    assert (wide_offset & UINT32_MAX) != wide_offset
+
+    # The fixed ROTFB logical surface remains within its exact allocation.
+    last_row = (LOGICAL_HEIGHT - 1) * LOGICAL_PITCH
+    assert last_row + LOGICAL_PITCH == LOGICAL_HEIGHT * LOGICAL_PITCH
+
+
 def _assert_patch_hunks_well_formed(patch):
     lines = patch.read_text().splitlines()
     index = 0
@@ -150,6 +166,7 @@ def test_patch_contracts():
     patch4 = (root / "patches" / "0004-Makefile-files.patch").read_text()
     patch6 = (root / "patches" / "0006-rotfb-console-contract-and-copy-safety.patch").read_text()
     patch7 = (root / "patches" / "0007-gfxp-bitmap-bounds-hardening.patch").read_text()
+    patch9 = (root / "patches" / "0009-gfxp-bitmap-wide-row-offsets.patch").read_text()
 
     for patch in sorted((root / "patches").glob("000*.patch")):
         assert patch.read_text().endswith("\n"), f"{patch.name} lacks final newline"
@@ -164,11 +181,14 @@ def test_patch_contracts():
     assert "@@ -677,8 +721,8 @@" in patch6
     assert "c_copy.s_col = fb_info.cursor.origin.x;" in patch6
     assert "c_copy.t_col = fb_info.cursor.origin.x + chars * boot_fb_font.vf_width;" in patch6
+    assert "uint64_t row_offset = (uint64_t)i * console->fb.pitch;" in patch9
+    assert "uint32_t i, j, pitch;" in patch9
 
 if __name__ == "__main__":
     test_corners()
     test_mapping_is_bijective()
     test_last_pixel_offsets()
     test_clipping_boundaries_and_overflow_inputs()
+    test_wide_framebuffer_row_offsets()
     test_patch_contracts()
     print("ROTFB model tests: PASS")
