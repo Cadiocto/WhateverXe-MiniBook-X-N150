@@ -402,7 +402,7 @@ jobs:
             find "$LOGDIR" -type f ! -name 'runner-error-index.txt' -print0 |
             while IFS= read -r -d '' f; do
               if grep -Iq . "$f"; then
-                matches=$(grep -n -i -B 5 -A 10 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|ld:[[:space:]]+fatal:|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|(^|[^[:alnum:]_])(cannot|failed|killed)([^[:alnum:]_]|$)|out of memory|panic(:|\[)|segmentation fault|ssh exited' "$f" 2>/dev/null)
+                matches=$(grep -n -i -B 5 -A 10 -E '(^|[[:space:]])(fatal[[:space:]]+)?error:|ld:[[:space:]]+fatal:|undefined symbol|syntax error|dmake:.*failed|don.t know how to make|(^|[^[:alnum:]_])(failed|killed)([^[:alnum:]_]|$)|(^|[^[:alnum:]_])cannot[[:space:]]+(open|find|read|write|create|remove|unlink|rename|access|load|resolve|locate|allocate|map|execute|compile|link|install|build|stat|mount|connect|bind|start|stop|be[[:space:]]+(opened|found|read|written|created|removed|loaded|resolved|located|allocated|mapped|executed|compiled|linked|installed|built|mounted|connected|bound|started|stopped))([^[:alnum:]_]|$)|out of memory|panic(:|\[)|segmentation fault|ssh exited' "$f" 2>/dev/null)
                 if [ -n "$matches" ]; then
                   printf '\n===== %s =====\n%s\n' "$f" "$matches"
                 fi
