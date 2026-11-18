@@ -383,3 +383,41 @@
 * Shadow framebuffer architecture and pinned upstream are unchanged.
 * Hardware validation: NOT PERFORMED. No physical Chuwi result is claimed.
 * Next action: wait for Build #68; when complete, retrieve its full job log and artifact, inspect the first failure if any, and verify DIAG-001/DIAG-002 behavior. No concurrent build is to be dispatched.
+
+
+## ROTFB POST-BUILD #68 AUDIT
+
+* Timestamp UTC: 2026-11-18T08:34:07.792Z
+* Branch: `gop-rotation-hook`
+* Branch HEAD before journal append: `d4e1c677b0c797c1f32d543add05759a6337feb2` (root-level journal-only commit).
+* Target workflow inventory: 68 runs for `.github/workflows/build-illumos.yml`, all on `gop-rotation-hook`: 5 successful, 63 failed, 0 queued, 0 in progress. The repository-wide Actions API returned 97 runs across all workflows; unrelated workflow paths were excluded.
+* Build #68 / Run ID `44256656761` / tested commit `7126f359baa378e9ef76049c081bb806fac19f20`: **SUCCESS**. Job ID `134639857702`; completed at `2026-11-18T08:31:21Z`.
+  * Full decoded job log retrieved: 4,948,226 bytes / 17,135 lines.
+  * Artifact ID `14410871820` retrieved and downloaded: 7,612,780-byte ZIP; SHA-256 `87c68e72159c035c73271730c3a06a447e5d1a555f4f7bdbcd87c994ad9e77d0`.
+  * Artifact contains 36 files / approximately 364 MB uncompressed. `build-metadata.txt` confirms pinned upstream `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+  * `patch-apply.log` confirms all nine patches, 0001–0009, passed `git apply --check` and applied in lexical order. OpenIndiana VM `git diff --check` passed.
+  * ROTFB geometry/clipping model-test step: PASS. `nightly-exit-code.txt=0`; `final-build-exit-code.txt=0`.
+  * Compile evidence: 3 command records for each of `rotfb_boot.o`, `rotfb_runtime.o`, `gfxp_bitmap.o`, and `gfxp_fb.o`, for both i86pc and i86xpv. Link evidence: 2 `unix.o` link commands and 2 `gfx_private` link commands for each ROTFB/runtime/framebuffer object. Workflow evidence gate: PASS.
+  * No compiler or linker failure was found in the completed build. Build #68 has no build root cause; it completed successfully.
+* No manual dispatch, rerun, cancellation, or other build-state operation was issued. All target runs are complete at this observation; no source/workflow modification had yet been made.
+
+### DIAG-002 confirmed against Build #68
+
+* Build #68's `runner-error-index.txt` is 3,141,306 bytes / 4,809 lines even though the build succeeded. The line-405 runner-side expression still contains unbounded alternatives `cannot|failed|killed|panic`.
+* The artifact contains false positives from ordinary source/build names: `__failed_count.o` (66 occurrences), `DES_FAILED.3ext` (4), `tst.exitkilled.ksh` (8), `libvarpd_panic.o` (66), and `/os/panic.c` (18). Aggregate token counts in the index: `failed` 88, `cannot` 2, `killed` 8, and `panic` 768.
+* Reproduced the false-positive behavior against the downloaded Build #68 artifact. A candidate one-line expression with POSIX token boundaries for `cannot|failed|killed` and a specific panic marker `panic(:|\\[)` reduced a full simulated scan of the same artifact from 3,141,306 bytes to 5,585 bytes / 36 lines. It retains representative true-positive samples: compiler `error:`, `ld: fatal:`, `cannot open`, standalone `failed`, standalone `killed`, `panic:`, and `panic[cpu0]`; it excludes the filename/path samples above. Two low-volume `cannot set property` comment matches remain; they are harmless and do not recreate the multi-megabyte index.
+* The exact candidate shell assignment passes `bash -n`; a controlled sample fixture reports 6 expected matches and 0 of the known false-positive filename matches. The Build #68 artifact provides a second independent confirmation of DIAG-002. This is diagnostic-index noise, not a build failure.
+* Minimal repair scope is one expression at workflow line 405 only. No source, patch, upstream pin, path filter, permissions, or concurrency change is required.
+
+### Patch, test, and workflow audit
+
+* Re-fetched and inspected all nine patches in lexical order. Current hunk counts: 0001=7, 0002=8, 0003=1, 0004=4, 0005=12, 0006=10, 0007=17, 0008=1, 0009=11; **71 total**. A local unified-diff parser confirmed all declared old/new hunk counts match the actual bodies and all nine files end with a newline.
+* Re-inspected `rotfb_model_test.py`, `rotfb.h`, `rotfb_boot.c`, and `rotfb_runtime.c`. The clockwise 1200x1920 physical / 1920x1200 logical shadow-framebuffer design and boot/runtime lifecycle remain unchanged. No additional confirmed source defect was found.
+* Workflow path filters remain restricted to `gop-rotation-hook`, `illumo_rotfb/**`, and `.github/workflows/build-illumos.yml`; concurrency remains `rotfb-single-build` with `cancel-in-progress: false`. The root journal is outside the workflow path filters.
+
+### Next action and limitations
+
+* All 68 target runs were complete at the pre-journal check. The next operation may be the single minimal DIAG-002 workflow update, but only after another fresh branch/run check confirms no queued or active target build. The workflow update itself should trigger at most one automatic validation run; do not manually dispatch a second build. After the new run appears, stop and let the next cycle inspect it.
+* Local patch structure and diagnostic-regex checks passed. A separate full local upstream checkout/apply remains blocked: `git ls-remote https://github.com/illumos/illumos-gate.git 098e95820891f8a83fae679daece7fcf58b7b3a4` failed with `Could not resolve host: github.com`. No local full-upstream build is claimed; Build #68's clean OpenIndiana VM run is the authoritative apply/compile/link evidence.
+* GitHub Issues remain disabled (HTTP 410); no issue creation was attempted and no repository settings were changed.
+* Hardware validation: **NOT PERFORMED**. No physical Chuwi result is claimed.
