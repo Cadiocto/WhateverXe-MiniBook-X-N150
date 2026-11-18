@@ -163,6 +163,14 @@ jobs:
             for p in "$ROTFB"/patches/*.patch; do
               [ -f "$p" ] || continue
               echo "CHECK $(basename "$p")" | tee -a "$PATCH_APPLY_LOG"
+              if [ "$(basename "$p")" = "0007-gfxp-bitmap-bounds-hardening.patch" ]; then
+                TARGET_BITMAP=usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+                git --version > "$LOGDIR/openindiana-git-version.txt"
+                cksum "$TARGET_BITMAP" > "$LOGDIR/gfxp_bitmap-pre-0007.cksum"
+                cp "$TARGET_BITMAP" "$LOGDIR/gfxp_bitmap-pre-0007.c"
+                sed -n '430,475p' "$TARGET_BITMAP" > "$LOGDIR/gfxp_bitmap-pre-0007-context.txt"
+                cp "$p" "$LOGDIR/0007-gfxp-bitmap-bounds-hardening.patch"
+              fi
               git apply --check "$p"
               git apply "$p"
               echo "APPLIED $(basename "$p")" | tee -a "$PATCH_APPLY_LOG"
