@@ -1127,3 +1127,68 @@ The next source/workflow commit adds patch 0012 and a C test for the existing al
 - Command outcome: pre-fix patch with collapsed flush-call context failed at `gfxp_bitmap.c:379`; corrected 0012 patch passed `git apply --check`, applied successfully, and the resulting file contained `rotfb_copy_rows()`. Output: `SYNTHETIC_FLUSH_CONTEXT_REGRESSION_PASS`.
 - This validates the specific context correction only. It is a synthetic hunk fixture, not the full pinned-upstream patch-series test; Build #83's OpenIndiana VM remains the authoritative 12-patch validation.
 - No source/workflow files changed. The 11-versus-12 patch-count finalizer defect recorded above remains unresolved until Build #83 completes. No nightly, final build or linker result is claimed for source `a9312ec` yet.
+
+
+## ROTFB ENGINEERING — Build #83 finalizer diagnosis, Build #84 harness regression, Build #85 validation
+
+* Timestamp UTC: 2026-11-19T02:19:19.581Z
+* Branch: `gop-rotation-hook`
+* Pinned upstream: `098e95820891f8a83fae679daece7fcf58b7b3a4`
+* HEAD before journal entry: `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`
+* Source revisions and commits:
+  * Build #83 source: `a9312ec431ef8f15e356f5bf88390543f2fe0b76`
+  * Build #84 source: `24471962a3116d2042b4cc0d59732d964222e14d`
+  * Corrected test source: `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`
+
+### Build #83 — run 44434077768 / job 135258410111
+
+* Result: workflow FAILURE; source patch series and nightly did complete.
+* Artifact: `14490329910`; SHA256 `14f1a0a6198ac40eec57ceb0bcfcb92a5698e513e5c2230bb6e4102e5488178e` (downloaded and independently hashed).
+* Patch application: 12/12 in lexical order, all `APPLIED`; patch-series regression ended `PATCH_SERIES_STATUS=PASS`.
+* Nightly exit code: `0`; file bytes `30 0a`.
+* Linker watcher exit code: `0`; file bytes `30 0a`.
+* Final build/finalizer exit code: `1`; file bytes `31 0a`.
+* Six linker targets: all independently reported PASS, exit status 0, exactly one command/status/log tuple each, matching PID, expected working directory/output, ROTFB object argument present, fresh nonzero ELF output with valid ELF magic:
+  * dboot i86pc — PASS; PID 91188; `rotfb_boot.o` present.
+  * dboot i86xpv — PASS; PID 91666; `rotfb_boot.o` present.
+  * unix.o i86pc — PASS; PID 90268; `rotfb_boot.o` present.
+  * unix.o i86xpv — PASS; PID 90841; `rotfb_boot.o` present.
+  * gfx_private i86pc — PASS; PID 100634; `rotfb_runtime.o` present.
+  * gfx_private i86xpv — PASS; PID 100698; `rotfb_runtime.o` present.
+* Each linker .log file exists but is zero bytes; the captured linker invocations completed silently. The .cmd and .status files are the primary per-process evidence, paired by PID.
+* Compile command evidence recorded three matching commands for each of the eight ROTFB/gfxp compile selectors (boot, runtime, gfxp_bitmap, gfxp_fb × i86pc/i86xpv).
+* Confirmed root cause: `rotfb_link_evidence.sh` still expected 11 patches and an order ending at 0011. The actual patch log correctly contained 12 and ended at `0012-gfxp-bitmap-copy-helper.patch`. The finalizer wrote `patch_order_match=NO`, `overall_status=FAIL` despite six PASS links and nightly exit 0. This is an evidence/finalizer defect, not a compiler/linker failure.
+* Build #83 does NOT satisfy A because the workflow/finalizer and final-build exit code failed.
+
+### Build #84 — run 44443244672 / job 135289032633
+
+* Result: workflow FAILURE before OpenIndiana VM.
+* Artifact: `14492665486`; SHA256 `b0043ae7d6a4ee68699216395ae90ef08a71b912e7a658f12243810f869b1ed9` (downloaded and independently hashed; 751-byte runner-only diagnostic archive).
+* Geometry/model test: PASS.
+* Linker evidence regression test: FAIL at line 188 with `Syntax error: ")" unexpected (expecting "fi")`, exit code 2.
+* VIS C test, bitmap-copy C test, OpenIndiana VM: SKIPPED.
+* Nightly/final build and linker results: NOT RUN / UNAVAILABLE.
+* Root cause: the test file committed in `24471962a3116d2042b4cc0d59732d964222e14d` was malformed by a replacement-string expansion; the fetched file had 1344 lines and duplicated/truncated shell blocks. This was an error in the autonomous edit, not an upstream defect. No attempt was made to hide or reinterpret this failure.
+
+### Corrective source commit for Build #85
+
+* Commit: `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`.
+* Changed path only: `illumo_rotfb/tests/rotfb_link_evidence_test.sh`.
+* Rebuilt the test from the clean 220-line parent version, then applied bounded replacements. Current file is 244 lines.
+* New test reads `EXPECTED_ORDER` from the production helper, compares it against the sorted actual `illumo_rotfb/patches/*.patch` directory, and requires exactly 12 names in lexical order. The fixture now emits APPLIED records from that same checked order rather than a stale literal list.
+* Added a negative `shortpatch` scenario: truncate the 12-entry evidence to 11 and require the real finalizer to return failure with `patches_applied=11`, `patch_order_match=NO`, and `overall_status=FAIL`.
+* Static content validation before commit: 244 lines; helper expected count 12; actual patch directory count 12; exact order equality; dynamic fixture, drift guard and short-patch negative case present. A local shell execution was not available; actual shell execution is pending Build #85.
+
+### Build #85 — active
+
+* Run: `44443394283`; job: `135289541389`; source SHA: `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`.
+* At journal time: run IN_PROGRESS; geometry/model test PASS; linker evidence regression step IN_PROGRESS; later C tests and OpenIndiana VM not yet completed.
+* No nightly/final/link/artifact claims are made for #85.
+
+### Readiness and next step
+
+* A BUILD VERIFIED remains YES only for Build #80 source `8eb2a6fffc02a638c18a313469cd4aed78052b1f`.
+* Build #83 has six confirmed successful link outputs but failed finalizer; Build #84 failed in host shell syntax; Build #85 must independently pass the corrected tests and full OpenIndiana acceptance.
+* B CODE/TEST VERIFIED remains PARTIAL. Allocation failure, rollback, initial-sync equivalence, callback gate/drain and full teardown tests remain.
+* C DEVICE VERIFIED remains NOT VERIFIED. No physical Chuwi operation was performed.
+* Next action: observe Build #85, fetch full job log/artifact on completion, then audit all 12 patches, nightly/final exit bytes and six link tuples before any further source change.
