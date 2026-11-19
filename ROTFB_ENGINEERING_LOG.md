@@ -1799,3 +1799,101 @@ The harness supplies host stubs for DDI services, property removal, mutex destru
 * Add a Python TSV parser that preserves empty fields, validates the exact four-column schema, requires one record per independent workflow, rejects missing, duplicate, blank, damaged, unexpected, or invalid records, and fails closed.
 * The parser emits accepted=true only for status=completed and conclusion=success. The acceptance summary consumes run_id, status, conclusion, and accepted independently. Regression tests cover the exact previous-run records, completed failure, in-progress, missing workflow, blank/damaged rows, duplicate records, and invalid status/conclusion combinations.
 * No production source, framebuffer architecture, or patches 0001–0013 are changed. The next control-build result will be recorded separately.
+
+
+## 2026-11-19 — FINAL CONTROL BUILD AUDIT — FULL BUILD VERIFIED
+
+### Run identity and commit consistency
+
+* Repository: `Cadiocto/WhateverXe-MiniBook-X-N150`; branch: `gop-rotation-hook`.
+* Tested source/CI commit: `8e2a6e8f246c43c151793046934bcb848371768d`, message: `ROTFB CI: fix independent workflow acceptance parsing`, parent: `6dbd033cfe96d9ad613743a8c75dfdb5221c8ac9`. GitHub branch HEAD at audit time was exactly this SHA.
+* Full OpenIndiana workflow: Run #92, ID `44622365817`, event `push`, attempt 1; created `2026-11-19T21:47:57Z`, completed `2026-11-19T23:07:21Z`, conclusion `success`. URL: https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365817
+* Callback-only workflow: Run #18, ID `44622365674`, attempt 1; created `2026-11-19T21:47:57Z`, job completed `2026-11-19T21:49:02Z`, conclusion `success`. URL: https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365674
+* DDI integration workflow: Run #9, ID `44622365794`, attempt 1; created `2026-11-19T21:47:57Z`, job completed `2026-11-19T21:48:37Z`, conclusion `success`. URL: https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365794
+* All three run records independently report the exact same `head_sha=8e2a6e8f246c43c151793046934bcb848371768d`, branch `gop-rotation-hook`, and event `push`. No mixed-commit evidence was used.
+
+### Jobs, steps and acceptance summary
+
+* Full-build job `build-illumos`, job ID `135907098081`, ran `2026-11-19T21:47:59Z`–`23:07:20Z`, conclusion `success`. GitHub's job API reports every returned step as `completed/success`: setup, checkout, geometry/model, linker-evidence regression, VIS cursor C, bitmap-copy C, runtime lifecycle C, independent-workflow parser tests, diagnostic staging, patched production callback harness, OpenIndiana VM, diagnostic finalization, outcome capture, same-commit workflow resolution, all three artifact uploads, acceptance summary, checkout cleanup and job completion. No returned required step was skipped or failed.
+* Callback-only job `135907098168` and DDI job `135907097963` both report `completed/success`; all returned steps in each job are `completed/success`.
+* `step-outcomes.tsv` records `success` for host model, host linker evidence, VIS cursor, bitmap copy, runtime, independent-workflow parser, in-build callback harness and OpenIndiana VM. `failure-context.txt` says `no failed or skipped runner steps recorded`. Runner/compiler error indexes contain no compiler/build errors.
+* The `Publish full-build acceptance summary` step (#18) completed `success`. Its logged environment contains success for every host, callback, parser, VM and artifact-upload outcome. The logged summary writer emits PASS rows for patch application, host regression, independent workflow evidence, callback harness, DDI integration, OpenIndiana VM, nightly/final build, linker verification and artifact upload, and writes `FULL_BUILD_ACCEPTANCE=PASS` only after all gate predicates pass. The rendered GitHub Summary body is not separately exposed by the read connector; its generated contents were reconstructed from the exact logged writer and observed environment/outcomes. No summary/gate failure is present.
+
+### Patch series and host regressions
+
+* Pinned upstream: `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+* OpenIndiana `patch-apply.log` contains CHECK then APPLIED for all 13 patches, in order:
+  1. `0001-framebuffer-metadata.patch`
+  2. `0002-boot-fb-rotation.patch`
+  3. `0003-gfxp-bitmap-tem-rotation.patch`
+  4. `0004-Makefile-files.patch`
+  5. `0005-rotfb-lifecycle-hardening.patch`
+  6. `0006-rotfb-console-contract-and-copy-safety.patch`
+  7. `0007-gfxp-bitmap-bounds-hardening.patch`
+  8. `0008-gfxp-detach-failure-safety.patch`
+  9. `0009-gfxp-bitmap-wide-row-offsets.patch`
+  10. `0010-gfxp-bitmap-vis-safety.patch`
+  11. `0011-gfxp-bitmap-cursor-state.patch`
+  12. `0012-gfxp-bitmap-copy-helper.patch`
+  13. `0013-vgatext-detach-failure-propagation.patch`
+* Patch-series regression reports `PATCH_COUNT=13`, exact upstream pin, `PATCH_PATH_ALLOWLIST=PASS`, `PATCH_SERIES_STATUS=PASS`. Full-build evidence independently records `patches_expected=13`, `patches_applied=13`, `patch_order_match=YES`.
+* Host regression artifact results: geometry/clipping model PASS (exit 0); linker evidence regression PASS (exit 0); VIS cursor C PASS (compile 0/test 0); bitmap-copy C PASS (compile 0/test 0); runtime lifecycle production C PASS (exit 0); independent-workflow parser PASS (9/9 tests, exit 0). Runtime log includes mapping/allocation rollback, 2,304,000-pixel CW synchronization, clipping/canaries, callback quiesce/drain, stale-callback rejection and fini/re-init teardown.
+* The in-build and independent callback harnesses apply/check all 13 patches with every recorded patch check/apply exit code 0; compiler and runtime exit codes are 0. Required scenarios A/B/C/D each report PASS with zero failures. The harness extracts and executes production bitmap callbacks `bitmap_polled_cursor`, `bitmap_cons_cursor`, `bitmap_display_cursor`, `bitmap_cons_copy` and production runtime functions `rotfb_runtime_flush_rect`, `rotfb_copy_rows`.
+* DDI artifact confirms the pinned upstream and 13 patches, extracts production entrypoints `gfxp_bm_detach`, `gfxp_fb_detach`, `vgatext_detach`, compiler/runtime exit 0, and PASS for detach-failure, detach-retry and normal-detach scenarios.
+
+### OpenIndiana VM, nightly and linker outputs
+
+* OpenIndiana VM action step #11: `completed/success`, `2026-11-19T21:48:45Z`–`23:07:09Z`. Environment evidence identifies OpenIndiana/illumos `SunOS openindiana 5.11 illumos-336772c3cc i86pc`.
+* Patch application succeeded; `git-diff-check.log` is empty; nightly exit code is `0`; final build exit code is `0`. The build's upstream-patched diffstat shows the expected seven upstream files changed by applying the patch series.
+* Before the freshness clock started at `2026-11-19T21:55:03Z`, all six target outputs were confirmed absent/removed. The linker evidence finalizer inspected the actual runner-side output files for nonzero size, mtime at/after build start, ELF magic `7f 45 4c 46`, exact target/command/status/log pairing, expected ROTFB object argument, linker exit 0 and absence of linker diagnostics. All six are PASS:
+
+| Linker target | Output mtime UTC | Size bytes | ELF | ROTFB object argument | Link exit |
+|---|---:|---:|---|---|---:|
+| `dboot.i86pc` | 22:04:53 | 77,508 | valid/fresh | `dboot/obj64/rotfb_boot.o` | 0 |
+| `unix.o.i86pc` | 22:04:45 | 19,013,320 | valid/fresh | `obj64/rotfb_boot.o` | 0 |
+| `gfx_private.i86pc` | 22:06:29 | 70,352 | valid/fresh | `obj64/rotfb_runtime.o` | 0 |
+| `dboot.i86xpv` | 22:05:05 | 65,104 | valid/fresh | `dboot/obj64/rotfb_boot.o` | 0 |
+| `unix.o.i86xpv` | 22:04:57 | 18,587,480 | valid/fresh | `obj64/rotfb_boot.o` | 0 |
+| `gfx_private.i86xpv` | 22:06:38 | 70,896 | valid/fresh | `obj64/rotfb_runtime.o` | 0 |
+
+* `linker-status.tsv` has exactly six records, each linker return code 0 and object argument `YES`. Each target has one command, one status and one log, no pair mismatches, no nonzero invocations and `linker_diagnostics=NONE`. `rotfb-build-evidence.txt` reports six `status=PASS` target sections, all eight expected ROTFB compile-command groups present (three commands each), `overall_status=PASS`, nightly 0 and final 0.
+* The actual ELF files were checked on the OpenIndiana runner by `illumo_rotfb/rotfb_link_evidence.sh`; the archived logs artifact preserves their paths, sizes, mtimes, ELF-magic verdicts, linker commands/statuses and object-argument evidence, but does not package the six ELF binaries themselves. Offline re-reading of their full binary payloads is therefore not available from the retained artifacts; the runner-side actual-file checks are the evidence for this criterion.
+
+### Independent workflow evidence and corrected parser
+
+* The archived `independent-workflows.tsv` contains exactly:
+  * `callback_only\t44622365674\tcompleted\tsuccess`
+  * `ddi_integration\t44622365794\tcompleted\tsuccess`
+* Both IDs resolve through GitHub to completed/success runs on the exact full-build SHA. The Python parser returns accepted=true only when `status=completed` and `conclusion=success`; the full-build regression log records all 9 tests PASS, including the original four-column Run 44605375271 reproduction, completed/failure, in_progress, missing, blank, damaged, duplicate, missing conclusion and non-completed-with-conclusion cases.
+* Previous Run `44605375271` on `6dbd033cfe96d9ad613743a8c75dfdb5221c8ac9` remains a historical overall FAILURE. Its exact defect was the summary's `awk ... {print $2}` extraction of run_id alone from four-column rows, leaving status/conclusion empty and rendering successful independent workflows SKIPPED. The new control run resolves both correctly; the old run has not been relabelled.
+
+### Downloaded artifacts and SHA-256
+
+All five GitHub artifact ZIPs were downloaded, extracted and inspected. SHA-256 below was recomputed from the downloaded ZIP bytes and matches the GitHub artifact digest. All were unexpired at audit time; GitHub reports retention through 2026-12-19.
+
+| Workflow / artifact | Artifact ID | Size bytes | Extracted entries | SHA-256 |
+|---|---:|---:|---:|---|
+| Full build logs — [download](https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365817/artifacts/14583955829) | 14583955829 | 7,098,948 | 68 | `f566221a0a69e077a39bfa65411a7a3877212680a0d76b6329afd16ef9f8659b` |
+| Full build diagnostics — [download](https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365817/artifacts/14583356147) | 14583356147 | 6,798 | 13 | `8d9c0df5acb1d64449087c4d63d58452f2c470ab0c3584de84da5400805dbd39` |
+| Full build test results — [download](https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365817/artifacts/14583505870) | 14583505870 | 30,574 | 105 | `28403c170b3ac5fc00498622d991cb3286bd55a00e0119284a71480faf87c789` |
+| Callback-only evidence — [download](https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365674/artifacts/14577627034) | 14577627034 | 29,290 | 111 | `68830bb7fe1eb9c3b69dba3cc6ef79359e36d8a154ce0770101782b14adea1ed` |
+| DDI integration evidence — [download](https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44622365794/artifacts/14578360799) | 14578360799 | 12,421 | 64 | `1fce84d7fc868f0ac3a5cb6c7706daaee5a0e763120f3117d3993a886eb5a7b4` |
+
+* Full job log was retrieved (1,799,691 characters); callback job log (119,404 characters) and DDI job log (19,828 characters) were also retrieved. Artifact contents include the patch logs, test logs/results, runner diagnostics, `independent-workflows.tsv`, `rotfb-build-evidence.txt`, `linker-status.tsv`, nightly/final exit codes, per-target linker command/status/log files and callback/DDI harness evidence.
+
+### Source, patch and cleanliness audit
+
+* Comparing base `6dbd033cfe96d9ad613743a8c75dfdb5221c8ac9` to tested commit `8e2a6e8f246c43c151793046934bcb848371768d` shows exactly four changed paths: added `.github/scripts/independent_workflows.py`; added `.github/tests/test_independent_workflows.py`; modified `.github/workflows/build-illumos.yml`; append-only modification of this engineering journal.
+* No production ROTFB source/header, framebuffer ABI, architecture, or patch file `0001–0013` changed in the tested commit. The source/patch series was compiled and linked against pinned upstream in the OpenIndiana VM. The remote branch HEAD matched the tested commit at audit time; the commit comparison reports one commit ahead of the prior baseline and no other changed paths.
+* The journal-only final-audit commit does not match the full-build workflow's push path filters (which cover the patch/source/link-evidence inputs and the full-build workflow, not this journal), so this audit record does not request or require another build.
+
+### Residual limitations and physical-device boundary
+
+* The callback artifact contains an explicitly exploratory, non-gating direct relocation case that calls `VIS_DISPLAY_CURSOR` at A and then directly at B without `VIS_HIDE_CURSOR`; it records `STALE_OLD_CURSOR_REMAINS`. The required TEM lifecycle tested by the harness is `DISPLAY A → HIDE A → DISPLAY B` and passes. Do not silently discard this observation: verify the actual TEM callback sequence on hardware before treating cursor relocation as device-verified. No production change was made based on this exploratory case.
+* DDI detach integration executes extracted production entrypoints with host DDI stubs; it is not a live in-kernel illumos attach/detach stress test. The OpenIndiana VM confirms compilation/linking, not boot-time or physical-device behavior.
+* No Chuwi MiniBook X N150 test was performed. No kernel was installed; EFI, BIOS, bootloader, boot entries and firmware were not changed. `DEVICE VERIFIED` remains NOT VERIFIED.
+
+### Final disposition
+
+* All defined full-build acceptance criteria for commit `8e2a6e8f246c43c151793046934bcb848371768d` are PASS. The full build is `FULL BUILD VERIFIED`; project disposition is `READY FOR PHYSICAL DEVICE TEST`.
+* Freeze: no automatic fixes, refactors, reruns or new full builds are authorized by this audit. Resume only for a new production change, proven defect/regression, relevant upstream change, or explicit user request.
