@@ -284,83 +284,51 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	uint32_t base = logical_pixel(fb, 16, 32);
 
 	test_display_cursor_primitive(softc);
+
+	/* Required TEM lifecycle: DISPLAY A, HIDE A, then DISPLAY B. */
 	ca = make_cursor(VIS_DISPLAY_CURSOR, 16, 32, 8, 16);
 	flush_count = 0;
 	bitmap_polled_cursor(arg, &ca);
-	check(softc->console->fb.cursor.visible == B_TRUE,
-	    "VIS_DISPLAY_CURSOR sets cursor.visible");
-	check(softc->console->fb.cursor.pos.x == 2 &&
-	    softc->console->fb.cursor.pos.y == 2,
-	    "VIS_DISPLAY_CURSOR updates character position");
-	check(softc->console->fb.cursor.origin.x == 16 &&
+	check(softc->console->fb.cursor.visible == B_TRUE &&
+	    softc->console->fb.cursor.pos.x == 2 &&
+	    softc->console->fb.cursor.pos.y == 2 &&
+	    softc->console->fb.cursor.origin.x == 16 &&
 	    softc->console->fb.cursor.origin.y == 32,
-	    "VIS_DISPLAY_CURSOR updates pixel origin");
+	    "VIS_DISPLAY_CURSOR A updates visible state and coordinates");
 	check_cursor_rectangle(fb, 16, 32, 8, 16, base ^ CURSOR_MASK,
 	    base ^ CURSOR_MASK,
-	    "VIS display callback changes every shadow cursor pixel",
-	    "VIS display callback flushes every cursor pixel physically");
+	    "TEM lifecycle DISPLAY A updates every shadow pixel",
+	    "TEM lifecycle DISPLAY A publishes every physical pixel");
 	check(flush_count == 1,
-	    "cursor callback invokes one production runtime flush");
-
-	ca = make_cursor(VIS_GET_CURSOR, 0, 0, 0, 0);
-	{
-		uint64_t shadow_before = buffer_checksum(fb->fb, LOGICAL_BYTES,
-		    NULL, 0);
-		uint64_t physical_before = buffer_checksum(physical_memory,
-		    PHYSICAL_BYTES, NULL, 0);
-		uint64_t shadow_after, physical_after;
-		uint32_t flushes_before = flush_count;
-
-		printf("VIS_GET_CURSOR_SHADOW_CHECKSUM_BEFORE=0x%016llx\n",
-		    (unsigned long long)shadow_before);
-		printf("VIS_GET_CURSOR_PHYSICAL_CHECKSUM_BEFORE=0x%016llx\n",
-		    (unsigned long long)physical_before);
-		bitmap_cons_cursor(softc, &ca);
-		shadow_after = buffer_checksum(fb->fb, LOGICAL_BYTES, NULL, 0);
-		physical_after = buffer_checksum(physical_memory, PHYSICAL_BYTES,
-		    NULL, 0);
-		printf("VIS_GET_CURSOR_SHADOW_CHECKSUM_AFTER=0x%016llx\n",
-		    (unsigned long long)shadow_after);
-		printf("VIS_GET_CURSOR_PHYSICAL_CHECKSUM_AFTER=0x%016llx\n",
-		    (unsigned long long)physical_after);
-		check(ca.col == 16 && ca.row == 32,
-		    "VIS_GET_CURSOR returns saved cursor origin");
-		check(shadow_after == shadow_before,
-		    "VIS_GET_CURSOR leaves the complete shadow surface unchanged");
-		check(physical_after == physical_before,
-		    "VIS_GET_CURSOR leaves the complete physical surface unchanged");
-		check(flush_count == flushes_before,
-		    "VIS_GET_CURSOR does not flush");
-	}
+	    "TEM lifecycle DISPLAY A invokes one production flush");
 
 	ca = make_cursor(VIS_HIDE_CURSOR, 16, 32, 8, 16);
 	flush_count = 0;
 	bitmap_polled_cursor(arg, &ca);
 	check(softc->console->fb.cursor.visible == B_FALSE,
-	    "VIS_HIDE_CURSOR clears cursor.visible");
+	    "TEM lifecycle HIDE A clears cursor.visible");
 	check_cursor_rectangle(fb, 16, 32, 8, 16, base, base,
-	    "VIS hide callback restores every shadow cursor pixel",
-	    "VIS hide callback restores every physical cursor pixel");
-	check(flush_count == 1, "VIS_HIDE_CURSOR flushes restored rectangle");
+	    "TEM lifecycle HIDE A restores every shadow pixel",
+	    "TEM lifecycle HIDE A restores every physical pixel");
+	check(flush_count == 1,
+	    "TEM lifecycle HIDE A invokes one production flush");
 
-	ca = make_cursor(VIS_DISPLAY_CURSOR, 16, 32, 8, 16);
-	bitmap_polled_cursor(arg, &ca);
-	check_cursor_rectangle(fb, 16, 32, 8, 16, base ^ CURSOR_MASK,
-	    base ^ CURSOR_MASK,
-	    "direct move setup displays the complete old shadow rectangle",
-	    "direct move setup publishes the complete old physical rectangle");
-
-	/* Direct visible relocation: DISPLAY A followed by DISPLAY B, no HIDE. */
 	ca = make_cursor(VIS_DISPLAY_CURSOR, 24, 48, 8, 16);
 	flush_count = 0;
 	bitmap_polled_cursor(arg, &ca);
+	check(softc->console->fb.cursor.visible == B_TRUE &&
+	    softc->console->fb.cursor.pos.x == 3 &&
+	    softc->console->fb.cursor.pos.y == 3 &&
+	    softc->console->fb.cursor.origin.x == 24 &&
+	    softc->console->fb.cursor.origin.y == 48,
+	    "TEM lifecycle DISPLAY B updates visible state and coordinates");
 	check_cursor_rectangle(fb, 16, 32, 8, 16, base, base,
-	    "direct visible move restores every pixel in old shadow rectangle",
-	    "direct visible move restores every pixel in old physical rectangle");
+	    "TEM lifecycle leaves all old shadow pixels restored at A",
+	    "TEM lifecycle leaves all old physical pixels restored at A");
 	check_cursor_rectangle(fb, 24, 48, 8, 16, base ^ CURSOR_MASK,
 	    base ^ CURSOR_MASK,
-	    "direct visible move updates every pixel in new shadow rectangle",
-	    "direct visible move publishes every pixel in new physical rectangle");
+	    "TEM lifecycle DISPLAY B updates every shadow pixel",
+	    "TEM lifecycle DISPLAY B publishes every physical pixel");
 	check(logical_pixel(fb, 15, 32) == BASE_PIXEL &&
 	    physical_pixel(15, 32) == BASE_PIXEL &&
 	    logical_pixel(fb, 24, 47) == BASE_PIXEL &&
@@ -369,22 +337,18 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	    physical_pixel(23, 48) == BASE_PIXEL &&
 	    logical_pixel(fb, 32, 48) == BASE_PIXEL &&
 	    physical_pixel(32, 48) == BASE_PIXEL,
-	    "direct visible move preserves neighboring pixels on both surfaces");
-	printf("CURSOR_MOVE_OLD_SHADOW_READBACK=0x%08x\n",
+	    "TEM lifecycle preserves neighboring pixels on both surfaces");
+	check(flush_count == 1,
+	    "TEM lifecycle DISPLAY B invokes exactly one production flush");
+	printf("TEM_CURSOR_A_SHADOW_AFTER_HIDE=0x%08x\n",
 	    logical_pixel(fb, 16, 32));
-	printf("CURSOR_MOVE_OLD_PHYSICAL_READBACK=0x%08x\n",
+	printf("TEM_CURSOR_A_PHYSICAL_AFTER_HIDE=0x%08x\n",
 	    physical_pixel(16, 32));
-	printf("CURSOR_MOVE_NEW_SHADOW_READBACK=0x%08x\n",
+	printf("TEM_CURSOR_B_SHADOW_READBACK=0x%08x\n",
 	    logical_pixel(fb, 24, 48));
-	printf("CURSOR_MOVE_NEW_PHYSICAL_READBACK=0x%08x\n",
+	printf("TEM_CURSOR_B_PHYSICAL_READBACK=0x%08x\n",
 	    physical_pixel(24, 48));
-	check(softc->console->fb.cursor.visible == B_TRUE &&
-	    softc->console->fb.cursor.pos.x == 3 &&
-	    softc->console->fb.cursor.pos.y == 3 &&
-	    softc->console->fb.cursor.origin.x == 24 &&
-	    softc->console->fb.cursor.origin.y == 48,
-	    "direct visible move updates production cursor state");
-	ca.action = VIS_HIDE_CURSOR;
+	ca = make_cursor(VIS_HIDE_CURSOR, 24, 48, 8, 16);
 	bitmap_polled_cursor(arg, &ca);
 
 	ca = make_cursor(VIS_DISPLAY_CURSOR, 1912, 1184, 8, 16);
@@ -428,6 +392,111 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	expect_invalid_cursor(softc, ca, "cursor crossing terminal edge is rejected");
 	ca = make_cursor(VIS_HIDE_CURSOR, 16, 32, 0, 16);
 	expect_invalid_cursor(softc, ca, "invalid hide leaves cursor state unchanged");
+}
+
+static void
+test_get_cursor_callback(struct gfxp_fb_softc *softc)
+{
+	struct vis_conscursor ca;
+	fb_info_t *fb = &softc->console->fb;
+	uint64_t shadow_before, shadow_after;
+	uint64_t physical_before, physical_after;
+	uint32_t flushes_before;
+
+	/* Establish a known visible B position independently of scenario A. */
+	ca = make_cursor(VIS_DISPLAY_CURSOR, 24, 48, 8, 16);
+	bitmap_polled_cursor((struct vis_polledio_arg *)softc, &ca);
+	ca = make_cursor(VIS_GET_CURSOR, 0, 0, 0, 0);
+	shadow_before = buffer_checksum(fb->fb, LOGICAL_BYTES, NULL, 0);
+	physical_before = buffer_checksum(physical_memory, PHYSICAL_BYTES,
+	    NULL, 0);
+	flushes_before = flush_count;
+	bitmap_cons_cursor(softc, &ca);
+	shadow_after = buffer_checksum(fb->fb, LOGICAL_BYTES, NULL, 0);
+	physical_after = buffer_checksum(physical_memory, PHYSICAL_BYTES,
+	    NULL, 0);
+	printf("VIS_GET_CURSOR_SHADOW_CHECKSUM_BEFORE=0x%016llx\n",
+	    (unsigned long long)shadow_before);
+	printf("VIS_GET_CURSOR_SHADOW_CHECKSUM_AFTER=0x%016llx\n",
+	    (unsigned long long)shadow_after);
+	printf("VIS_GET_CURSOR_PHYSICAL_CHECKSUM_BEFORE=0x%016llx\n",
+	    (unsigned long long)physical_before);
+	printf("VIS_GET_CURSOR_PHYSICAL_CHECKSUM_AFTER=0x%016llx\n",
+	    (unsigned long long)physical_after);
+	check(ca.col == 24 && ca.row == 48,
+	    "VIS_GET_CURSOR returns saved cursor B coordinates");
+	check(shadow_after == shadow_before,
+	    "VIS_GET_CURSOR leaves the complete shadow surface unchanged");
+	check(physical_after == physical_before,
+	    "VIS_GET_CURSOR leaves the complete physical surface unchanged");
+	check(flush_count == flushes_before,
+	    "VIS_GET_CURSOR does not flush");
+	ca = make_cursor(VIS_HIDE_CURSOR, 24, 48, 8, 16);
+	bitmap_polled_cursor((struct vis_polledio_arg *)softc, &ca);
+}
+
+static void
+test_exploratory_direct_display_relocation(struct gfxp_fb_softc *softc)
+{
+	struct vis_polledio_arg *arg = (struct vis_polledio_arg *)softc;
+	fb_info_t *fb = &softc->console->fb;
+	struct vis_conscursor ca;
+	uint32_t old_shadow, old_physical, new_shadow, new_physical;
+	uint32_t x, y;
+	int old_shadow_all = 1, old_physical_all = 1;
+	int new_shadow_all = 1, new_physical_all = 1;
+
+	ca = make_cursor(VIS_DISPLAY_CURSOR, 80, 80, 8, 16);
+	bitmap_polled_cursor(arg, &ca);
+	ca = make_cursor(VIS_DISPLAY_CURSOR, 88, 96, 8, 16);
+	bitmap_polled_cursor(arg, &ca);
+	for (y = 0; y < 16; y++) {
+		for (x = 0; x < 8; x++) {
+			if (logical_pixel(fb, 80 + x, 80 + y) !=
+			    (BASE_PIXEL ^ CURSOR_MASK))
+				old_shadow_all = 0;
+			if (physical_pixel(80 + x, 80 + y) !=
+			    (BASE_PIXEL ^ CURSOR_MASK))
+				old_physical_all = 0;
+			if (logical_pixel(fb, 88 + x, 96 + y) !=
+			    (BASE_PIXEL ^ CURSOR_MASK))
+				new_shadow_all = 0;
+			if (physical_pixel(88 + x, 96 + y) !=
+			    (BASE_PIXEL ^ CURSOR_MASK))
+				new_physical_all = 0;
+		}
+	}
+	old_shadow = logical_pixel(fb, 80, 80);
+	old_physical = physical_pixel(80, 80);
+	new_shadow = logical_pixel(fb, 88, 96);
+	new_physical = physical_pixel(88, 96);
+	printf("EXPLORATORY_DISPLAY_A_TO_B_OLD_SHADOW=0x%08x\n",
+	    old_shadow);
+	printf("EXPLORATORY_DISPLAY_A_TO_B_OLD_PHYSICAL=0x%08x\n",
+	    old_physical);
+	printf("EXPLORATORY_DISPLAY_A_TO_B_NEW_SHADOW=0x%08x\n",
+	    new_shadow);
+	printf("EXPLORATORY_DISPLAY_A_TO_B_NEW_PHYSICAL=0x%08x\n",
+	    new_physical);
+	printf("EXPLORATORY_DISPLAY_A_TO_B_RECTANGLES=old_shadow:%s,old_physical:%s,new_shadow:%s,new_physical:%s\n",
+	    old_shadow_all ? "CURSOR" : "OTHER",
+	    old_physical_all ? "CURSOR" : "OTHER",
+	    new_shadow_all ? "CURSOR" : "OTHER",
+	    new_physical_all ? "CURSOR" : "OTHER");
+	if (old_shadow_all && old_physical_all &&
+	    new_shadow_all && new_physical_all) {
+		puts("EXPLORATORY_DISPLAY_A_TO_B_RESULT=STALE_OLD_CURSOR_REMAINS");
+	} else {
+		puts("EXPLORATORY_DISPLAY_A_TO_B_RESULT=OTHER_OBSERVED_BEHAVIOR");
+	}
+	/* Clear the exploratory residue only after recording its readback. */
+	ca = make_cursor(VIS_HIDE_CURSOR, 88, 96, 8, 16);
+	bitmap_polled_cursor(arg, &ca);
+	for (y = 80; y < 96; y++) {
+		for (x = 80; x < 88; x++)
+			set_logical_pixel(fb, x, y, BASE_PIXEL);
+	}
+	rotfb_runtime_flush_rect(fb, 80, 80, 8, 16);
 }
 
 static void
@@ -772,17 +841,30 @@ main(void)
 	flush_count = 0;
 	move_count = 0;
 
-	test_cursor_callbacks(&softc);
-	if (failures == 0) {
-		(void) puts("ROTFB production cursor callback tests: PASS");
-		test_copy_callback(&softc);
-		if (failures == 0)
-			(void) puts("ROTFB production copy callback tests: PASS");
-	} else {
-		(void) fprintf(stderr,
-		    "ROTFB production copy callback tests: SKIPPED (cursor stage failed)\n");
+	{
+		unsigned int before = failures;
+
+		test_cursor_callbacks(&softc);
+		check_guards();
+		printf("SCENARIO_A_RESULT=%s failures=%u\n",
+		    failures == before ? "PASS" : "FAIL", failures - before);
 	}
-	check_guards();
+	{
+		unsigned int before = failures;
+
+		test_get_cursor_callback(&softc);
+		printf("SCENARIO_B_RESULT=%s failures=%u\n",
+		    failures == before ? "PASS" : "FAIL", failures - before);
+	}
+	test_exploratory_direct_display_relocation(&softc);
+	{
+		unsigned int before = failures;
+
+		test_copy_callback(&softc);
+		check_guards();
+		printf("SCENARIO_C_RESULT=%s failures=%u\n",
+		    failures == before ? "PASS" : "FAIL", failures - before);
+	}
 
 	check(rotfb_runtime_fini(&console.fb) == DDI_SUCCESS,
 	    "production runtime teardown succeeds");

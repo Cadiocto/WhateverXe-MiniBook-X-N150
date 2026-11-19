@@ -119,6 +119,21 @@ printf '%s\n' "$RUNTIME_RC" > "$LOG_DIR/runtime.exit-code"
 echo "RUNTIME_EXIT_CODE=$RUNTIME_RC"
 cat "$RUNTIME_STDOUT"
 cat "$RUNTIME_STDERR" >&2
+for scenario in A B C; do
+	result_file="$LOG_DIR/scenario-$scenario.result.txt"
+	if grep "^SCENARIO_${scenario}_RESULT=" "$RUNTIME_STDOUT" >"$result_file"; then
+		:
+	else
+		printf 'SCENARIO_%s_RESULT=NOT_REPORTED\n' "$scenario" >"$result_file"
+	fi
+done
+if grep '^EXPLORATORY_DISPLAY_A_TO_B_RESULT=' "$RUNTIME_STDOUT" \
+    >"$LOG_DIR/exploratory-display-a-to-b.result.txt"; then
+	:
+else
+	printf '%s\n' 'EXPLORATORY_DISPLAY_A_TO_B_RESULT=NOT_REPORTED' \
+	    >"$LOG_DIR/exploratory-display-a-to-b.result.txt"
+fi
 if [ "$RUNTIME_RC" -ne 0 ]; then
 	exit "$RUNTIME_RC"
 fi
