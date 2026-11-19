@@ -1,0 +1,68 @@
+name: ROTFB DDI integration audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - gop-rotation-hook
+    paths:
+      - ".github/rotfb-ddi-integration-tests/**"
+      - ".github/workflows/rotfb-ddi-integration.yml"
+
+concurrency:
+  group: rotfb-ddi-integration
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ddi-entrypoint-audit:
+    name: Patched production DDI detach entry points (host stubs only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UPSTREAM_PIN: 098e95820891f8a83fae679daece7fcf58b7b3a4
+      LOG_DIR: rotfb-ddi-integration-artifacts
+    steps:
+      - name: Checkout ROTFB source
+        uses: actions/checkout@v4
+
+      - name: Validate audit harness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ruby -e 'require "yaml"; YAML.parse_file(ARGV.fetch(0))' .github/workflows/rotfb-ddi-integration.yml
+          sh -n .github/rotfb-ddi-integration-tests/rotfb_ddi_integration_test.sh
+          python3 -m py_compile .github/rotfb-ddi-integration-tests/rotfb_extract_ddi_entrypoints.py
+          mkdir -p "$LOG_DIR"
+          echo "HARNESS_SYNTAX=PASS" | tee "$LOG_DIR/static-validation.txt"
+
+      - name: Fetch pinned illumos source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          UPSTREAM="$RUNNER_TEMP/illumos-gate-ddi"
+          git init "$UPSTREAM"
+          git -C "$UPSTREAM" remote add origin https://github.com/illumos/illumos-gate.git
+          git -C "$UPSTREAM" fetch --depth 1 origin "$UPSTREAM_PIN"
+          git -C "$UPSTREAM" checkout --detach FETCH_HEAD
+          test "$(git -C "$UPSTREAM" rev-parse HEAD)" = "$UPSTREAM_PIN"
+          echo "UPSTREAM_PIN_VERIFIED=PASS" | tee "$LOG_DIR/upstream-pin.txt"
+
+      - name: Execute extracted production DDI detach entry points
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          UPSTREAM="$RUNNER_TEMP/illumos-gate-ddi"
+          sh .github/rotfb-ddi-integration-tests/rotfb_ddi_integration_test.sh \
+            "$UPSTREAM" illumo_rotfb/patches "$LOG_DIR"
+
+      - name: Upload DDI integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-ddi-integration
+          path: rotfb-ddi-integration-artifacts/
+          if-no-files-found: error
+          retention-days: 30
