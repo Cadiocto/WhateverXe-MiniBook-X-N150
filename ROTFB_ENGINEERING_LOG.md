@@ -1119,3 +1119,11 @@ The next source/workflow commit adds patch 0012 and a C test for the existing al
 - Exact relevant code: helper `finalize` counts `^APPLIED ` from `patch-apply.log`, compares to 11 and the 0001–0011 order; workflow loop at `.github/workflows/build-illumos.yml` applies the lexical `*.patch` glob and writes one APPLIED line per patch before nightly. This is a confirmed CI evidence mismatch, not a compile/link defect. Build #83 may reach nightly and six real links but still be marked FAIL at final evidence until the helper and its test fixture are updated to 12.
 - No changes are permitted while Build #83 is active. After it completes, inspect original log/artifact first, then minimally update only `illumo_rotfb/rotfb_link_evidence.sh` and `illumo_rotfb/tests/rotfb_link_evidence_test.sh` (and journal): expected count/order must include `0012-gfxp-bitmap-copy-helper.patch`; synthetic patch evidence must contain all 12 entries. Add a test that fails if helper's expected patch count/order drifts from the actual patch directory.
 - Current Build #83 host tests are PASS, but this does not prove the OpenIndiana patch series or final evidence. Nightly/final/link results remain pending. A BUILD VERIFIED remains only for Build #80 source SHA `8eb2a6fffc02a638c18a313469cd4aed78052b1f`.
+
+
+### 2026-11-19T01:09:01Z — Synthetic hunk regression for Build #82 line-379 context completed
+
+- During Build #83 (Run `44434077768`, Job `135258410111`, source `a9312ec431ef8f15e356f5bf88390543f2fe0b76`, still IN_PROGRESS), ran a disposable local git-apply regression using the exact 0012 third-hunk preimage and the two-line flush-call formatting from patch 0002.
+- Command outcome: pre-fix patch with collapsed flush-call context failed at `gfxp_bitmap.c:379`; corrected 0012 patch passed `git apply --check`, applied successfully, and the resulting file contained `rotfb_copy_rows()`. Output: `SYNTHETIC_FLUSH_CONTEXT_REGRESSION_PASS`.
+- This validates the specific context correction only. It is a synthetic hunk fixture, not the full pinned-upstream patch-series test; Build #83's OpenIndiana VM remains the authoritative 12-patch validation.
+- No source/workflow files changed. The 11-versus-12 patch-count finalizer defect recorded above remains unresolved until Build #83 completes. No nightly, final build or linker result is claimed for source `a9312ec` yet.
