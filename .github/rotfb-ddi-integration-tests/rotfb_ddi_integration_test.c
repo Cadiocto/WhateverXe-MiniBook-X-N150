@@ -70,6 +70,8 @@ extern void cmn_err(int, const char *, ...);
 
 static fb_info_t fb_info;
 static rotfb_info_t rotfb_info;
+static uint8_t fb_memory[4096];
+static uint8_t shadow_memory[4096];
 static struct vgatext_softc test_outer;
 static gfxp_fb_softc_t test_inner;
 static union_gfx_console_t test_console;
@@ -202,7 +204,9 @@ reset_case(int fini_result)
 	(void) memset(&test_device, 0, sizeof (test_device));
 	rotfb_info.configured = 1;
 	rotfb_info.runtime_ready = 1;
-	test_console.fb.fb_size = 4096;
+	test_console.fb.fb = fb_memory;
+	test_console.fb.shadow_fb = shadow_memory;
+	test_console.fb.fb_size = sizeof (fb_memory);
 	test_inner.fb_type = GFXP_BITMAP;
 	test_inner.console = &test_console;
 	test_outer.gfxp_state = &test_inner;
@@ -220,53 +224,68 @@ reset_case(int fini_result)
 int
 main(void)
 {
-	int generic_rc;
 	int detach_rc;
+	uint8_t *saved_fb;
+	uint8_t *saved_shadow;
 
+	/*
+	 * Scenario A: a failed runtime FINI must leave the complete vgatext
+	 * instance intact so that DDI_DETACH can be retried.
+	 */
 	reset_case(DDI_FAILURE);
-	generic_rc = gfxp_fb_detach(&test_device, DDI_DETACH, &test_inner);
-	if (generic_rc != DDI_FAILURE || test_inner.lock.destroyed ||
-	    property_remove_calls != 0 || inner_free_calls != 0) {
+	saved_fb = test_console.fb.fb;
+	saved_shadow = test_console.fb.shadow_fb;
+	detach_rc = vgatext_detach(&test_device, DDI_DETACH);
+	if (detach_rc != DDI_FAILURE || fini_calls != 1 ||
+	    inner_free_calls != 0 || outer_free_calls != 0 ||
+	    minor_remove_calls != 0 || property_remove_calls != 0 ||
+	    mutex_destroy_calls != 0 || test_inner.lock.destroyed ||
+	    !rotfb_info.runtime_ready ||
+	    test_console.fb.fb != saved_fb ||
+	    test_console.fb.shadow_fb != saved_shadow ||
+	    test_outer.gfxp_state != &test_inner ||
+	    test_inner.console != &test_console) {
 		(void) fprintf(stderr,
-		    "generic detach failure propagation did not match production contract\n");
+		    "Scenario A: failed detach did not preserve retryable state\n");
 		return (1);
 	}
+	(void) printf("SCENARIO_A_DETACH_FAILURE=PASS\n");
 
-	/* Reset only observation counters; retain the same injected failure. */
-	fini_calls = 0;
-	inner_free_calls = 0;
-	outer_free_calls = 0;
-	minor_remove_calls = 0;
-	property_remove_calls = 0;
-	mutex_destroy_calls = 0;
+	/*
+	 * Scenario B: retry the same instance after the FINI preflight
+	 * condition is repaired. Each cleanup operation must occur once.
+	 */
+	injected_fini_result = DDI_SUCCESS;
 	detach_rc = vgatext_detach(&test_device, DDI_DETACH);
-
-	if (detach_rc != DDI_SUCCESS || fini_calls != 1 ||
+	if (detach_rc != DDI_SUCCESS || fini_calls != 2 ||
 	    inner_free_calls != 1 || outer_free_calls != 1 ||
-	    minor_remove_calls != 1 || property_remove_calls != 0 ||
-	    mutex_destroy_calls != 0 || test_inner.lock.destroyed ||
-	    !rotfb_info.runtime_ready) {
+	    minor_remove_calls != 1 || property_remove_calls != 1 ||
+	    mutex_destroy_calls != 1 || !test_inner.lock.destroyed ||
+	    rotfb_info.runtime_ready || unmap_calls != 0 ||
+	    kmem_free_calls != 0) {
 		(void) fprintf(stderr,
-		    "expected current vgatext detach error-discard behavior was not reproduced\n");
+		    "Scenario B: retry cleanup was incomplete or repeated\n");
 		return (2);
 	}
-	(void) printf("GFXP_FB_DETACH_FAILURE_PROPAGATION=PASS\n");
-	(void) printf("VGATEXT_DETACH_FAILURE_HANDLING=DEFECT_REPRODUCED\n");
-	(void) printf("FAILURE_PATH_RESULT=DDI_SUCCESS_SOFTC_FREED_RUNTIME_STILL_READY\n");
-	(void) printf("FAILURE_PATH_MUTEX_DESTROYED=NO\n");
+	(void) printf("SCENARIO_B_DETACH_RETRY=PASS\n");
 
+	/*
+	 * Scenario C: an ordinary first-attempt successful detach remains
+	 * behaviorally unchanged.
+	 */
 	reset_case(DDI_SUCCESS);
 	detach_rc = vgatext_detach(&test_device, DDI_DETACH);
 	if (detach_rc != DDI_SUCCESS || fini_calls != 1 ||
 	    inner_free_calls != 1 || outer_free_calls != 1 ||
 	    minor_remove_calls != 1 || property_remove_calls != 1 ||
 	    mutex_destroy_calls != 1 || !test_inner.lock.destroyed ||
-	    rotfb_info.runtime_ready) {
+	    rotfb_info.runtime_ready || unmap_calls != 0 ||
+	    kmem_free_calls != 0) {
 		(void) fprintf(stderr,
-		    "normal successful detach path did not complete as expected\n");
+		    "Scenario C: ordinary successful detach changed\n");
 		return (3);
 	}
-	(void) printf("VGATEXT_DETACH_SUCCESS_PATH=PASS\n");
+	(void) printf("SCENARIO_C_NORMAL_DETACH=PASS\n");
 	(void) printf("ROTFB_DDI_DETACH_INTEGRATION_HARNESS=PASS\n");
 	return (0);
 }

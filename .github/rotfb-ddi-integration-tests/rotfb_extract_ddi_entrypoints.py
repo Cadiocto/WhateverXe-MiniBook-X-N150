@@ -74,8 +74,10 @@ if "rotfb_runtime_fini" not in bm_detach:
     raise SystemExit("patched gfxp_bm_detach no longer calls rotfb_runtime_fini")
 if "if (error != DDI_SUCCESS)" not in fb_detach:
     raise SystemExit("patched gfxp_fb_detach lacks the expected failure guard")
-if "(void) gfxp_fb_detach" not in vgatext_detach:
-    raise SystemExit("upstream vgatext_detach no longer has the audited ignored return")
+if "error = gfxp_fb_detach" not in vgatext_detach:
+    raise SystemExit("vgatext_detach does not capture gfxp_fb_detach result")
+if re.search(r"if\\s*\\(\\s*error\\s*!=\\s*DDI_SUCCESS\\s*\\)\\s*return\\s*\\(\\s*error\\s*\\)", vgatext_detach) is None:
+    raise SystemExit("vgatext_detach does not propagate DDI_FAILURE before cleanup")
 if "gfxp_fb_softc_free" not in vgatext_detach or "ddi_soft_state_free" not in vgatext_detach:
     raise SystemExit("vgatext detach ownership/free path changed")
 

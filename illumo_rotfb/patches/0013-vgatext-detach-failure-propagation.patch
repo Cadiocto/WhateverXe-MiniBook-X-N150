@@ -1,0 +1,52 @@
+diff --git a/usr/src/uts/intel/io/vgatext/vgatext.c b/usr/src/uts/intel/io/vgatext/vgatext.c
+--- a/usr/src/uts/intel/io/vgatext/vgatext.c
++++ b/usr/src/uts/intel/io/vgatext/vgatext.c
+@@ -246,44 +246,47 @@
+ static int
+ vgatext_detach(dev_info_t *devi, ddi_detach_cmd_t cmd)
+ {
+ 	int instance = ddi_get_instance(devi);
+ 	struct vgatext_softc *softc = getsoftc(instance);
++	int error;
+ 
+ 
+ 	switch (cmd) {
+ 	case DDI_DETACH:
++		error = gfxp_fb_detach(devi, cmd, softc->gfxp_state);
++		if (error != DDI_SUCCESS)
++			return (error);
+-		(void) gfxp_fb_detach(devi, cmd, softc->gfxp_state);
+ 
+ 		if (softc->gfxp_state != NULL)
+ 			gfxp_fb_softc_free(softc->gfxp_state);
+ 		ddi_remove_minor_node(devi, NULL);
+ 		(void) ddi_soft_state_free(vgatext_softc_head, instance);
+ 		return (DDI_SUCCESS);
+ 
+ 	case DDI_SUSPEND:
+ 		/*
+ 		 * This is a generic VGA file, and therefore, cannot
+ 		 * understand how to deal with suspend and resume on
+ 		 * a generic interface.  So we fail any attempt to
+ 		 * suspend.  At some point in the future, we might use
+ 		 * this as an entrypoint for display drivers and this
+ 		 * assumption may change.
+ 		 *
+ 		 * However, from a platform development perspective,
+ 		 * it is important that this driver suspend if a
+ 		 * developer is using a serial console and/or working
+ 		 * on a framebuffer driver that will support suspend
+ 		 * and resume.  Therefore, we have this module tunable
+ 		 * (purposely using a long name) that will allow for
+ 		 * suspend it it is set.  Otherwise we fail.
+ 		 */
+ 		if (vgatext_force_suspend != 0)
+ 			return (gfxp_fb_detach(devi, cmd, softc->gfxp_state));
+ 		else
+ 			return (DDI_FAILURE);
+ 
+ 	default:
+ 		cmn_err(CE_WARN, "vgatext_detach: unknown cmd 0x%x\n", cmd);
+ 		return (DDI_FAILURE);
+ 	}
+ }

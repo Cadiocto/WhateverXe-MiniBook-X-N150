@@ -37,7 +37,7 @@ for patch in "$PATCH_DIR"/*.patch; do
 	    >"$LOG_DIR/$name.apply.stdout" 2>"$LOG_DIR/$name.apply.stderr"
 	PATCH_COUNT=$((PATCH_COUNT + 1))
 done
-test "$PATCH_COUNT" -eq 12
+test "$PATCH_COUNT" -eq 13
 echo "UPSTREAM_PIN=$PIN" | tee "$LOG_DIR/metadata.txt"
 echo "PATCH_COUNT=$PATCH_COUNT" | tee -a "$LOG_DIR/metadata.txt"
 
