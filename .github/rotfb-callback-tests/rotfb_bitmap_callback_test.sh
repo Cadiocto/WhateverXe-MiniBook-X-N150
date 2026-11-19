@@ -28,6 +28,7 @@ trap 'exit 1' HUP INT TERM
 test "$(git -C "$UPSTREAM_GIT_DIR" rev-parse HEAD)" = "$UPSTREAM_PIN"
 git -C "$UPSTREAM_GIT_DIR" worktree add --detach "$WORKTREE" "$UPSTREAM_PIN" >/dev/null
 # The ordered production patch series currently contains patches 0001 through 0013.
+# The manifest and patch-series gates run before this production callback harness.
 PATCH_COUNT=0
 for patch in "$PATCH_DIR"/*.patch; do
 	[ -f "$patch" ] || continue
