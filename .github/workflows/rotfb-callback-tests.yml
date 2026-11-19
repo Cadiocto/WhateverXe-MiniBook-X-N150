@@ -1,0 +1,115 @@
+name: ROTFB callback-only tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - gop-rotation-hook
+    paths:
+      - ".github/rotfb-callback-tests/**"
+      - ".github/workflows/rotfb-callback-tests.yml"
+      - "illumo_rotfb/patches/*.patch"
+
+concurrency:
+  group: rotfb-callback-only
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  callback-tests:
+    name: Patched production callback tests (no kernel build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      UPSTREAM_PIN: 098e95820891f8a83fae679daece7fcf58b7b3a4
+      ROTFB_DIR: ${{ github.workspace }}/illumo_rotfb
+      TEST_DIR: ${{ github.workspace }}/.github/rotfb-callback-tests
+      LOG_DIR: ${{ github.workspace }}/rotfb-callback-artifacts
+    steps:
+      - name: Checkout ROTFB source
+        uses: actions/checkout@v4
+
+      - name: Initialize diagnostic collection
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$LOG_DIR"
+          {
+            echo "workflow=rotfb-callback-tests"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "branch=$GITHUB_REF_NAME"
+            echo "upstream_pin=$UPSTREAM_PIN"
+            echo "started_utc=$(date -u +%FT%TZ)"
+            echo "runner=$(uname -a)"
+            echo "compiler=$(cc --version | head -n 1)"
+            echo "git=$(git --version)"
+          } | tee "$LOG_DIR/run-metadata.txt"
+
+      - name: Validate workflow YAML and callback harness syntax
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ruby -e 'require "yaml"; YAML.parse_file(ARGV.fetch(0))' .github/workflows/rotfb-callback-tests.yml
+          sh -n "$TEST_DIR/rotfb_bitmap_callback_test.sh"
+          python3 -m py_compile "$TEST_DIR/rotfb_extract_bitmap_callbacks.py"
+          echo "YAML_SYNTAX=PASS" | tee "$LOG_DIR/static-validation.txt"
+          echo "SHELL_SYNTAX=PASS" | tee -a "$LOG_DIR/static-validation.txt"
+          echo "PYTHON_SYNTAX=PASS" | tee -a "$LOG_DIR/static-validation.txt"
+
+      - name: Fetch exact upstream illumos revision
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          UPSTREAM="$RUNNER_TEMP/illumos-gate-callback"
+          mkdir -p "$UPSTREAM"
+          capture() {
+            local label="$1"
+            shift
+            local rc=0
+            if "$@" >"$LOG_DIR/$label.stdout.log" 2>"$LOG_DIR/$label.stderr.log"; then
+              rc=0
+            else
+              rc=$?
+            fi
+            printf '%s\n' "$rc" >"$LOG_DIR/$label.exit-code"
+            echo "$label exit_code=$rc"
+            cat "$LOG_DIR/$label.stdout.log"
+            cat "$LOG_DIR/$label.stderr.log" >&2
+            return "$rc"
+          }
+          capture upstream-git-init git -C "$UPSTREAM" init
+          capture upstream-remote git -C "$UPSTREAM" remote add origin https://github.com/illumos/illumos-gate.git
+          capture upstream-fetch git -C "$UPSTREAM" fetch --depth 1 origin "$UPSTREAM_PIN"
+          capture upstream-checkout git -C "$UPSTREAM" checkout --detach FETCH_HEAD
+          ACTUAL_PIN=$(git -C "$UPSTREAM" rev-parse HEAD)
+          printf 'actual_upstream_pin=%s\n' "$ACTUAL_PIN" | tee -a "$LOG_DIR/run-metadata.txt"
+          test "$ACTUAL_PIN" = "$UPSTREAM_PIN"
+          echo "UPSTREAM_PIN_VERIFIED=PASS" | tee "$LOG_DIR/upstream-pin-status.txt"
+
+      - name: Run real patched production callback harness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          UPSTREAM="$RUNNER_TEMP/illumos-gate-callback"
+          ROTFB_TEST_LOG_DIR="$LOG_DIR/harness"
+          export ROTFB_TEST_LOG_DIR
+          mkdir -p "$ROTFB_TEST_LOG_DIR"
+          set +e
+          sh "$TEST_DIR/rotfb_bitmap_callback_test.sh" "$UPSTREAM" "$ROTFB_DIR/patches" \
+            2>&1 | tee "$LOG_DIR/callback-harness-console.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$rc" > "$LOG_DIR/callback-harness.exit-code"
+          echo "CALLBACK_HARNESS_EXIT_CODE=$rc"
+          exit "$rc"
+
+      - name: Upload callback-only diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-callback-only-${{ github.run_id }}
+          path: rotfb-callback-artifacts/
+          if-no-files-found: error
+          retention-days: 30
