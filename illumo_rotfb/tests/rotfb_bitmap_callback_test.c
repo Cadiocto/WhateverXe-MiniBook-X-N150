@@ -161,17 +161,18 @@ physical_pixel(uint32_t x, uint32_t y)
 
 static void
 check_cursor_rectangle(fb_info_t *fb, uint32_t x, uint32_t y,
-    uint32_t width, uint32_t height, uint32_t expected,
-    const char *shadow_name, const char *physical_name)
+    uint32_t width, uint32_t height, uint32_t shadow_expected,
+    uint32_t physical_expected, const char *shadow_name,
+    const char *physical_name)
 {
 	uint32_t xx, yy;
 	int shadow_ok = 1, physical_ok = 1;
 
 	for (yy = y; yy < y + height; yy++) {
 		for (xx = x; xx < x + width; xx++) {
-			if (logical_pixel(fb, xx, yy) != expected)
+			if (logical_pixel(fb, xx, yy) != shadow_expected)
 				shadow_ok = 0;
-			if (physical_pixel(xx, yy) != expected)
+			if (physical_pixel(xx, yy) != physical_expected)
 				physical_ok = 0;
 		}
 	}
@@ -233,7 +234,7 @@ test_display_cursor_primitive(struct gfxp_fb_softc *softc)
 
 	flush_count = 0;
 	bitmap_display_cursor(softc, &ca);
-	check_cursor_rectangle(fb, 16, 32, 8, 16, base ^ CURSOR_MASK,
+	check_cursor_rectangle(fb, 16, 32, 8, 16, base ^ CURSOR_MASK, base,
 	    "bitmap_display_cursor updates every shadow cursor pixel",
 	    "bitmap_display_cursor alone leaves physical surface unchanged");
 	check(flush_count == 0,
@@ -243,6 +244,7 @@ test_display_cursor_primitive(struct gfxp_fb_softc *softc)
 
 	rotfb_runtime_flush_rect(fb, 16, 32, 8, 16);
 	check_cursor_rectangle(fb, 16, 32, 8, 16, base ^ CURSOR_MASK,
+	    base ^ CURSOR_MASK,
 	    "runtime flush preserves the displayed shadow cursor",
 	    "runtime flush publishes every displayed cursor pixel physically");
 	check(flush_count == 1,
@@ -250,7 +252,7 @@ test_display_cursor_primitive(struct gfxp_fb_softc *softc)
 
 	bitmap_display_cursor(softc, &ca);
 	rotfb_runtime_flush_rect(fb, 16, 32, 8, 16);
-	check_cursor_rectangle(fb, 16, 32, 8, 16, base,
+	check_cursor_rectangle(fb, 16, 32, 8, 16, base, base,
 	    "direct cursor primitive restores every shadow pixel",
 	    "runtime flush restores every physical cursor pixel");
 }
@@ -294,6 +296,7 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	    softc->console->fb.cursor.origin.y == 32,
 	    "VIS_DISPLAY_CURSOR updates pixel origin");
 	check_cursor_rectangle(fb, 16, 32, 8, 16, base ^ CURSOR_MASK,
+	    base ^ CURSOR_MASK,
 	    "VIS display callback changes every shadow cursor pixel",
 	    "VIS display callback flushes every cursor pixel physically");
 	check(flush_count == 1,
@@ -311,7 +314,7 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	bitmap_polled_cursor(arg, &ca);
 	check(softc->console->fb.cursor.visible == B_FALSE,
 	    "VIS_HIDE_CURSOR clears cursor.visible");
-	check_cursor_rectangle(fb, 16, 32, 8, 16, base,
+	check_cursor_rectangle(fb, 16, 32, 8, 16, base, base,
 	    "VIS hide callback restores every shadow cursor pixel",
 	    "VIS hide callback restores every physical cursor pixel");
 	check(flush_count == 1, "VIS_HIDE_CURSOR flushes restored rectangle");
@@ -322,10 +325,11 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	bitmap_polled_cursor(arg, &ca);
 	ca = make_cursor(VIS_DISPLAY_CURSOR, 24, 48, 8, 16);
 	bitmap_polled_cursor(arg, &ca);
-	check_cursor_rectangle(fb, 16, 32, 8, 16, base,
+	check_cursor_rectangle(fb, 16, 32, 8, 16, base, base,
 	    "cursor move restores the complete old shadow rectangle",
 	    "cursor move restores the complete old physical rectangle");
 	check_cursor_rectangle(fb, 24, 48, 8, 16, base ^ CURSOR_MASK,
+	    base ^ CURSOR_MASK,
 	    "cursor move updates the complete new shadow rectangle",
 	    "cursor move publishes the complete new physical rectangle");
 	check(softc->console->fb.cursor.visible == B_TRUE &&
@@ -344,6 +348,7 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	    softc->console->fb.cursor.pos.y == 74,
 	    "last valid terminal cell is accepted");
 	check_cursor_rectangle(fb, 1912, 1184, 8, 16, base ^ CURSOR_MASK,
+	    base ^ CURSOR_MASK,
 	    "edge cursor updates the complete shadow rectangle",
 	    "edge cursor maps the complete rectangle to physical edge");
 	ca.action = VIS_HIDE_CURSOR;
@@ -353,16 +358,16 @@ test_cursor_callbacks(struct gfxp_fb_softc *softc)
 	ca = make_cursor(VIS_DISPLAY_CURSOR, 40, 64, 8, 16);
 	flush_count = 0;
 	bitmap_polled_cursor(arg, &ca);
-	check(logical_pixel(fb, 40, 64) == (base ^ CURSOR_MASK) &&
-	    physical_pixel(40, 64) == base,
-	    "graphics-mode cursor updates shadow without touching physical surface");
+	check_cursor_rectangle(fb, 40, 64, 8, 16, base ^ CURSOR_MASK, base,
+	    "graphics-mode cursor updates every shadow pixel",
+	    "graphics-mode cursor leaves every physical pixel unchanged");
 	check(flush_count == 0,
 	    "graphics-mode cursor callback intentionally skips physical flush");
 	ca.action = VIS_HIDE_CURSOR;
 	bitmap_polled_cursor(arg, &ca);
-	check(logical_pixel(fb, 40, 64) == base &&
-	    physical_pixel(40, 64) == base,
-	    "graphics-mode hide restores shadow while physical remains unchanged");
+	check_cursor_rectangle(fb, 40, 64, 8, 16, base, base,
+	    "graphics-mode hide restores every shadow pixel",
+	    "graphics-mode hide leaves physical pixels unchanged");
 	softc->mode = KD_TEXT;
 
 	ca = make_cursor(VIS_DISPLAY_CURSOR, -1, 32, 8, 16);
