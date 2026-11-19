@@ -1766,3 +1766,13 @@ The harness supplies host stubs for DDI services, property removal, mutex destru
 * The full-build summary queries callback-only and DDI workflow runs by exact `head_sha`; the callback and DDI workflows are independently triggered by their own workflow-file changes in the same configuration commit, preserving their separation from the full build. Both now emit Job Summaries and commit-scoped test artifact names.
 * Added Ruby YAML syntax validation for every workflow file to the callback-only workflow. The full-build workflow retains manual dispatch, but this GitHub connector still has no Actions dispatch/write operation; the real, scoped push trigger is the autonomous launch path.
 * This configuration change is intended to cause exactly one full build on this commit, plus the independent callback-only and DDI regression workflows. No production source or any of the 13 patch files is part of the change.
+
+
+## 2026-11-20 — Full-build Run 44604847718: callback harness failure
+
+* Run `44604847718` on commit `bfc1b46ad42c92e780b3d6e8077f883fea1daf93` passed all five host regression steps, but failed at the in-build callback harness before the OpenIndiana VM step. OpenIndiana VM/nightly and linker verification were correctly SKIPPED; artifacts were uploaded.
+* Exact root cause: the full-build workflow invoked `illumo_rotfb/tests/rotfb_bitmap_callback_test.sh`, a legacy harness that hard-codes `test "$PATCH_COUNT" -eq 12`. The production patch series is 13. This is why the callback step returned exit code 1 after preparing its worktree; it is a stale CI harness path, not a production source or patch-application defect.
+* Cross-check: callback-only Run `44604847559` on the same commit used the canonical `.github/rotfb-callback-tests/rotfb_bitmap_callback_test.sh`, applied all 13 patches, compiled and ran production callbacks, and passed scenarios A/B/C/D. DDI Run `44604847845` on the same commit also passed.
+* Fix: change the full-build callback step to invoke the same canonical 13-patch harness used by callback-only CI, export its diagnostic log directory, and run `sh -n` before execution. Add the full-build workflow path to callback-only and DDI path filters so their separate runs are triggered on the exact same CI-configuration commit.
+* Regression proof required on the next commit: callback-only and DDI workflows must pass on the exact new HEAD; the full-build callback step must pass; only then can the workflow enter OpenIndiana VM/nightly.
+* No production code, any of the 13 patches, framebuffer ABI, runtime architecture, upstream pin, or physical-device state was changed.

@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/rotfb-callback-tests/**"
       - ".github/workflows/rotfb-callback-tests.yml"
+      - ".github/workflows/build-illumos.yml"
       - "illumo_rotfb/patches/*.patch"
       - "illumo_rotfb/tests/**"
       - "illumo_rotfb/rotfb_link_evidence.sh"

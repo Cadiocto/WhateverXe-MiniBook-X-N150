@@ -137,7 +137,11 @@ jobs:
           UPSTREAM="$RUNNER_TEMP/illumos-gate-callback"
           PIN=098e95820891f8a83fae679daece7fcf58b7b3a4
           ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
+          TEST_DIR="$GITHUB_WORKSPACE/.github/rotfb-callback-tests"
+          ROTFB_TEST_LOG_DIR="$GITHUB_WORKSPACE/rotfb-test-results/callback-harness"
           LOG="$GITHUB_WORKSPACE/rotfb-test-results/callback-level-tests.log"
+          export ROTFB_TEST_LOG_DIR
+          mkdir -p "$ROTFB_TEST_LOG_DIR"
           set +e
           {
             git init "$UPSTREAM"
@@ -145,7 +149,9 @@ jobs:
             git -C "$UPSTREAM" fetch --depth 1 origin "$PIN"
             git -C "$UPSTREAM" checkout --detach FETCH_HEAD
             test "$(git -C "$UPSTREAM" rev-parse HEAD)" = "$PIN"
-            sh "$ROTFB/tests/rotfb_bitmap_callback_test.sh" "$UPSTREAM" "$ROTFB/patches"
+            test -f "$TEST_DIR/rotfb_bitmap_callback_test.sh"
+            sh -n "$TEST_DIR/rotfb_bitmap_callback_test.sh"
+            sh "$TEST_DIR/rotfb_bitmap_callback_test.sh" "$UPSTREAM" "$ROTFB/patches"
           } > "$LOG" 2>&1
           rc=$?
           set -e
