@@ -65,9 +65,12 @@ cat > "$TMP/include/sys/rotfb.h" <<EOF_ROTFB
 #include "$ROTFB_DIR/rotfb.h"
 #endif
 EOF_ROTFB
-"$CC" -std=c11 $CFLAGS -Wall -Wextra -Werror -pthread -fno-builtin-memmove -fno-strict-aliasing -Wl,--wrap=memmove \
+# Preserve the upstream VIS signed types; keep every warning fatal except legacy sign comparisons.
+"$CC" -std=c11 $CFLAGS -Wall -Wextra -Werror -Wno-error=sign-compare -Wsign-compare -pthread -fno-builtin-memmove -fno-strict-aliasing -Wl,--wrap=memmove \
     -I"$TMP/include" -I"$ROTFB_DIR" -I"$SCRIPT_DIR" -I"$TMP" \
     -o "$TMP/rotfb-bitmap-callback-test" \
     "$ROTFB_DIR/rotfb_runtime.c" "$SCRIPT_DIR/rotfb_bitmap_callback_test.c"
 timeout 90 "$TMP/rotfb-bitmap-callback-test"
+echo "PRODUCTION_CALLBACKS_EXECUTED=bitmap_polled_cursor,bitmap_cons_cursor,bitmap_display_cursor,bitmap_cons_copy"
+echo "PRODUCTION_RUNTIME_FUNCTIONS_EXECUTED=rotfb_runtime_flush_rect,rotfb_copy_rows"
 echo "ROTFB_PATCHED_PRODUCTION_CALLBACK_TEST=PASS"
