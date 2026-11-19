@@ -1713,3 +1713,11 @@ The harness supplies host stubs for DDI services, property removal, mutex destru
 * It also does not reproduce an actual concurrent callback racing with this failing DDI_DETACH. The source path proves the callback gate remains open when the real runtime FINI preflight rejects a pointer mismatch; the DDI harness proves the wrapper proceeds to free-call sites despite the returned failure. A concurrent UAF is therefore a credible conditional risk, not an executed UAF.
 * The result confirms the previously identified defect at the real production function-body level. No Generation ID was added. No production code or production patch was changed.
 * No callback-only Run #5 rerun and no Build #89. Build #88 remains the last OpenIndiana VM/nightly build; device validation remains NOT VERIFIED.
+
+
+## 2026-11-19 — Source-name clarification for TEM standalone callback guard
+
+* Correction to the preceding DDI audit text: the function is named `tem_safe_polled_write()`, not `tem_safe_write()`.
+* At pinned `usr/src/uts/common/io/tem_safe.c` line 245, `tem_safe_polled_write()` returns immediately when `tem->tvs_initialized` is false. Only after that guard does it call `tem_safe_check_first_time()` and `tem_safe_terminal_emulate(..., CALLED_FROM_STANDALONE)`, whose display/copy/cursor helpers dereference `tems.ts_fb_polledio`.
+* This confirms the earlier lifecycle conclusion with the exact function name: the TEM-owned VIS_DEVFINI failure path occurs before any VT is initialized, so TEM's standalone polled-write entry point does not invoke the retained callback after that failed initialization. Conversely, an externally initiated VIS_DEVFINI after a VT is initialized does not clear the pointer or reset `tvs_initialized`; a later standalone polled write can still invoke it, outside the normal TEM-owned VIS_DEVFINI path.
+* Source: `https://github.com/illumos/illumos-gate/blob/098e95820891f8a83fae679daece7fcf58b7b3a4/usr/src/uts/common/io/tem_safe.c#L232-L253`.
