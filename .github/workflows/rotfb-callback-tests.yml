@@ -9,6 +9,8 @@ on:
       - ".github/rotfb-callback-tests/**"
       - ".github/workflows/rotfb-callback-tests.yml"
       - "illumo_rotfb/patches/*.patch"
+      - "illumo_rotfb/tests/**"
+      - "illumo_rotfb/rotfb_link_evidence.sh"
 
 concurrency:
   group: rotfb-callback-only
