@@ -1663,3 +1663,53 @@ DDI_DETACH after the device has no open handles:
 * The upstream `vgatext_detach()` return-value discard is a concrete integration defect in the error path introduced/exposed by making `gfxp_bm_detach()` fail on unsafe runtime fini. It must be addressed before treating detach-failure safety as complete. Do not change production code until the owner authorizes it.
 * The next validation should be a test-only integration harness that compiles the actual patched `gfxp_fb_detach()`, patched `gfxp_bm_detach()`, actual `vgatext_detach()`, and actual `rotfb_runtime_fini()` against narrowly scoped DDI stubs; inject the existing runtime pointer-mismatch condition and record whether the top-level detach frees softc and reports success. This is a separate DDI integration test, not a repeat of Run #5.
 * Journal update only. Build #89 not started; production code and all 12 production patches unchanged.
+
+
+## 2026-11-19 — DDI detach host integration execution follow-up
+
+### Test-only harness and revisions
+
+* Static DDI audit was followed by a separate host integration harness under `.github/rotfb-ddi-integration-tests/` and workflow `.github/workflows/rotfb-ddi-integration.yml`. This is intentionally separate from the callback-only workflow; it does not rerun Run #5 and does not invoke the OpenIndiana/nightly build.
+* Harness source commit: `3a126f77ae24471a9486e8f6bebcab46b0858fb7`. The first workflow run `44587830535` failed before extraction/compilation because the runner passed a relative patch directory to `git -C <worktree> apply`; the patch path was consequently resolved inside the upstream worktree. This was a harness path bug, not a source/patch failure. No production code was compiled or executed in that first attempt.
+* Test-only runner correction commit: `fec74244cf2e048fe2fddade7dd28a7775065c25`. The runner canonicalizes the patch directory before entering the upstream worktree. The test's `rotfb_runtime_fini()` success stub also clears the simulated `runtime_ready` flag so the success path models the expected post-FINI state.
+* Successful workflow run: `44588127908`, run number 2, job `135786521899`, commit `fec74244cf2e048fe2fddade7dd28a7775065c25`, conclusion SUCCESS.
+* Artifact: ID `14561369810`, 11,685 bytes, SHA-256 `9f59c9f32ebd930ac486e89374b4e4d3734ef14b6c42078e78b2b13497836090`. Workflow URL: `https://github.com/Cadiocto/WhateverXe-MiniBook-X-N150/actions/runs/44588127908`.
+* Exact upstream pin `098e95820891f8a83fae679daece7fcf58b7b3a4` verified. All 12 production patches passed `git apply --check` and apply in the disposable upstream worktree. Python extraction passed. C compilation passed with `-std=c11 -Wall -Wextra -Werror`. Harness exit 0.
+
+### Production function bodies actually compiled and executed
+
+The harness extracted verbatim function bodies from the pinned upstream worktree after applying the 12 ROTFB patches, then compiled and invoked:
+
+* `gfxp_bm_detach()` — patched production function body.
+* `gfxp_fb_detach()` — patched production function body, including patch 0008's failure guard.
+* `vgatext_detach()` — unmodified pinned upstream production DDI entry point.
+
+The harness supplies host stubs for DDI services, property removal, mutex destruction, soft-state/free operations, and `rotfb_runtime_fini()`. It does **not** execute the illumos DDI framework or the real `rotfb_runtime_fini()` body in this binary. The fini result is injected as DDI_FAILURE/DDI_SUCCESS; the underlying pointer-mismatch refusal of the real runtime fini was already exercised in the Build #88 runtime test.
+
+### Executed outcomes
+
+* Failure injection:
+  * Direct call to actual patched `gfxp_fb_detach()` returned `DDI_FAILURE`; it did not remove the primary-controller property or destroy the softc mutex.
+  * Then actual `vgatext_detach()` was called with the same injected FINI failure.
+  * Actual wrapper returned `DDI_SUCCESS`, invoked both `gfxp_fb_softc_free()` and `ddi_soft_state_free()`, removed the minor node, did not remove the primary-controller property, did not destroy the mutex, and left simulated `rotfb_info.runtime_ready = 1`.
+  * Harness output:
+    ```text
+    GFXP_FB_DETACH_FAILURE_PROPAGATION=PASS
+    VGATEXT_DETACH_FAILURE_HANDLING=DEFECT_REPRODUCED
+    FAILURE_PATH_RESULT=DDI_SUCCESS_SOFTC_FREED_RUNTIME_STILL_READY
+    FAILURE_PATH_MUTEX_DESTROYED=NO
+    ```
+* Success injection:
+  * Actual `vgatext_detach()` returned `DDI_SUCCESS`.
+  * The expected cleanup calls were observed: fini success, primary-controller property removal, mutex destruction, inner softc free call, minor-node removal and outer soft-state free call.
+  * Harness output: `VGATEXT_DETACH_SUCCESS_PATH=PASS`.
+* Final harness result: `ROTFB_DDI_DETACH_INTEGRATION_HARNESS=PASS`.
+
+### Evidence boundaries
+
+* This is stronger than the previous static-only review: the actual patched detach function bodies and actual upstream vgatext detach body were compiled and executed in a host harness.
+* The host stubs count free calls rather than freeing the test objects, allowing the harness to inspect the post-call state. The source-level free calls are real; physical allocator behavior is not being claimed as host evidence.
+* The harness does not execute `vgatext_attach()`, `gfxp_fb_attach()`, `gfxp_bm_attach()`, `bitmap_devinit()`, `bitmap_setup_fb()`, `gfxp_fb_ioctl()`, `do_gfx_ioctl()`, `tem_info_init()`, LDI open accounting, the real DDI framework, or actual illumos mutex/soft-state services. Those remain static-only.
+* It also does not reproduce an actual concurrent callback racing with this failing DDI_DETACH. The source path proves the callback gate remains open when the real runtime FINI preflight rejects a pointer mismatch; the DDI harness proves the wrapper proceeds to free-call sites despite the returned failure. A concurrent UAF is therefore a credible conditional risk, not an executed UAF.
+* The result confirms the previously identified defect at the real production function-body level. No Generation ID was added. No production code or production patch was changed.
+* No callback-only Run #5 rerun and no Build #89. Build #88 remains the last OpenIndiana VM/nightly build; device validation remains NOT VERIFIED.
