@@ -1407,3 +1407,107 @@ The existing VIS C test checks the helper's position/origin state but does not e
 * Corrected the test-only race injection to use the already-extracted real `bitmap_polled_cursor()` callback and block inside the host `membar_producer()` implementation reached through the real production `rotfb_runtime_flush_rect()`. The callback remains active at the WC barrier while the production fini thread closes the gate and waits. No extractor expansion or production modification is required.
 * CI Run #3 artifact: `14556501827`, digest `62e63eae245aa5a55fd647cd3470ae6e406a83e440ffed6b52859ab983f6dff9`. Compiler exit 1 due the undefined test-only symbol above; no runtime test executed. No production defect or PASS is claimed from Run #3.
 * Next validation is a single corrected callback-only run. Build #89 remains prohibited.
+
+
+## 2026-11-19 — ROTFB runtime lifecycle, attach/detach and memory-safety audit
+
+### Revision and scope
+
+* Audit baseline before lifecycle test extension: `dddc36a17a9dd5eed36e2de8189cca1c25bdc8bb`. Latest production-code revision remains `a61c2ffb1f41d651a11c7f1cf9e719cad250a924` (Build #88 source). Test-only lifecycle commits: `c72d81c94a73bf217122beb06b4a73c75f12b19c`, `ff3b60610340251fbc7d266ff9741a6beb48e69d`, and `0dc1e2cec97db81f207709df587fb965303bf0a9`.
+* Compare Build #88 source to `0dc1e2c`: only `.github/rotfb-callback-tests/**` and `ROTFB_ENGINEERING_LOG.md` differ. No `illumo_rotfb/**` production source or patch changed. All 12 production patches and upstream pin `098e95820891f8a83fae679daece7fcf58b7b3a4` are unchanged.
+* Current callback-only Run #5: `44575376064`, Job `135741359480`, commit `0dc1e2cec97db81f207709df587fb965303bf0a9`, SUCCESS, attempt 1. Artifact `14555293610`, 24,076 bytes, SHA-256 `fa14d42a30aca13941770a58a577840375df7793018341fbe2612b710e67c0bc`; independently downloaded and verified with local `sha256sum`. Compiler, runtime and harness exit codes are all 0. YAML, shell and Python syntax checks PASS; exact upstream pin verified; all 12 patches passed check/apply.
+* Run #3 (`44575044354`) failed before runtime because the new test called `bitmap_polled_copy()`, which was not part of the callback extractor's selected function set. Run #4 (`44575289699`) failed before runtime because the test variable still had `struct vis_conscopy` type after switching to `bitmap_polled_cursor()`. Both were test-only compile defects; neither reached runtime nor indicated a production failure. Run #5 is the corrected successful execution.
+
+### Lifecycle state diagram
+
+```text
+BOOT_CONFIGURED
+  -> BOOT_SHADOW_ALLOCATED
+  -> BOOT_READY
+  -> DDI_ATTACH: gfxp_bm_attach installs polledio function pointers
+  -> VIS_DEVINIT: bitmap_devinit -> bitmap_setup_fb -> rotfb_runtime_init
+       -> validate boot fb metadata
+       -> WC map acquired
+       -> runtime shadow allocated
+       -> original fb/rotfb pointers and metadata saved
+       -> callback gate marked managed and remains closed
+       -> runtime pointers/metadata published; runtime_ready = true
+       -> initial full shadow-to-physical flush
+       -> callback gate opened
+  -> RUNTIME_READY / TEM may use polledio
+  -> VIS_DEVFINI (ioctl serialized by softc->lock) or DDI_DETACH
+       -> validate live ownership and pointer state
+       -> close callback gate
+       -> drain active polled callbacks
+       -> final full flush while WC mapping is valid
+       -> runtime_ready = false; copy runtime image back to boot shadow
+       -> restore fb_info and rotfb_info boot pointers/metadata
+       -> clear runtime ownership globals
+       -> unmap WC mapping
+       -> free runtime shadow
+       -> callback gate remains managed and closed
+  -> BOOT_READY / DETACHED
+  -> a later VIS_DEVINIT may acquire resources and reopen the gate
+```
+
+* DDI_ATTACH itself does not allocate the ROTFB runtime shadow or WC mapping. The actual runtime resource acquisition occurs later in VIS_DEVINIT. `gfxp_bm_attach()` assigns polledio callbacks and ops; `bitmap_devinit()` returns `data->polledio` only after `bitmap_setup_fb()` and runtime initialization succeed.
+* TEM's `VIS_DEVFINI` path is present in the production patch and calls `gfxp_bm_detach()`. The generic ioctl path holds `softc->lock`; therefore VIS_DEVINIT and VIS_DEVFINI are serialized against other ioctls. Polled callbacks do not take that mutex; they use the atomic gate. The DDI_DETACH path relies on DDI device detach/open-handle serialization and is not independently executed in the host harness.
+
+### Resource ownership
+
+| Resource | Acquisition | Release / restoration | Owner and audit result |
+|---|---|---|---|
+| Boot logical shadow | bootops `bsys_alloc()` in `rotfb_boot_shadow_init()` | Not freed by runtime fini; runtime image is copied back into it | Boot allocator / firmware-lifetime memory; intentionally retained |
+| Runtime shadow | `kmem_zalloc(logical_size, KM_NOSLEEP)` | `kmem_free(shadow, shadow_size)`, only after callback drain and pointer restoration | ROTFB runtime; allocation/free counts verified |
+| WC physical mapping | `gfxp_map_kernel_space(physical_paddr, physical_size, GFXP_MEMORY_WRITECOMBINED)` | `gfxp_unmap_kernel_space(mapping, map_size)`, only after callback drain and final flush | ROTFB runtime; map/unmap counts and mapping canaries covered by Build #88 runtime C test |
+| Framebuffer metadata | Existing boot-owned `fb_info_t`; no separate allocation | Saved changed fields restored by `rotfb_runtime_fini()` | Global framebuffer/boot state; pointer and geometry restoration checked |
+| Callback state | Static gate/managed atomics; polledio function pointers stored in softc | Gate closed after fini; function pointers are not explicitly cleared | No separately allocated callback resource; stale callbacks during the closed interval are rejected |
+
+### Attach and initialization failure matrix
+
+| Stage / failure | Observed/structural behavior | Evidence |
+|---|---|---|
+| Invalid physical/logical geometry or metadata | Rejected before mapping; no allocation or published pointer change | Build #88 runtime C test |
+| WC mapping returns NULL | Init fails; no shadow allocation and no unmap of a nonexistent mapping | Build #88 and Run #5 fault injection |
+| Shadow allocation fails after successful mapping | Init fails and the just-acquired WC mapping is unmapped exactly once; no shadow free | Build #88 and Run #5 fault injection |
+| Failure after successful shadow allocation | No later fallible operation currently returns an init error: pointer publication and initial flush are non-failing/void. There is therefore no post-allocation rollback branch to exercise in current code | Static production review; residual observability limitation |
+| Callback registration failure | `gfxp_bm_attach()` only assigns callback/function pointers and has no allocation or failure-returning registration operation. `VIS_DEVINIT` exports polledio only after runtime init succeeds | Static review; no fault point exists in current integration |
+| VIS_DEVINIT runtime init failure | `bitmap_setup_fb()` returns failure; runtime init's map/allocation rollback leaves boot pointers and readiness intact | Static integration review plus runtime C fault injection |
+| TEM rejects parameters after successful VIS_DEVINIT | Upstream TEM calls VIS_DEVFINI on version/depth/mode rejection after successful device init; VIS_DEVFINI routes through the runtime fini path | Pinned upstream `tem.c` review and production patch review |
+
+### Rollback, detach and reinitialization
+
+* `rotfb_runtime_init()` validates geometry, sizes, paddr and all expected boot pointers before resource acquisition. Mapping and shadow allocation happen before any live framebuffer metadata is changed. The allocation-failure branch unmaps the acquired WC mapping and returns without publishing runtime pointers.
+* After both resources exist, the routine snapshots the fields it changes, marks callback management active while the gate is closed, publishes the runtime pointers and metadata, marks runtime_ready, performs the initial flush, and only then opens the gate.
+* `rotfb_runtime_fini()` validates live pointers and sizes before closing the gate. Pointer mismatch returns failure without releasing resources; Build #88 test verified the live mapping/shadow remain usable after that rollback refusal.
+* Successful fini closes the gate, waits for active references, flushes the full runtime image while the WC mapping remains valid, copies the logical image to the boot-owned shadow, restores `fb_info_t` and `rotfb_info` pointers/metadata, clears runtime globals, unmaps, then frees the runtime shadow.
+* `gfxp_bm_detach()` invokes runtime fini only when ROTFB is configured and runtime_ready is true. After VIS_DEVFINI has already completed, a subsequent DDI_DETACH sees runtime_ready false and is a no-op success. Patch 0008 makes generic DDI_DETACH return immediately on bitmap detach failure before removing the primary-controller property or destroying the softc mutex.
+* Direct repeated `rotfb_runtime_fini()` is not idempotent-success: it returns DDI_FAILURE when runtime_ready is already false. The caller-level detach path is idempotent because it checks runtime_ready before calling fini. Run #5 verified repeated direct fini does not double-unmap or double-free.
+* Run #5 verified init idempotence while ready, init -> fini, stale callback rejection after fini, failed reattach at both map and shadow-allocation stages, successful reinit after both failures, a second fini, and repeated fini. Resource totals over the test lifecycle: `map=4, unmap=3, alloc=3, free=2` (one failed map has no matching unmap; one failed shadow allocation has a matching unmap but no free; two successful lifecycles each release one mapping and shadow).
+
+### Callback synchronization and memory safety
+
+* Production polled callback wrappers acquire a reference through `rotfb_runtime_callback_enter()` and release it through `rotfb_runtime_callback_exit()`. The gate is lock-free: the callback increments the count only if the quiescing bit is clear; fini atomically sets quiescing, so a callback either wins the increment and is drained or observes the closed bit and is rejected.
+* Run #5 adds a real extracted production `bitmap_polled_cursor()` callback on a worker thread and holds it inside the host `membar_producer()` reached through the real production `rotfb_runtime_flush_rect()`. A separate thread runs the real production `rotfb_runtime_fini()`. The test observed gate closure, confirmed fini did not complete and did not unmap/free while the callback reference was held, then released the callback and confirmed fini completed and restored boot pointers. Scenario D PASS, zero failures.
+* A production polled cursor callback invoked after fini but before reinitialization was rejected without framebuffer writes or an extra flush. No mutex is used by the polled callback.
+* VIS ioctl callback paths run under `gfxp_fb_ioctl()`'s `softc->lock`; VIS_DEVFINI uses the same lock. This serializes the ioctl callback path against VIS_DEVFINI. The host test does not compile or exercise the generic gfxp_fb ioctl/DDI attach/detach wrappers themselves.
+* Deadlock was not observed in the host callback/fini race. Actual illumos scheduler, interrupt context, DDI detach framework, WC cache attributes and hardware memory ordering remain untested on device.
+
+### Test execution classification
+
+* **Production C compiled/executed on host:** exact repository `illumo_rotfb/rotfb_runtime.c`; extracted patched upstream production functions `bitmap_polled_cursor`, `bitmap_cons_cursor`, `bitmap_display_cursor`, `bitmap_cons_copy`; runtime `rotfb_runtime_flush_rect()`, `rotfb_runtime_flush_all()`, `rotfb_runtime_fini()`, callback gate enter/exit, and `rotfb_copy_rows()`.
+* **Host-only test substitutes:** pthread scheduler/threads; `kmem_zalloc/free`; `gfxp_map_kernel_space/unmap`; `membar_producer` release-fence stub; `delay`; illumos atomic/DDI compatibility declarations. The host mapping stub does not reproduce actual WC mapping attributes or physical MMIO behavior.
+* **Static integration review only:** `gfxp_bm_attach()`, `gfxp_bm_detach()`, `bitmap_setup_fb()`, `bitmap_devinit()`, `gfxp_fb_attach()`, `gfxp_fb_detach()`, VIS_DEVFINI dispatch and TEM call path. These driver/DI DDI entry points are not compiled into the host harness.
+* **Build #88:** Run `44484097492`, Job `135423155355`, Artifact `14513261641`, SHA-256 `b48a60e75ee60ee05b47233b05cdabd2a6a5509087c642ad5a80db1b82a8a2ad`, SUCCESS. The OpenIndiana VM/nightly ran; six independent final linker targets passed. Its runtime C lifecycle test passed geometry validation, mapping failure, allocation rollback, 2,304,000-pixel initial CW sync, clipping/canaries, pointer-mismatch refusal, callback gate drain, stale callback rejection, and one fini/reinit/teardown cycle.
+* **Callback-only Run #5:** Run `44575376064`, Job `135741359480`, Artifact `14555293610`, SHA-256 `fa14d42a30aca13941770a58a577840375df7793018341fbe2612b710e67c0bc`, SUCCESS. Scenarios A/B/C from the prior callback suite and new lifecycle scenario D all PASS with zero failures. No OpenIndiana VM or kernel build ran in this callback-only workflow.
+
+### Findings and remaining risks
+
+* No reproducible production defect was found in the exercised runtime init/fini and callback gate paths. No production source or production patch was changed.
+* Runtime lifecycle concurrency is serialized at the integration boundary by the softc ioctl mutex for VIS_DEVINIT/VIS_DEVFINI; DDI_DETACH additionally relies on the DDI framework's no-open/busy-device serialization. The generic DDI_DETACH path itself was not stress-tested in host code.
+* The callback gate is global and not generation-tagged. It rejects stale callbacks while the gate remains closed after fini. A stale polledio pointer from a previous softc/lifecycle invoked only after a later successful init reopens the global gate would not be distinguishable by generation. The VIS_DEVFINI contract says the framebuffer is no longer used as a console; this cross-generation stale-pointer sequence was not established as a supported TEM call sequence and was not tested. Keep it as an explicit residual risk, not a claimed production defect.
+* There is no injectable failure after successful runtime shadow allocation because no later operation currently returns an error. The initial flush is void and cannot report a WC/device failure.
+* Callback registration itself has no failure-returning operation in the current gfxp bitmap attach path. The host harness cannot inject a failure into simple function-pointer assignments.
+* The real x86 WC barrier, actual DDI map/unmap, interrupt/polled execution context, actual driver detach, firmware boot allocator behavior under exhaustion, and Chuwi device stability have not been verified on hardware.
+* No Build #89 was started. No production patch, framebuffer geometry, clockwise mapping, shadow framebuffer architecture, VIS contract, upstream pin, firmware/GOP/DSI, touchpad or unrelated subsystem changed.
+* Readiness: **BUILD VERIFIED** for Build #88; **CODE/TEST VERIFIED** for the listed production runtime/callback paths on host; **DEVICE VERIFIED: NOT VERIFIED**.
