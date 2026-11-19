@@ -1275,3 +1275,27 @@ The existing VIS C test checks the helper's position/origin state but does not e
 * This is source inspection and test design only; no runtime harness was added or executed and no new PASS is claimed.
 * No source/workflow changes were made while Build #85 is active.
 * Next: retrieve Build #85's full original job log and artifact after completion; verify 12-patch application, nightly/final exit codes, and six real linker command/status/log/output tuples. Only then implement the direct runtime C harness if the build is complete and the branch remains unchanged.
+
+
+## 2026-11-19T04:03:59.480Z — Build #85 BUILD VERIFIED; production runtime C harness added
+
+* Branch: `gop-rotation-hook`; pinned upstream unchanged: `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+* HEAD before this change: `e7dac153447a67ccef4e1d156ca83ddcde3853fc`. The three commits after Build #85 source `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef` change only this journal; GitHub compare reports no source/workflow path changes.
+* Build #85: Run `44443394283`, Job `135289541389`, source `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`, workflow SUCCESS. Artifact `14494733806`; SHA256 `2a013a41e91e3320e0f6563440e6b548c405775b37a601b4f80b7ae2fccbac36`. The artifact was downloaded and its SHA256 independently matched GitHub's digest.
+* Patch-series regression on the exact pinned upstream: patches 0001–0012 applied in lexical order; pre-fix 0011 context failure and both pre-fix 0012 context failures were reproduced; corrected 0011/0012 applied; `PATCH_COUNT=12`, `UPSTREAM_PIN=098e95820891f8a83fae679daece7fcf58b7b3a4`, `PATCH_PATH_ALLOWLIST=PASS`, `PATCH_SERIES_STATUS=PASS`.
+* Host regression steps: geometry/model, linker evidence, VIS cursor C, and bitmap-copy C all PASS. OpenIndiana VM, runner finalization and artifact upload all completed successfully.
+* Exit-code files were independently inspected: `nightly-exit-code.txt`, `final-build-exit-code.txt`, and `ld-wrapper-watch-exit-code.txt` each contain exactly bytes `30 0a` (value 0 plus LF).
+* Nightly's original gate log ends with `Ended OS-Net source build` at 2026-11-19 03:22:50 UTC; targeted scan found no compiler/build/link error diagnostics. Nightly exit is 0; final build exit is 0.
+* All six real link invocations have one matching command/status/log tuple, identical process IDs, zero pair mismatches, object argument present, linker exit 0, no linker diagnostics, fresh nonempty ELF output:
+  * dboot i86pc PID 91677, 77,508 bytes, `rotfb_boot.o`: PASS.
+  * dboot i86xpv PID 92607, 65,104 bytes, `rotfb_boot.o`: PASS.
+  * unix.o i86pc PID 90215, 19,013,320 bytes, `rotfb_boot.o`: PASS.
+  * unix.o i86xpv PID 91952, 18,587,480 bytes, `rotfb_boot.o`: PASS.
+  * gfx_private i86pc PID 100170, 70,352 bytes, `rotfb_runtime.o`: PASS.
+  * gfx_private i86xpv PID 101257, 70,896 bytes, `rotfb_runtime.o`: PASS.
+* Compile-command capture contains three lines per architecture for each of rotfb_boot, rotfb_runtime, gfxp_bitmap and gfxp_fb. This is supplementary evidence; link acceptance is based on the actual linker status records and fresh ELF outputs above.
+* A BUILD VERIFIED is now YES for source revision `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`. It was not inferred from host tests or command presence. This does not establish Chuwi runtime/device behavior.
+* Production runtime C harness was developed locally against the exact production `illumo_rotfb/rotfb_runtime.c` blob `8d6e8000262fd97aee1325f0067a0f6871f39db5`. Command: `sh illumo_rotfb/tests/rotfb_runtime_test.sh`. It compiles the production C file with minimal host illumos/DDI stubs and tests invalid geometry rejection before mapping, mapping failure, allocation failure plus unmap rollback, initial shadow import, all 2,304,000 logical pixels mapped clockwise to physical coordinates, clipping/canaries including UINT32_MAX dimensions, pointer-mismatch rollback, callback gate quiesce/drain using pthread, stale callback rejection, successful fini/re-init and copy-back teardown. Result: `ROTFB production runtime C tests: PASS`. Repeated ten consecutive runs: PASS. Local ASan+UBSan run: PASS. These are host-stub tests, not an illumos kernel execution or proof of the platform memory model.
+* Files added in this commit: `illumo_rotfb/tests/rotfb_runtime_test.c`, `illumo_rotfb/tests/rotfb_runtime_test_compat.h`, `illumo_rotfb/tests/rotfb_runtime_test.sh`. `.github/workflows/build-illumos.yml` adds one host step to run the production runtime harness. No production C source, patch, Makefile, geometry or mapping behavior is changed.
+* Readiness: A BUILD VERIFIED YES for the Build #85 source SHA; B CODE/TEST VERIFIED remains PARTIAL until this harness passes in CI and production callback-level cursor visibility plus remaining lifecycle coverage are complete; C DEVICE VERIFIED NOT VERIFIED.
+* Next: validate this test/workflow commit with exactly one Build #86, inspect its full log/artifact, then continue B-level tests. Keep paddr/BAR2/framebuffer mapping identity unresolved and do not touch the physical Chuwi.

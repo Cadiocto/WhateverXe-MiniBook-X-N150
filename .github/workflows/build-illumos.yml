@@ -38,6 +38,9 @@ jobs:
           cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/rotfb-bitmap-copy-test" illumo_rotfb/tests/rotfb_bitmap_copy_test.c
           "$RUNNER_TEMP/rotfb-bitmap-copy-test"
 
+      - name: ROTFB runtime lifecycle production C regression tests
+        run: sh illumo_rotfb/tests/rotfb_runtime_test.sh
+
       - name: Initialize diagnostic artifact staging
         if: always()
         run: |
