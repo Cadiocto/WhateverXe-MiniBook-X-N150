@@ -16,7 +16,7 @@ for patch in "$PATCH_DIR"/*.patch; do
     if [ -n "$ACTUAL_ORDER" ]; then ACTUAL_ORDER="$ACTUAL_ORDER,$patch_name"; else ACTUAL_ORDER=$patch_name; fi
     PATCH_COUNT=$((PATCH_COUNT + 1))
 done
-if [ "$PATCH_COUNT" -ne 12 ] || [ "$ACTUAL_ORDER" != "$EXPECTED_ORDER" ]; then
+if [ "$PATCH_COUNT" -ne 13 ] || [ "$ACTUAL_ORDER" != "$EXPECTED_ORDER" ]; then
     echo "patch manifest drift: count=$PATCH_COUNT actual=$ACTUAL_ORDER expected=$EXPECTED_ORDER" >&2
     exit 1
 fi
@@ -172,8 +172,8 @@ run_target_case() {
         fi
         grep -q '^overall_status=PASS$' "$logdir/rotfb-build-evidence.txt"
         grep -q '^linker_wrapper_install_count=2$' "$logdir/rotfb-build-evidence.txt"
-        grep -q '^patches_expected=12$' "$logdir/rotfb-build-evidence.txt"
-        grep -q '^patches_applied=12$' "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_expected=13$' "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_applied=13$' "$logdir/rotfb-build-evidence.txt"
         grep -q '^patch_order_match=YES$' "$logdir/rotfb-build-evidence.txt"
         [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
         [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]

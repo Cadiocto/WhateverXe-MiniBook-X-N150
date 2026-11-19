@@ -58,6 +58,13 @@ jobs:
           echo "SHELL_SYNTAX=PASS" | tee -a "$LOG_DIR/static-validation.txt"
           echo "PYTHON_SYNTAX=PASS" | tee -a "$LOG_DIR/static-validation.txt"
 
+      - name: Run ROTFB linker evidence regression tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sh illumo_rotfb/tests/rotfb_link_evidence_test.sh
+          echo "LINKER_EVIDENCE_REGRESSION=PASS" | tee "$LOG_DIR/linker-evidence-regression.txt"
+
       - name: Fetch exact upstream illumos revision
         shell: bash
         run: |
@@ -87,6 +94,13 @@ jobs:
           printf 'actual_upstream_pin=%s\n' "$ACTUAL_PIN" | tee -a "$LOG_DIR/run-metadata.txt"
           test "$ACTUAL_PIN" = "$UPSTREAM_PIN"
           echo "UPSTREAM_PIN_VERIFIED=PASS" | tee "$LOG_DIR/upstream-pin-status.txt"
+      - name: Validate complete ROTFB patch series
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sh illumo_rotfb/tests/rotfb_patch_series_test.sh \
+            "$RUNNER_TEMP/illumos-gate-callback" "$ROTFB_DIR/patches" "$RUNNER_TEMP"
+          echo "PATCH_SERIES_REGRESSION=PASS" | tee "$LOG_DIR/patch-series-regression.txt"
 
       - name: Run real patched production callback harness
         shell: bash

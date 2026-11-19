@@ -1,6 +1,6 @@
 #!/bin/sh
 # Apply the complete ROTFB patch series to a disposable worktree at the pinned
-# illumos revision. Reproduce historical 0011 and both 0012 context failures
+# illumos revision. Reproduce historical 0011 and both 0012 context failures, then apply 0013
 # before accepting the corrected patches.
 set -eu
 
@@ -42,8 +42,8 @@ trap cleanup EXIT HUP INT TERM
 git -C "$UPSTREAM" worktree add --detach "$TEST_TREE" "$PIN"
 
 set -- "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch
-[ "$#" -eq 12 ] || {
-    echo "expected exactly 12 ROTFB patches, found $#" >&2
+[ "$#" -eq 13 ] || {
+    echo "expected exactly 13 ROTFB patches, found $#" >&2
     exit 1
 }
 EXPECTED_PATCH_ORDER=$(cat <<'EXPECTED_PATCHES'
@@ -59,6 +59,7 @@ EXPECTED_PATCH_ORDER=$(cat <<'EXPECTED_PATCHES'
 0010-gfxp-bitmap-vis-safety.patch
 0011-gfxp-bitmap-cursor-state.patch
 0012-gfxp-bitmap-copy-helper.patch
+0013-vgatext-detach-failure-propagation.patch
 EXPECTED_PATCHES
 )
 ACTUAL_PATCH_ORDER=$(for p in "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch; do basename "$p"; done)
@@ -153,6 +154,16 @@ git -C "$TEST_TREE" apply --check "$COPY_PATCH"
 git -C "$TEST_TREE" apply "$COPY_PATCH"
 echo "APPLIED 0012-gfxp-bitmap-copy-helper.patch"
 
+DETACH_PATCH="$PATCH_DIR/0013-vgatext-detach-failure-propagation.patch"
+[ -f "$DETACH_PATCH" ] || { echo "missing 0013 vgatext detach failure propagation patch" >&2; exit 1; }
+git -C "$TEST_TREE" apply --check "$DETACH_PATCH"
+git -C "$TEST_TREE" apply "$DETACH_PATCH"
+echo "APPLIED 0013-vgatext-detach-failure-propagation.patch"
+PATCHED_VGATEXT="$TEST_TREE/usr/src/uts/intel/io/vgatext/vgatext.c"
+grep -F "error = gfxp_fb_detach" "$PATCHED_VGATEXT" >/dev/null
+grep -F "if (error != DDI_SUCCESS)" "$PATCHED_VGATEXT" >/dev/null
+grep -F "return (error);" "$PATCHED_VGATEXT" >/dev/null
+
 PATCHED_BITMAP="$TEST_TREE/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c"
 grep -F '#include <sys/rotfb_copy.h>' "$PATCHED_BITMAP" >/dev/null
 grep -F 'rotfb_copy_rows(' "$PATCHED_BITMAP" >/dev/null
@@ -165,6 +176,7 @@ usr/src/uts/i86pc/Makefile.files
 usr/src/uts/i86pc/boot/boot_fb.c
 usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
+usr/src/uts/intel/io/vgatext/vgatext.c
 usr/src/uts/i86pc/sys/framebuffer.h
 usr/src/uts/i86xpv/Makefile.files
 EXPECTED
@@ -178,7 +190,7 @@ fi
 rm -f "$TMP_PARENT/rotfb-patch-series-expected-$$.txt" \
     "$TMP_PARENT/rotfb-patch-series-actual-$$.txt"
 
-echo "PATCH_COUNT=12"
+echo "PATCH_COUNT=13"
 echo "UPSTREAM_PIN=$PIN"
 echo "PATCH_PATH_ALLOWLIST=PASS"
 echo "PATCH_SERIES_STATUS=PASS"

@@ -53,7 +53,7 @@ for patch in "$PATCH_DIR"/*.patch; do
 	echo "PATCH_APPLIED=$name" | tee -a "$PATCH_LOG"
 	PATCH_COUNT=$((PATCH_COUNT + 1))
 done
-test "$PATCH_COUNT" -eq 12
+test "$PATCH_COUNT" -eq 13
 echo "UPSTREAM_PIN=$UPSTREAM_PIN" | tee "$LOG_DIR/harness-metadata.log"
 echo "PATCH_COUNT=$PATCH_COUNT" | tee -a "$LOG_DIR/harness-metadata.log"
 git -C "$WORKTREE" diff --check

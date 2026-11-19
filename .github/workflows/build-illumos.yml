@@ -1,11 +1,6 @@
 name: illumos framebuffer rotation build
 
 on:
-  push:
-    branches: [gop-rotation-hook]
-    paths:
-      - "illumo_rotfb/**"
-      - ".github/workflows/build-illumos.yml"
   workflow_dispatch:
 
 concurrency:

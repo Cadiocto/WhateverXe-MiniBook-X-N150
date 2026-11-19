@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/rotfb-ddi-integration-tests/**"
       - ".github/workflows/rotfb-ddi-integration.yml"
+      - "illumo_rotfb/patches/*.patch"
 
 concurrency:
   group: rotfb-ddi-integration
