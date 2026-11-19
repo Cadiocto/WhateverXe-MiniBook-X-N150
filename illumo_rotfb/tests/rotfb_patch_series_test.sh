@@ -176,9 +176,9 @@ usr/src/uts/i86pc/Makefile.files
 usr/src/uts/i86pc/boot/boot_fb.c
 usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
 usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c
-usr/src/uts/intel/io/vgatext/vgatext.c
 usr/src/uts/i86pc/sys/framebuffer.h
 usr/src/uts/i86xpv/Makefile.files
+usr/src/uts/intel/io/vgatext/vgatext.c
 EXPECTED
 if ! cmp -s "$TMP_PARENT/rotfb-patch-series-expected-$$.txt" \
     "$TMP_PARENT/rotfb-patch-series-actual-$$.txt"; then
