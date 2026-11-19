@@ -1234,3 +1234,44 @@ The next source/workflow commit adds patch 0012 and a C test for the existing al
 * This entry records source inspection and a test design only. No runtime C harness was added or executed; no new PASS is claimed.
 * Build #85 remains the only active target run. No source/workflow change was made during it.
 * Next step: inspect Build #85 original log/artifact when complete; only then add the production-runtime harness and one source commit if its design can be kept isolated and testable.
+
+
+## ROTFB RUNTIME C TEST HARNESS DESIGN — additional source audit
+
+* Timestamp UTC: 2026-11-19T03:09:45.355Z
+* Branch: `gop-rotation-hook`
+* HEAD before journal entry: `f1bf05f4b3a467500b863829bc2c9d35e09f736a`
+* Active source revision: `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`
+* Build #85: run `44443394283`, job `135289541389`; geometry/model, linker-evidence, VIS cursor C and bitmap-copy C host steps PASS; OpenIndiana VM remains IN_PROGRESS. No completed nightly, final-build, six-link or artifact result is claimed.
+
+### Production runtime audit (read-only)
+
+Inspected `illumo_rotfb/rotfb_runtime.c`, `rotfb_boot.c`, patch 0007 callback wrappers, patches 0005/0008 lifecycle handling, patch 0011 cursor state and the current C tests.
+
+* Runtime init maps the physical WC surface, allocates a separate logical shadow, unmaps the just-created mapping if shadow allocation fails, copies the boot logical image, saves the boot-owned pointers/geometry, publishes the runtime surfaces, performs a full flush, then opens the callback gate.
+* Runtime flush clips width/height by subtraction before calculating end coordinates. With the fixed 1920x1200 logical geometry, the clockwise mapping is `px = 1199 - y`, `py = x`; byte offsets use 64-bit intermediates. The function ends with `membar_producer()`.
+* Runtime fini validates ownership and all published pointers before closing the gate. It then sets QUIESCING, waits for active callback references to drain, flushes while the WC mapping is valid, copies the runtime shadow back to the boot-owned logical shadow, restores saved pointers/geometry, then unmaps and frees the runtime allocations. Validation failure occurs before gate closure and leaves the runtime state intact.
+* The three polled callback wrappers in patch 0007 call `rotfb_runtime_callback_enter()`, reject a negative result, invoke the production copy/display/cursor callback, and call `rotfb_runtime_callback_exit()` after return. The unmanaged state returns zero and permits the legacy path; after runtime management is enabled, the gate controls callback entry.
+* No new functional runtime defect was established in this read-only pass. No production source was changed.
+
+### Direct production C harness design (not yet implemented)
+
+The next useful test is to compile the actual `rotfb_runtime.c` translation unit against minimal host compatibility headers, not a parallel model. The harness can provide stubs for framebuffer types, atomic operations, `gfxp_map_kernel_space`/`gfxp_unmap_kernel_space`, `kmem_zalloc`/`kmem_free`, `bcopy`, `delay` and `membar_producer`.
+
+Planned direct cases:
+
+1. Inject map failure; require DDI_FAILURE, no shadow allocation, no pointer publication and no unmap of an uncreated mapping.
+2. Inject shadow allocation failure; require exactly one unmap and unchanged boot pointers/readiness.
+3. Successful init with a patterned 1920x1200 logical shadow; compare all 2,304,000 BGRA pixels against the 1200x1920 physical buffer using the production flush routine and clockwise transform.
+4. Exercise edge clipping with UINT32_MAX width/height and invalid origins against guard bytes around the fake mapping.
+5. Corrupt one published pointer before fini; require DDI_FAILURE without gate closure, unmap/free or pointer mutation, then restore it and complete fini.
+6. Hold a real callback reference, run fini on a pthread, wait until new callback entries are rejected, release the held reference, and verify fini drains before freeing resources.
+7. Verify fini copies the runtime image back to the boot shadow, restores geometry/pointers, unmaps/frees exactly once, rejects stale callbacks, and permits a later clean re-init.
+
+The existing VIS C test checks the helper's position/origin state but does not execute `bitmap_cons_cursor()`; its local `visible` member is not passed to `rotfb_vis_cursor_update()`. A callback-level test still needs either a host harness around the production callback or a production state-transition helper used by that callback.
+
+### Validation and next step
+
+* This is source inspection and test design only; no runtime harness was added or executed and no new PASS is claimed.
+* No source/workflow changes were made while Build #85 is active.
+* Next: retrieve Build #85's full original job log and artifact after completion; verify 12-patch application, nightly/final exit codes, and six real linker command/status/log/output tuples. Only then implement the direct runtime C harness if the build is complete and the branch remains unchanged.
