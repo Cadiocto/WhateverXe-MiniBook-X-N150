@@ -3,6 +3,23 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 HELPER="$SCRIPT_DIR/../rotfb_link_evidence.sh"
+PATCH_DIR="$SCRIPT_DIR/../patches"
+LC_ALL=C
+export LC_ALL
+EXPECTED_ORDER=$(sed -n "s/^[[:space:]]*EXPECTED_ORDER='\(.*\)'$/\1/p" "$HELPER")
+[ -n "$EXPECTED_ORDER" ] || { echo "missing EXPECTED_ORDER in linker evidence helper" >&2; exit 1; }
+ACTUAL_ORDER=
+PATCH_COUNT=0
+for patch in "$PATCH_DIR"/*.patch; do
+    [ -f "$patch" ] || continue
+    patch_name=$(basename "$patch")
+    if [ -n "$ACTUAL_ORDER" ]; then ACTUAL_ORDER="$ACTUAL_ORDER,$patch_name"; else ACTUAL_ORDER=$patch_name; fi
+    PATCH_COUNT=$((PATCH_COUNT + 1))
+done
+if [ "$PATCH_COUNT" -ne 12 ] || [ "$ACTUAL_ORDER" != "$EXPECTED_ORDER" ]; then
+    echo "patch manifest drift: count=$PATCH_COUNT actual=$ACTUAL_ORDER expected=$EXPECTED_ORDER" >&2
+    exit 1
+fi
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/rotfb-link-evidence.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
@@ -51,19 +68,13 @@ write_compile_evidence() {
 
 write_patch_evidence() {
     logdir=$1
-    cat > "$logdir/patch-apply.log" <<'PATCHES'
-APPLIED 0001-framebuffer-metadata.patch
-APPLIED 0002-boot-fb-rotation.patch
-APPLIED 0003-gfxp-bitmap-tem-rotation.patch
-APPLIED 0004-Makefile-files.patch
-APPLIED 0005-rotfb-lifecycle-hardening.patch
-APPLIED 0006-rotfb-console-contract-and-copy-safety.patch
-APPLIED 0007-gfxp-bitmap-bounds-hardening.patch
-APPLIED 0008-gfxp-detach-failure-safety.patch
-APPLIED 0009-gfxp-bitmap-wide-row-offsets.patch
-APPLIED 0010-gfxp-bitmap-vis-safety.patch
-APPLIED 0011-gfxp-bitmap-cursor-state.patch
-PATCHES
+    saved_ifs=$IFS
+    IFS=,
+    : > "$logdir/patch-apply.log"
+    for patch_name in $EXPECTED_ORDER; do
+        printf 'APPLIED %s\n' "$patch_name" >> "$logdir/patch-apply.log"
+    done
+    IFS=$saved_ifs
     printf '0\n' > "$logdir/nightly-exit-code.txt"
 }
 
@@ -149,6 +160,10 @@ run_target_case() {
     wait "$watch_pid"
     write_compile_evidence "$logdir"
     write_patch_evidence "$logdir"
+    if [ "$mode" = shortpatch ]; then
+        sed '$d' "$logdir/patch-apply.log" > "$logdir/patch-apply.short"
+        mv "$logdir/patch-apply.short" "$logdir/patch-apply.log"
+    fi
 
     if [ "$mode" = success ]; then
         if ! sh "$HELPER" finalize "$workspace" "$logdir"; then
@@ -157,7 +172,1116 @@ run_target_case() {
         fi
         grep -q '^overall_status=PASS$' "$logdir/rotfb-build-evidence.txt"
         grep -q '^linker_wrapper_install_count=2$' "$logdir/rotfb-build-evidence.txt"
-        grep -q '^patch_order_match=YES$' "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_expected=12
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        if [ "$mode" = shortpatch ]; then
+            grep -q '^patches_applied=11
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_target_case shortpatch
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_applied=12
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patch_order_match=YES
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+            grep -q '^patch_order_match=NO
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_applied=12
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patch_order_match=YES
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+            grep -q '^overall_status=FAIL
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_applied=12
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patch_order_match=YES
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+            return 0
+        fi
+        grep -q '^overall_status=INCOMPLETE
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_applied=12
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patch_order_match=YES
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patches_applied=12
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
+        grep -q '^patch_order_match=YES
+        [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
+        [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
+        grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q "cwd=$workspace/usr/src/uts/i86xpv/gfx_private" "$logdir/linker-commands.txt"
+        grep -F -q 'output=obj64/gfx_private' "$logdir/linker-commands.txt"
+    else
+        if sh "$HELPER" finalize "$workspace" "$logdir"; then
+            echo "evidence incorrectly accepted $mode target state" >&2
+            return 1
+        fi
+        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
+        case "$mode" in
+            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
+        esac
+    fi
+}
+
+run_failure_case() {
+    workspace="$TMP/failure-workspace"
+    logdir="$TMP/failure-logs"
+    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
+    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
+    make_fake_linker "$ldpath"
+    sh "$HELPER" prepare "$workspace" "$logdir"
+    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
+    watch_pid=$!
+    wait_for_file "$logdir/ld-wrapper-ready.txt"
+
+    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
+        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
+        echo "expected fake linker failure was not propagated" >&2
+        : > "$logdir/ld-wrapper-stop"
+        wait "$watch_pid" || true
+        return 1
+    else
+        rc=$?
+        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
+    fi
+
+    : > "$logdir/ld-wrapper-stop"
+    wait "$watch_pid"
+    write_patch_evidence "$logdir"
+    if sh "$HELPER" finalize "$workspace" "$logdir"; then
+        echo "evidence incorrectly accepted a failed linker" >&2
+        return 1
+    fi
+    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
+}
+
+run_target_case success
+run_target_case missing
+run_target_case stale
+run_target_case wrongcwd
+run_failure_case
+printf '%s\n' 'ROTFB linker evidence tests: PASS'
+ "$logdir/rotfb-build-evidence.txt"
         [ "$(grep -c '^status=PASS$' "$logdir/rotfb-build-evidence.txt")" -eq 6 ]
         [ "$(wc -l < "$logdir/linker-status.tsv" | tr -d ' ')" -eq 6 ]
         grep -F -q "cwd=$workspace/usr/src/uts/i86pc/gfx_private" "$logdir/linker-commands.txt"

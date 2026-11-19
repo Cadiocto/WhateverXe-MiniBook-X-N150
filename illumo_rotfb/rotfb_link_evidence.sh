@@ -435,10 +435,12 @@ finalize)
     if [ -f "$LOGDIR/patch-apply.log" ]; then
         APPLIED=$(grep -c '^APPLIED ' "$LOGDIR/patch-apply.log" || true)
         PATCH_ORDER=$(awk '/^APPLIED / { if (n++) printf ","; printf "%s", $2 }' "$LOGDIR/patch-apply.log")
-        EXPECTED_ORDER='0001-framebuffer-metadata.patch,0002-boot-fb-rotation.patch,0003-gfxp-bitmap-tem-rotation.patch,0004-Makefile-files.patch,0005-rotfb-lifecycle-hardening.patch,0006-rotfb-console-contract-and-copy-safety.patch,0007-gfxp-bitmap-bounds-hardening.patch,0008-gfxp-detach-failure-safety.patch,0009-gfxp-bitmap-wide-row-offsets.patch,0010-gfxp-bitmap-vis-safety.patch,0011-gfxp-bitmap-cursor-state.patch'
+        EXPECTED_ORDER='0001-framebuffer-metadata.patch,0002-boot-fb-rotation.patch,0003-gfxp-bitmap-tem-rotation.patch,0004-Makefile-files.patch,0005-rotfb-lifecycle-hardening.patch,0006-rotfb-console-contract-and-copy-safety.patch,0007-gfxp-bitmap-bounds-hardening.patch,0008-gfxp-detach-failure-safety.patch,0009-gfxp-bitmap-wide-row-offsets.patch,0010-gfxp-bitmap-vis-safety.patch,0011-gfxp-bitmap-cursor-state.patch,0012-gfxp-bitmap-copy-helper.patch'
+        EXPECTED_COUNT=$(printf '%s\n' "$EXPECTED_ORDER" | awk -F, '{ print NF }')
+        echo "patches_expected=$EXPECTED_COUNT" >> "$EVIDENCE"
         echo "patches_applied=$APPLIED" >> "$EVIDENCE"
         echo "patch_order=$PATCH_ORDER" >> "$EVIDENCE"
-        if [ "$APPLIED" -ne 11 ] || [ "$PATCH_ORDER" != "$EXPECTED_ORDER" ]; then
+        if [ "$APPLIED" -ne "$EXPECTED_COUNT" ] || [ "$PATCH_ORDER" != "$EXPECTED_ORDER" ]; then
             OVERALL=FAIL
             echo "patch_order_match=NO" >> "$EVIDENCE"
         else
