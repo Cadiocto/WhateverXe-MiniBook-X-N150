@@ -119,7 +119,7 @@ printf '%s\n' "$RUNTIME_RC" > "$LOG_DIR/runtime.exit-code"
 echo "RUNTIME_EXIT_CODE=$RUNTIME_RC"
 cat "$RUNTIME_STDOUT"
 cat "$RUNTIME_STDERR" >&2
-for scenario in A B C; do
+for scenario in A B C D; do
 	result_file="$LOG_DIR/scenario-$scenario.result.txt"
 	if grep "^SCENARIO_${scenario}_RESULT=" "$RUNTIME_STDOUT" >"$result_file"; then
 		:

@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <sched.h>
 
 #include "rotfb_bitmap_callback_test_compat.h"
 #include <sys/rotfb.h>
@@ -27,6 +29,15 @@ static size_t shadow_allocation_size;
 static uint32_t flush_count;
 static uint32_t move_count;
 static unsigned int failures;
+static int block_next_memmove;
+static int memmove_blocked;
+static int release_memmove;
+static int fail_map;
+static int fail_alloc;
+static unsigned int map_calls;
+static unsigned int unmap_calls;
+static unsigned int alloc_calls;
+static unsigned int free_calls;
 
 void *__real_memmove(void *, const void *, size_t);
 
@@ -34,6 +45,11 @@ void *
 __wrap_memmove(void *dst, const void *src, size_t size)
 {
 	move_count++;
+	if (__atomic_exchange_n(&block_next_memmove, 0, __ATOMIC_ACQ_REL)) {
+		__atomic_store_n(&memmove_blocked, 1, __ATOMIC_RELEASE);
+		while (!__atomic_load_n(&release_memmove, __ATOMIC_ACQUIRE))
+			(void) sched_yield();
+	}
 	return (__real_memmove(dst, src, size));
 }
 
@@ -93,7 +109,10 @@ kmem_zalloc(size_t size, int flags)
 {
 	uint8_t *allocation;
 
+	alloc_calls++;
 	(void) flags;
+	if (fail_alloc)
+		return (NULL);
 	allocation = malloc(size + 2U * GUARD_BYTES);
 	if (allocation == NULL)
 		return (NULL);
@@ -108,8 +127,10 @@ void
 kmem_free(void *ptr, size_t size)
 {
 	(void) size;
-	if (ptr != NULL)
+	if (ptr != NULL) {
 		free((uint8_t *)ptr - GUARD_BYTES);
+		free_calls++;
+	}
 	shadow_allocation = NULL;
 	shadow_allocation_size = 0;
 }
@@ -117,9 +138,12 @@ kmem_free(void *ptr, size_t size)
 void *
 gfxp_map_kernel_space(uint64_t paddr, size_t size, int attr)
 {
+	map_calls++;
 	(void) paddr;
 	(void) size;
 	(void) attr;
+	if (fail_map)
+		return (NULL);
 	return (physical_memory);
 }
 
@@ -128,6 +152,7 @@ gfxp_unmap_kernel_space(gfxp_kva_t mapping, size_t size)
 {
 	(void) mapping;
 	(void) size;
+	unmap_calls++;
 }
 
 static uint32_t
@@ -733,6 +758,195 @@ test_copy_callback(struct gfxp_fb_softc *softc)
 	    "negative target coordinate is rejected");
 }
 
+typedef struct callback_race_arg {
+	struct gfxp_fb_softc *softc;
+	struct vis_conscopy request;
+} callback_race_arg_t;
+
+typedef struct fini_race_arg {
+	fb_info_t *fb;
+	int result;
+	int done;
+} fini_race_arg_t;
+
+static void *
+run_blocked_copy_callback(void *arg)
+{
+	callback_race_arg_t *a = arg;
+
+	bitmap_polled_copy((struct vis_polledio_arg *)a->softc,
+	    &a->request);
+	return (NULL);
+}
+
+static void *
+run_fini_thread(void *arg)
+{
+	fini_race_arg_t *a = arg;
+
+	a->result = rotfb_runtime_fini(a->fb);
+	__atomic_store_n(&a->done, 1, __ATOMIC_RELEASE);
+	return (NULL);
+}
+
+static void
+test_runtime_lifecycle_race_and_recovery(struct gfxp_fb_softc *softc)
+{
+	fb_info_t *fb = &softc->console->fb;
+	callback_race_arg_t callback_arg;
+	fini_race_arg_t fini_arg;
+	pthread_t callback_thread, fini_thread;
+	struct vis_conscopy stale_request;
+	uint64_t restored_checksum;
+	unsigned int maps_before, unmaps_before, allocs_before, frees_before;
+	uint32_t moves_before;
+	int gate_closed = 0;
+	unsigned int i;
+
+	maps_before = map_calls;
+	allocs_before = alloc_calls;
+	check(rotfb_runtime_init(fb) == DDI_SUCCESS,
+	    "runtime init is idempotent while the same lifecycle is ready");
+	check(map_calls == maps_before && alloc_calls == allocs_before,
+	    "idempotent runtime init allocates and maps nothing");
+
+	set_copy_pattern(fb, 100, 100, 0x6000);
+	callback_arg.softc = softc;
+	callback_arg.request = make_copy(100, 100, 101, 101, 120, 120);
+	fini_arg.fb = fb;
+	fini_arg.result = DDI_FAILURE;
+	fini_arg.done = 0;
+	__atomic_store_n(&memmove_blocked, 0, __ATOMIC_RELEASE);
+	__atomic_store_n(&release_memmove, 0, __ATOMIC_RELEASE);
+	__atomic_store_n(&block_next_memmove, 1, __ATOMIC_RELEASE);
+
+	check(pthread_create(&callback_thread, NULL,
+	    run_blocked_copy_callback, &callback_arg) == 0,
+	    "start real production polled copy callback thread");
+	for (i = 0; i < 10000000; i++) {
+		if (__atomic_load_n(&memmove_blocked, __ATOMIC_ACQUIRE))
+			break;
+		(void) sched_yield();
+	}
+	check(__atomic_load_n(&memmove_blocked, __ATOMIC_ACQUIRE),
+	    "production callback reaches the controlled memmove hold point");
+
+	unmaps_before = unmap_calls;
+	frees_before = free_calls;
+	check(pthread_create(&fini_thread, NULL, run_fini_thread,
+	    &fini_arg) == 0, "start runtime fini while production callback is active");
+	for (i = 0; i < 10000000; i++) {
+		int entered = rotfb_runtime_callback_enter();
+
+		if (entered < 0) {
+			gate_closed = 1;
+			break;
+		}
+		if (entered > 0)
+			rotfb_runtime_callback_exit(entered);
+		(void) sched_yield();
+	}
+	check(gate_closed, "fini closes callback gate during active production copy");
+	check(!__atomic_load_n(&fini_arg.done, __ATOMIC_ACQUIRE),
+	    "fini waits while the real production callback holds its reference");
+	check(unmap_calls == unmaps_before && free_calls == frees_before,
+	    "fini does not unmap WC memory or free shadow before callback exit");
+
+	__atomic_store_n(&release_memmove, 1, __ATOMIC_RELEASE);
+	(void) pthread_join(callback_thread, NULL);
+	(void) pthread_join(fini_thread, NULL);
+	check(fini_arg.result == DDI_SUCCESS,
+	    "fini succeeds after the production callback exits");
+	check(__atomic_load_n(&fini_arg.done, __ATOMIC_ACQUIRE),
+	    "fini thread completes after callback drain");
+	check(!rotfb_info.runtime_ready && rotfb_info.boot_ready &&
+	    fb->fb == boot_memory && fb->shadow_fb == NULL &&
+	    fb->physical.fb == physical_memory &&
+	    rotfb_info.logical_fb == boot_memory &&
+	    rotfb_info.physical_fb == physical_memory,
+	    "fini restores all boot framebuffer pointers and readiness");
+	check(unmap_calls == unmaps_before + 1 &&
+	    free_calls == frees_before + 1,
+	    "fini releases exactly one WC mapping and one runtime shadow");
+
+	/* A stale polled callback is rejected after fini, before softc access. */
+	stale_request = make_copy(100, 100, 101, 101, 120, 120);
+	moves_before = move_count;
+	restored_checksum = buffer_checksum(boot_memory, LOGICAL_BYTES,
+	    physical_memory, PHYSICAL_BYTES);
+	bitmap_polled_copy((struct vis_polledio_arg *)softc, &stale_request);
+	check(move_count == moves_before &&
+	    buffer_checksum(boot_memory, LOGICAL_BYTES, physical_memory,
+	    PHYSICAL_BYTES) == restored_checksum,
+	    "stale production polled callback after fini is rejected without writes");
+	check(rotfb_runtime_fini(fb) == DDI_FAILURE,
+	    "direct repeated runtime fini reports already-finished lifecycle");
+	check(unmap_calls == unmaps_before + 1 &&
+	    free_calls == frees_before + 1,
+	    "repeated fini does not double-unmap or double-free");
+
+	/* Fault-inject both acquisition stages on a reattach after a fini. */
+	maps_before = map_calls;
+	allocs_before = alloc_calls;
+	unmaps_before = unmap_calls;
+	frees_before = free_calls;
+	fail_map = 1;
+	check(rotfb_runtime_init(fb) == DDI_FAILURE,
+	    "reinit rejects WC mapping failure after a completed lifecycle");
+	check(map_calls == maps_before + 1 && alloc_calls == allocs_before &&
+	    unmap_calls == unmaps_before && free_calls == frees_before,
+	    "failed WC remap leaves no allocation or unmap to perform");
+	check(fb->fb == boot_memory && fb->shadow_fb == NULL &&
+	    fb->physical.fb == physical_memory && !rotfb_info.runtime_ready &&
+	    rotfb_info.boot_ready,
+	    "failed WC remap leaves restored boot metadata intact");
+
+	fail_map = 0;
+	fail_alloc = 1;
+	check(rotfb_runtime_init(fb) == DDI_FAILURE,
+	    "reinit rejects shadow allocation failure after a completed lifecycle");
+	check(map_calls == maps_before + 2 &&
+	    alloc_calls == allocs_before + 1 &&
+	    unmap_calls == unmaps_before + 1 && free_calls == frees_before,
+	    "failed shadow allocation unmaps exactly once and frees no absent shadow");
+	check(fb->fb == boot_memory && fb->shadow_fb == NULL &&
+	    fb->physical.fb == physical_memory && !rotfb_info.runtime_ready &&
+	    rotfb_info.boot_ready,
+	    "failed shadow allocation preserves boot framebuffer metadata");
+
+	fail_alloc = 0;
+	check(rotfb_runtime_init(fb) == DDI_SUCCESS,
+	    "reinit succeeds after map and allocation failures");
+	check(rotfb_info.runtime_ready && fb->fb == fb->shadow_fb &&
+	    fb->physical.fb == physical_memory,
+	    "successful reinit republishes runtime shadow and WC mapping");
+	check(rotfb_runtime_init(fb) == DDI_SUCCESS,
+	    "second init on reinitialized runtime remains idempotent");
+	check(map_calls == maps_before + 3 &&
+	    alloc_calls == allocs_before + 2 &&
+	    unmap_calls == unmaps_before + 1 &&
+	    free_calls == frees_before,
+	    "reinitialized runtime owns exactly one mapping and one shadow");
+
+	check(rotfb_runtime_fini(fb) == DDI_SUCCESS,
+	    "second lifecycle fini succeeds");
+	check(!rotfb_info.runtime_ready && rotfb_info.boot_ready &&
+	    fb->fb == boot_memory && fb->shadow_fb == NULL &&
+	    fb->physical.fb == physical_memory,
+	    "second lifecycle restores boot state");
+	check(unmap_calls == unmaps_before + 2 &&
+	    free_calls == frees_before + 1,
+	    "second lifecycle releases its resources exactly once");
+	check(rotfb_runtime_fini(fb) == DDI_FAILURE,
+	    "second lifecycle repeated fini is safely rejected");
+	check(unmap_calls == unmaps_before + 2 &&
+	    free_calls == frees_before + 1,
+	    "second repeated fini does not double-release resources");
+
+	printf("RUNTIME_LIFECYCLE_RESOURCE_COUNTS=map:%u,unmap:%u,alloc:%u,free:%u\n",
+	    map_calls, unmap_calls, alloc_calls, free_calls);
+}
+
 static void
 check_guards(void)
 {
@@ -866,10 +1080,17 @@ main(void)
 		    failures == before ? "PASS" : "FAIL", failures - before);
 	}
 
-	check(rotfb_runtime_fini(&console.fb) == DDI_SUCCESS,
-	    "production runtime teardown succeeds");
-	check(console.fb.fb == boot_memory && console.fb.shadow_fb == NULL,
-	    "runtime teardown restores boot framebuffer pointers");
+	{
+		unsigned int before = failures;
+
+		test_runtime_lifecycle_race_and_recovery(&softc);
+		check_guards();
+		printf("SCENARIO_D_RESULT=%s failures=%u\n",
+		    failures == before ? "PASS" : "FAIL", failures - before);
+	}
+	check(console.fb.fb == boot_memory && console.fb.shadow_fb == NULL &&
+	    !rotfb_info.runtime_ready && rotfb_info.boot_ready,
+	    "all runtime lifecycle scenarios finish in restored boot state");
 
 	free(physical_allocation);
 	free(boot_allocation);
