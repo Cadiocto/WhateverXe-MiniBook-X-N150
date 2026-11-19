@@ -62,8 +62,15 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          sh illumo_rotfb/tests/rotfb_link_evidence_test.sh
-          echo "LINKER_EVIDENCE_REGRESSION=PASS" | tee "$LOG_DIR/linker-evidence-regression.txt"
+          if sh -x illumo_rotfb/tests/rotfb_link_evidence_test.sh >"$LOG_DIR/linker-evidence-regression.log" 2>&1; then
+            cat "$LOG_DIR/linker-evidence-regression.log"
+            echo "LINKER_EVIDENCE_REGRESSION=PASS" | tee "$LOG_DIR/linker-evidence-regression.txt"
+          else
+            rc=$?
+            cat "$LOG_DIR/linker-evidence-regression.log"
+            echo "LINKER_EVIDENCE_REGRESSION=FAIL exit_code=$rc" | tee "$LOG_DIR/linker-evidence-regression.txt"
+            exit "$rc"
+          fi
 
       - name: Fetch exact upstream illumos revision
         shell: bash
