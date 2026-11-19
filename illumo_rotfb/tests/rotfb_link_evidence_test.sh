@@ -186,62 +186,7 @@ run_target_case() {
             return 1
         fi
         if [ "$mode" = shortpatch ]; then
-            grep -q '^patches_applied=12
-            grep -q '^patch_order_match=NO$' "$logdir/rotfb-build-evidence.txt"
-            grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
-            return 0
-        fi
-        grep -q '^overall_status=INCOMPLETE$' "$logdir/rotfb-build-evidence.txt"
-        case "$mode" in
-            missing) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
-            stale) assert_target_status gfx_private.i86pc INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
-            wrongcwd) assert_target_status gfx_private.i86xpv INCOMPLETE "$logdir/rotfb-build-evidence.txt" ;;
-        esac
-    fi
-}
-
-run_failure_case() {
-    workspace="$TMP/failure-workspace"
-    logdir="$TMP/failure-logs"
-    ldpath="$workspace/usr/src/tools/proto/root_i386-nd/opt/onbld/bin/amd64/ld"
-    mkdir -p "$workspace/usr/src/uts/i86xpv/gfx_private/obj64"
-    make_fake_linker "$ldpath"
-    sh "$HELPER" prepare "$workspace" "$logdir"
-    sh "$HELPER" watch "$workspace" "$logdir" > "$logdir/watch.log" 2>&1 &
-    watch_pid=$!
-    wait_for_file "$logdir/ld-wrapper-ready.txt"
-
-    if (cd "$workspace/usr/src/uts/i86xpv/gfx_private" && \
-        FAKE_LD_FAIL_OUTPUT=obj64/gfx_private "$ldpath" -o obj64/gfx_private obj64/rotfb_runtime.o); then
-        echo "expected fake linker failure was not propagated" >&2
-        : > "$logdir/ld-wrapper-stop"
-        wait "$watch_pid" || true
-        return 1
-    else
-        rc=$?
-        [ "$rc" -eq 7 ] || { echo "wrong propagated linker status: $rc" >&2; return 1; }
-    fi
-
-    : > "$logdir/ld-wrapper-stop"
-    wait "$watch_pid"
-    write_patch_evidence "$logdir"
-    if sh "$HELPER" finalize "$workspace" "$logdir"; then
-        echo "evidence incorrectly accepted a failed linker" >&2
-        return 1
-    fi
-    grep -q '^linker_exit_status=NONZERO$' "$logdir/rotfb-build-evidence.txt"
-    grep -q '^status=FAIL$' "$logdir/rotfb-build-evidence.txt"
-    grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
-}
-
-run_target_case success
-run_target_case missing
-run_target_case stale
-run_target_case wrongcwd
-run_target_case shortpatch
-run_failure_case
-printf '%s\n' 'ROTFB linker evidence tests: PASS'
- "$logdir/rotfb-build-evidence.txt"
+            grep -q '^patches_applied=12$' "$logdir/rotfb-build-evidence.txt"
             grep -q '^patch_order_match=NO$' "$logdir/rotfb-build-evidence.txt"
             grep -q '^overall_status=FAIL$' "$logdir/rotfb-build-evidence.txt"
             return 0
