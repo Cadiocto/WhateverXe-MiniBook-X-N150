@@ -30,6 +30,7 @@ git -C "$UPSTREAM_GIT_DIR" worktree add --detach "$WORKTREE" "$UPSTREAM_PIN" >/d
 # The ordered production patch series currently contains patches 0001 through 0013.
 # The manifest and patch-series gates run before this production callback harness.
 # This CI job does not invoke the full OpenIndiana build workflow.
+# Patch-series path allowlist is sorted lexicographically in the regression fixture.
 PATCH_COUNT=0
 for patch in "$PATCH_DIR"/*.patch; do
 	[ -f "$patch" ] || continue
