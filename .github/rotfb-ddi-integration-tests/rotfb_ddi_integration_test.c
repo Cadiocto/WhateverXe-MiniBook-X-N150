@@ -93,6 +93,8 @@ rotfb_runtime_fini(fb_info_t *fb)
 {
 	(void) fb;
 	fini_calls++;
+	if (injected_fini_result == DDI_SUCCESS)
+		rotfb_info.runtime_ready = 0;
 	return (injected_fini_result);
 }
 

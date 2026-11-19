@@ -8,7 +8,7 @@ fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 UPSTREAM=$1
-PATCH_DIR=$2
+PATCH_DIR=$(CDPATH= cd -- "$2" && pwd)
 LOG_DIR=$3
 PIN=098e95820891f8a83fae679daece7fcf58b7b3a4
 TMP=$(mktemp -d "/tmp/rotfb-ddi-integration.XXXXXX")
