@@ -1398,3 +1398,12 @@ The existing VIS C test checks the helper's position/origin state but does not e
 * These additions compile the exact production `rotfb_runtime.c` and extracted patched production callback bodies with host compatibility stubs. The synchronization thread, allocator/map stubs and memory barrier remain host-only; this does not execute illumos DDI or physical WC instructions.
 * No production source, production patch, framebuffer geometry, clockwise mapping, shadow architecture, VIS contract, upstream pin, main build workflow or unrelated subsystem is changed. Only the isolated `.github/rotfb-callback-tests` harness/runner and this append-only journal are in the write set. The push should trigger callback-only CI only; Build #89 must not run.
 * CI result pending. No production defect is asserted before this regression test executes.
+
+
+## 2026-11-19 — Runtime lifecycle audit: Run #3 harness compile correction
+
+* Callback-only Run #3 (`44575044354`, commit `c72d81c94a73bf217122beb06b4a73c75f12b19c`) failed at host C compilation before runtime execution. All 12 production patches applied and production callback extraction passed.
+* Exact failure: the added test called `bitmap_polled_copy()`, but the isolated callback extractor intentionally exports only the production callback entry points already selected for this harness; `bitmap_polled_copy` is not in that extraction set. This is a test harness symbol-availability error, not a production source failure.
+* Corrected the test-only race injection to use the already-extracted real `bitmap_polled_cursor()` callback and block inside the host `membar_producer()` implementation reached through the real production `rotfb_runtime_flush_rect()`. The callback remains active at the WC barrier while the production fini thread closes the gate and waits. No extractor expansion or production modification is required.
+* CI Run #3 artifact: `14556501827`, digest `62e63eae245aa5a55fd647cd3470ae6e406a83e440ffed6b52859ab983f6dff9`. Compiler exit 1 due the undefined test-only symbol above; no runtime test executed. No production defect or PASS is claimed from Run #3.
+* Next validation is a single corrected callback-only run. Build #89 remains prohibited.

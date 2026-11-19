@@ -29,9 +29,9 @@ static size_t shadow_allocation_size;
 static uint32_t flush_count;
 static uint32_t move_count;
 static unsigned int failures;
-static int block_next_memmove;
-static int memmove_blocked;
-static int release_memmove;
+static int block_next_barrier;
+static int barrier_blocked;
+static int release_barrier;
 static int fail_map;
 static int fail_alloc;
 static unsigned int map_calls;
@@ -45,11 +45,6 @@ void *
 __wrap_memmove(void *dst, const void *src, size_t size)
 {
 	move_count++;
-	if (__atomic_exchange_n(&block_next_memmove, 0, __ATOMIC_ACQ_REL)) {
-		__atomic_store_n(&memmove_blocked, 1, __ATOMIC_RELEASE);
-		while (!__atomic_load_n(&release_memmove, __ATOMIC_ACQUIRE))
-			(void) sched_yield();
-	}
 	return (__real_memmove(dst, src, size));
 }
 
@@ -96,6 +91,11 @@ membar_producer(void)
 {
 	__atomic_thread_fence(__ATOMIC_RELEASE);
 	flush_count++;
+	if (__atomic_exchange_n(&block_next_barrier, 0, __ATOMIC_ACQ_REL)) {
+		__atomic_store_n(&barrier_blocked, 1, __ATOMIC_RELEASE);
+		while (!__atomic_load_n(&release_barrier, __ATOMIC_ACQUIRE))
+			(void) sched_yield();
+	}
 }
 
 void
@@ -760,7 +760,7 @@ test_copy_callback(struct gfxp_fb_softc *softc)
 
 typedef struct callback_race_arg {
 	struct gfxp_fb_softc *softc;
-	struct vis_conscopy request;
+	struct vis_conscursor request;
 } callback_race_arg_t;
 
 typedef struct fini_race_arg {
@@ -770,11 +770,11 @@ typedef struct fini_race_arg {
 } fini_race_arg_t;
 
 static void *
-run_blocked_copy_callback(void *arg)
+run_blocked_cursor_callback(void *arg)
 {
 	callback_race_arg_t *a = arg;
 
-	bitmap_polled_copy((struct vis_polledio_arg *)a->softc,
+	bitmap_polled_cursor((struct vis_polledio_arg *)a->softc,
 	    &a->request);
 	return (NULL);
 }
@@ -810,26 +810,26 @@ test_runtime_lifecycle_race_and_recovery(struct gfxp_fb_softc *softc)
 	check(map_calls == maps_before && alloc_calls == allocs_before,
 	    "idempotent runtime init allocates and maps nothing");
 
-	set_copy_pattern(fb, 100, 100, 0x6000);
 	callback_arg.softc = softc;
-	callback_arg.request = make_copy(100, 100, 101, 101, 120, 120);
+	callback_arg.request = make_cursor(VIS_DISPLAY_CURSOR, 160, 160,
+	    8, 16);
 	fini_arg.fb = fb;
 	fini_arg.result = DDI_FAILURE;
 	fini_arg.done = 0;
-	__atomic_store_n(&memmove_blocked, 0, __ATOMIC_RELEASE);
-	__atomic_store_n(&release_memmove, 0, __ATOMIC_RELEASE);
-	__atomic_store_n(&block_next_memmove, 1, __ATOMIC_RELEASE);
+	__atomic_store_n(&barrier_blocked, 0, __ATOMIC_RELEASE);
+	__atomic_store_n(&release_barrier, 0, __ATOMIC_RELEASE);
+	__atomic_store_n(&block_next_barrier, 1, __ATOMIC_RELEASE);
 
 	check(pthread_create(&callback_thread, NULL,
-	    run_blocked_copy_callback, &callback_arg) == 0,
-	    "start real production polled copy callback thread");
+	    run_blocked_cursor_callback, &callback_arg) == 0,
+	    "start real production polled cursor callback thread");
 	for (i = 0; i < 10000000; i++) {
-		if (__atomic_load_n(&memmove_blocked, __ATOMIC_ACQUIRE))
+		if (__atomic_load_n(&barrier_blocked, __ATOMIC_ACQUIRE))
 			break;
 		(void) sched_yield();
 	}
-	check(__atomic_load_n(&memmove_blocked, __ATOMIC_ACQUIRE),
-	    "production callback reaches the controlled memmove hold point");
+	check(__atomic_load_n(&barrier_blocked, __ATOMIC_ACQUIRE),
+	    "production cursor callback reaches runtime WC barrier hold point");
 
 	unmaps_before = unmap_calls;
 	frees_before = free_calls;
@@ -852,7 +852,7 @@ test_runtime_lifecycle_race_and_recovery(struct gfxp_fb_softc *softc)
 	check(unmap_calls == unmaps_before && free_calls == frees_before,
 	    "fini does not unmap WC memory or free shadow before callback exit");
 
-	__atomic_store_n(&release_memmove, 1, __ATOMIC_RELEASE);
+	__atomic_store_n(&release_barrier, 1, __ATOMIC_RELEASE);
 	(void) pthread_join(callback_thread, NULL);
 	(void) pthread_join(fini_thread, NULL);
 	check(fini_arg.result == DDI_SUCCESS,
@@ -870,15 +870,15 @@ test_runtime_lifecycle_race_and_recovery(struct gfxp_fb_softc *softc)
 	    "fini releases exactly one WC mapping and one runtime shadow");
 
 	/* A stale polled callback is rejected after fini, before softc access. */
-	stale_request = make_copy(100, 100, 101, 101, 120, 120);
+	stale_request = make_cursor(VIS_DISPLAY_CURSOR, 176, 176, 8, 16);
 	moves_before = move_count;
 	restored_checksum = buffer_checksum(boot_memory, LOGICAL_BYTES,
 	    physical_memory, PHYSICAL_BYTES);
-	bitmap_polled_copy((struct vis_polledio_arg *)softc, &stale_request);
+	bitmap_polled_cursor((struct vis_polledio_arg *)softc, &stale_request);
 	check(move_count == moves_before &&
 	    buffer_checksum(boot_memory, LOGICAL_BYTES, physical_memory,
 	    PHYSICAL_BYTES) == restored_checksum,
-	    "stale production polled callback after fini is rejected without writes");
+	    "stale production polled cursor after fini is rejected without writes");
 	check(rotfb_runtime_fini(fb) == DDI_FAILURE,
 	    "direct repeated runtime fini reports already-finished lifecycle");
 	check(unmap_calls == unmaps_before + 1 &&
