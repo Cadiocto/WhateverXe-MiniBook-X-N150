@@ -1,7 +1,7 @@
 #!/bin/sh
 # Apply the complete ROTFB patch series to a disposable worktree at the pinned
-# illumos revision. Reproduce historical 0011 and 0012 context failures before
-# accepting their corrected patches.
+# illumos revision. Reproduce historical 0011 and both 0012 context failures
+# before accepting the corrected patches.
 set -eu
 
 if [ "$#" -ne 3 ]; then
@@ -31,9 +31,11 @@ OLD_PATCH="$SCRIPT_DIR/fixtures/0011-before-blank-context-fix.patch"
 OLD_LOG="$TMP_PARENT/0011-before-blank-context-fix.log"
 OLD_COPY_PATCH="$SCRIPT_DIR/fixtures/0012-before-errno-context.patch"
 OLD_COPY_LOG="$TMP_PARENT/0012-before-errno-context.log"
+OLD_COPY_FLUSH_PATCH="$SCRIPT_DIR/fixtures/0012-before-flush-context-fix.patch"
+OLD_COPY_FLUSH_LOG="$TMP_PARENT/0012-before-flush-context-fix.log"
 cleanup() {
     git -C "$UPSTREAM" worktree remove --force "$TEST_TREE" >/dev/null 2>&1 || true
-    rm -f "$OLD_LOG" "$OLD_COPY_LOG"
+    rm -f "$OLD_LOG" "$OLD_COPY_LOG" "$OLD_COPY_FLUSH_LOG"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -127,6 +129,26 @@ if ! grep -F 'patch failed: usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c:29' "
     exit 1
 fi
 echo "EXPECTED_FAILURE pre-fix 0012 reproduces missing sys/errno.h context at gfxp_bitmap.c:29"
+
+# Reproduce Build #82's second 0012 failure: the include context is already
+# corrected, but the old hunk collapses the two-line flush call introduced by
+# patch 0002 into one line, so the copy-loop hunk cannot match after 0001-0011.
+[ -f "$OLD_COPY_FLUSH_PATCH" ] || {
+    echo "missing pre-fix 0012 flush-context fixture" >&2
+    exit 1
+}
+if git -C "$TEST_TREE" apply --check "$OLD_COPY_FLUSH_PATCH" > "$OLD_COPY_FLUSH_LOG" 2>&1; then
+    echo "REGRESSION FAILED: pre-fix 0012 flush-context patch unexpectedly applies" >&2
+    exit 1
+fi
+if ! grep -F 'patch failed: usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c:379' "$OLD_COPY_FLUSH_LOG" >/dev/null ||
+    ! grep -F 'patch does not apply' "$OLD_COPY_FLUSH_LOG" >/dev/null; then
+    echo "REGRESSION FAILED: pre-fix 0012 did not reproduce Build #82 line-379 context failure" >&2
+    cat "$OLD_COPY_FLUSH_LOG" >&2
+    exit 1
+fi
+echo "EXPECTED_FAILURE pre-fix 0012 reproduces split flush-call context mismatch at gfxp_bitmap.c:379"
+
 git -C "$TEST_TREE" apply --check "$COPY_PATCH"
 git -C "$TEST_TREE" apply "$COPY_PATCH"
 echo "APPLIED 0012-gfxp-bitmap-copy-helper.patch"
