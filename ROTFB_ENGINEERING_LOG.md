@@ -1511,3 +1511,155 @@ BOOT_CONFIGURED
 * The real x86 WC barrier, actual DDI map/unmap, interrupt/polled execution context, actual driver detach, firmware boot allocator behavior under exhaustion, and Chuwi device stability have not been verified on hardware.
 * No Build #89 was started. No production patch, framebuffer geometry, clockwise mapping, shadow framebuffer architecture, VIS contract, upstream pin, firmware/GOP/DSI, touchpad or unrelated subsystem changed.
 * Readiness: **BUILD VERIFIED** for Build #88; **CODE/TEST VERIFIED** for the listed production runtime/callback paths on host; **DEVICE VERIFIED: NOT VERIFIED**.
+
+
+## 2026-11-19 — DDI ATTACH/DETACH integration audit: TEM ownership, polledio lifetime and detach error propagation
+
+### Revision and scope
+
+* Branch: `gop-rotation-hook`. Branch HEAD before this journal-only append was verified as `a15793321196e81ea9690b58d2ced4c041e832ed`; comparing that SHA with the branch ref returned `identical`.
+* Build #88 production baseline: `a61c2ffb1f41d651a11c7f1cf9e719cad250a924`. Compare Build #88 to pre-audit HEAD `a157933` reports only six test/journal files changed: `.github/rotfb-callback-tests/**`, `.github/workflows/rotfb-callback-tests.yml`, and `ROTFB_ENGINEERING_LOG.md`. No `illumo_rotfb/**` production source or patch changed.
+* Upstream pin remains `098e95820891f8a83fae679daece7fcf58b7b3a4`. This audit is static source analysis only; no production code, patch, ABI, geometry, CW mapping, shadow architecture, workflow or upstream pin changed.
+* No Build #89 was started. Build #88 and callback-only Run #5 were not rerun.
+
+### Pinned source material inspected
+
+* `usr/src/uts/common/io/tem.c` — blob `f35db313856eaf9305c535b83176297429d18052`.
+* `usr/src/uts/common/io/tem_safe.c` — blob `6ff2f9ee0cd9a6f5fad0ad1a90193b0a9d4e1038`.
+* `usr/src/uts/common/sys/tem_impl.h` — blob `5b4006fa748bb8debe5cab635101729e9e983044`.
+* `usr/src/uts/common/sys/visual_io.h` — blob `c894bb48bcb9b0b820360745009a7b5b0b9b81a0`.
+* `usr/src/uts/i86pc/io/gfx_private/gfxp_fb.c` — blob `0d2d1fe1defaeeb69bc706e24903759951b78801`.
+* `usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c` — blob `e2668b24db5fc71d31f7894d791b17f409ee233b`.
+* `usr/src/uts/i86pc/io/gfx_private/gfxp_fb.h` — blob `6c6cc5e8bf42cd63ddd781ebc77a05465a2a5e0a`.
+* `usr/src/uts/intel/io/vgatext/vgatext.c` — blob `b18a3707176034e42837f041bd0702fdf3ac3a65`.
+* ROTFB `illumo_rotfb/rotfb_runtime.c` at Build #88 source — blob `8d6e8000262fd97aee1325f0067a0f6871f39db5`.
+* ROTFB patch `0005-rotfb-lifecycle-hardening.patch` adds the VIS_DEVFINI dispatch and error-returning bitmap detach behavior. Patch `0008-gfxp-detach-failure-safety.patch` changes only generic `gfxp_fb_detach()`; the patch allowlist does not include `vgatext.c`.
+
+### Production call chain and ownership
+
+```text
+vgatext_attach(DDI_ATTACH)
+  -> ddi_soft_state_zalloc(vgatext_softc)
+  -> gfxp_fb_softc_alloc()                         [inner gfxp softc]
+  -> gfxp_fb_attach()
+       -> softc->devi = devi
+       -> softc->polledio.arg = (vis_polledio_arg_t *)softc
+       -> mutex_init(&softc->lock)
+       -> select GFXP_BITMAP
+       -> gfxp_bm_attach()
+            -> polledio.display/copy/cursor = static bitmap callbacks
+            -> softc->gfxp_ops = &gfxp_bitmap_ops
+  -> create minor node
+  [No ROTFB runtime WC mapping or runtime shadow allocation at DDI_ATTACH]
+
+tem_info_init()
+  -> ldi_open_by_name()                             [open reference retained on success]
+  -> ldi_ioctl(VIS_DEVINIT) while tems.ts_lock held
+       -> gfxp_fb_ioctl() locks softc->lock
+       -> bitmap_devinit()
+            -> bitmap_setup_fb()
+                 -> rotfb_runtime_init()
+            -> data->polledio = &softc->polledio
+       -> unlock softc->lock
+  -> tems.ts_fb_polledio = temargs.polledio
+  -> validate depth/mode
+  -> tems.ts_initialized = 1
+  -> tem_internal_init() sets each VT's tvs_initialized
+
+TEM initialization rejection after successful VIS_DEVINIT:
+  -> tems_failed(finish_ioctl = true), still under tems.ts_lock
+  -> ldi_ioctl(VIS_DEVFINI)
+       -> gfxp_fb_ioctl() locks softc->lock
+       -> gfxp_bm_detach()
+            -> rotfb_runtime_fini()
+       -> unlock softc->lock
+  -> ldi_close()
+  -> tems.ts_hdl = NULL
+
+DDI_DETACH after the device has no open handles:
+  -> vgatext_detach()
+       -> gfxp_fb_detach()
+            -> gfxp_bm_detach()
+                 -> rotfb_runtime_fini() if configured and runtime_ready
+            -> remove property / destroy softc->lock on success
+       -> gfxp_fb_softc_free()
+       -> ddi_soft_state_free()
+```
+
+* The outer `vgatext_softc` is owned by the vgatext driver soft-state allocator. The inner `gfxp_fb_softc` is allocated by `gfxp_fb_softc_alloc()` (`kmem_zalloc`) and freed by `gfxp_fb_softc_free()`.
+* `struct vis_polledio` is embedded inside `gfxp_fb_softc`; it is not separately allocated. Its `display/copy/cursor` members are static production callback addresses. `polledio.arg` is the same `gfxp_fb_softc *`, not a separate callback object.
+* `bitmap_devinit()` exports the address of the embedded `softc->polledio` only after `bitmap_setup_fb()` succeeds. The callback argument was initialized earlier by `gfxp_fb_attach()` to the same softc.
+* `softc->console` points at global boot-owned `fb_info`. ROTFB runtime mapping and runtime shadow ownership are held in ROTFB runtime globals; they are not owned by the TEM or by the `polledio` structure.
+* On successful TEM initialization, `tems.ts_hdl` remains open. The `tem_state_t` retains `ts_fb_polledio`, and the per-VT state is initialized. There is no normal-success-path `ldi_close()` in `tem_info_init()`.
+
+### TEM proof: when can a saved polledio callback be called?
+
+* Pinned `tem.c` has one kernel `VIS_DEVFINI` call site: `tems_failed()`. It calls FINI only when `finish_ioctl` is true, which is used for post-DEVINIT version, depth, or mode validation failures. A failed VIS_DEVINIT itself uses `tems_failed(..., B_FALSE)` and does not issue FINI.
+* `tems_failed()` is reached before `tems.ts_initialized = 1` and before the loop calls `tem_internal_init()`. The latter is where each `tem_vt_state.tvs_initialized` becomes true.
+* Pinned `tem_safe_write()` checks `!tem->tvs_initialized` and returns before any display/copy/cursor callback when the VT is not initialized. Thus after TEM's own VIS_DEVFINI failure-cleanup path, TEM does not issue a polled callback: no VT was initialized. `tems.ts_fb_polledio` may retain the pointer assigned before a later depth/mode validation failure, but that stale value is not dereferenced by an uninitialized VT.
+* The standalone callback path is real: `tem_safe.c` calls `tems.ts_fb_polledio->display/copy/cursor` with `tems.ts_fb_polledio->arg` when `called_from == CALLED_FROM_STANDALONE`. Those calls are reachable for initialized VTs in standalone/quiesced contexts.
+* After successful TEM initialization, the shared LDI handle remains open. The illumos `detach(9E)` contract says DDI_DETACH is called only once there are no outstanding opens. Therefore normal TEM operation prevents DDI_DETACH from freeing the softc while TEM retains and uses its polledio pointer.
+* No upstream TEM path calls VIS_DEVFINI after successful initialization. The source search found the kernel call in `tem.c` only in `tems_failed()`; the separate boot TEM has its own early initialization failure path. The successful kernel TEM path does not clear `tems.ts_fb_polledio` or close `tems.ts_hdl`.
+* If some other kernel client manually issues VIS_DEVFINI while TEM is already initialized, TEM does not clear `ts_fb_polledio`; an initialized VT can still call that saved pointer in standalone mode. That sequence is outside the observed TEM call path and conflicts with the VIS_DEVFINI contract (“no longer being used as a console”). It is recorded as an external-client contract hazard, not as a supported TEM sequence.
+
+### Old polledio pointer across a subsequent VIS_DEVINIT
+
+* With the same attached `gfxp_fb_softc`, the polledio object is embedded at the same address and `polledio.arg` still points to that same live softc. VIS_DEVFINI does not free the softc or clear the function pointers; a later VIS_DEVINIT on that same instance reuses the same polledio object and argument.
+* During the interval after successful FINI and before the next INIT, the global callback gate remains closed; the existing callback wrapper rejects calls before dereferencing the argument. After successful re-INIT, the gate opens and a callback through the old pointer would target the same still-live softc and current runtime framebuffer state. It is not a stale softc address in this same-instance case.
+* A pointer from a genuinely detached old softc would be unsafe if called after a new attach/re-INIT, because the global gate is not generation-tagged and would admit it once reopened. However, the pinned TEM success path keeps the LDI open handle and therefore prevents DDI_DETACH; the failed-init path leaves all VTs uninitialized and does not call the retained pointer. No supported TEM sequence was found that carries a callable old-softc polledio pointer across detach/re-attach.
+* Conclusion: the global gate alone is not a general generation/lifetime mechanism, but the pinned TEM open-handle and initialization contract prevents the specific old-softc-after-reattach callback sequence in normal TEM operation. No Generation ID is justified by current TEM evidence. External clients retaining polledio pointers beyond their open/console lifetime remain outside the proven contract.
+
+### Lock ordering and deadlock review
+
+| Path | Locks / synchronization | Result |
+|---|---|---|
+| TEM initialization / failure cleanup | `tems.ts_lock` -> `softc->lock` through LDI ioctl | Established order |
+| Normal TEM layered display/copy/cursor | TEM locks -> LDI ioctl -> `softc->lock` | Same order |
+| VIS_DEVINIT / VIS_DEVFINI | `gfxp_fb_ioctl()` holds `softc->lock` around `do_gfx_ioctl()` | Serializes ioctl operations |
+| Polled TEM callbacks | No mutex; lock-free ROTFB callback gate | No attempt to acquire `softc->lock` or `tems.ts_lock` |
+| Runtime FINI | Called under `softc->lock`; closes gate and waits for active callbacks | No lock cycle in current callback bodies because callbacks do not acquire the mutex |
+| DDI_DETACH | DDI_DETACH is only called after outstanding opens are gone; wrapper does not acquire `softc->lock` | No concurrent TEM ioctl under the normal open-handle contract |
+
+* The inspected bitmap driver does not invoke the TEM mode-change callback while holding `softc->lock`; the bitmap devinit mode-change fields are not used by the driver. No reverse `softc->lock -> tems.ts_lock` edge was found in this call chain.
+* No deadlock was found in the inspected lock graph. This is static reasoning; the DDI framework and actual illumos scheduler were not executed in this audit.
+
+### Confirmed DDI detach error-propagation defect
+
+* ROTFB patch `0005-rotfb-lifecycle-hardening.patch` changes `gfxp_bm_detach()`: when ROTFB is configured and runtime is ready, it returns `DDI_FAILURE` if `rotfb_runtime_fini()` fails.
+* `rotfb_runtime_fini()` validates the live framebuffer pointers and metadata before closing the callback gate. A pointer/ownership mismatch in this preflight returns `DDI_FAILURE` while the callback gate remains open and runtime resources remain owned/active. Build #88's runtime test already exercised the pointer-mismatch refusal at the runtime-core level.
+* ROTFB patch `0008-gfxp-detach-failure-safety.patch` correctly changes `gfxp_fb_detach()` to return immediately on bitmap detach failure, before removing the primary-controller property or destroying `softc->lock`.
+* But the actual pinned upstream caller `vgatext_detach()` does not check that return value. It calls `(void) gfxp_fb_detach(...)`, then unconditionally calls `gfxp_fb_softc_free()`, removes the minor node, frees the outer soft-state entry, and returns `DDI_SUCCESS`.
+* Therefore patch 0008's local refusal is discarded by the top-level DDI_DETACH entry point. On a reachable `rotfb_runtime_fini()` preflight failure, vgatext still reports successful detach and frees the inner softc even though ROTFB runtime resources remain active. The softc mutex is also not destroyed because `gfxp_fb_detach()` returned before that point.
+* If a polled callback is still active or an external client retained the old polledio pointer, freeing the softc without closing/draining the gate creates a use-after-free risk. This UAF was not executed; it is the consequence of the source-level ownership violation. Under the pinned TEM failure path, TEM itself has not initialized any VT and does not issue such a callback, so the audit does not claim a TEM-reproduced UAF.
+* The unconditional DDI_SUCCESS is independently a confirmed contract violation: illumos `detach(9E)` requires returning `DDI_FAILURE` when the instance cannot be safely detached, leaving per-instance state intact. The actual vgatext wrapper does the opposite on the error path.
+* This finding is in the upstream `vgatext.c` wrapper, which is not included in the 12-patch ROTFB allowlist. No production change is made under the current instruction.
+
+### Failure scenarios
+
+| Scenario | Expected/current behavior | Audit result |
+|---|---|---|
+| DDI_ATTACH succeeds; VIS_DEVINIT succeeds; TEM succeeds | LDI handle remains open; TEM owns a borrowed polledio pointer; DDI_DETACH is blocked while open | Safe under TEM contract |
+| VIS_DEVINIT fails before publishing polledio | TEM calls `tems_failed(..., B_FALSE)`; closes LDI handle; no runtime resources remain after init rollback | Safe by inspected rollback path |
+| VIS_DEVINIT succeeds, TEM rejects version/depth/mode | TEM calls VIS_DEVFINI then closes handle; VT states remain uninitialized, so no polled callbacks | Safe for TEM callback lifetime |
+| VIS_DEVFINI succeeds, then DDI_DETACH | Runtime fini releases mapping/shadow; later bitmap detach sees runtime_ready false and succeeds; softc is freed | Normal sequence |
+| VIS_DEVFINI preflight fails, then DDI_DETACH | bitmap detach returns failure; gfxp_fb_detach returns failure; vgatext ignores it and frees softc anyway | **Confirmed detach error-propagation defect** |
+| External initialized client calls VIS_DEVFINI then continues standalone callbacks | TEM retains polledio pointer and can still call it; contract says device is no longer used | External contract violation / residual risk |
+| Same live softc: FINI -> INIT -> old polledio address called | Same embedded polledio and same softc argument; gate admits callback against current runtime | No generation mismatch; not a stale address |
+| Old detached softc pointer called after a new attach reopens global gate | Global gate cannot distinguish old generation; old argument could be freed | Unsafe if an external client violates pointer lifetime; not established for TEM |
+
+### Execution classification
+
+* **Executed in this audit:** no new tests. The existing Build #88 and callback-only Run #5 evidence is referenced but was not repeated.
+* **Previously executed production code:** Run #5 executed the exact production runtime core and extracted production bitmap polled callbacks, including callback drain/fini race. It did not compile or execute `gfxp_fb_attach()`, `gfxp_fb_detach()`, `gfxp_bm_attach()`, `gfxp_bm_detach()`, `bitmap_devinit()`, `vgatext_attach()`, or `vgatext_detach()`.
+* **Static-only in this audit:** the complete DDI/TEM call chain, softc allocation/free, polledio pointer/arg ownership, ioctl mutex ordering, vgatext detach return handling, and illumos detach contract.
+* **Why no DDI integration harness was executed:** the existing callback harness intentionally extracts bitmap callback bodies and supplies host stubs; it does not compile the vgatext/gfxp DDI entry points or emulate illumos devinfo, LDI open accounting, soft-state management, mutex lifecycle, and DDI detach dispatch. A host wrapper test with mocked DDI services would only test the stubs unless it is extended to compile the actual production entry-point bodies. No such integration harness was added or run in this audit.
+* **Build #88 remains:** BUILD VERIFIED for the pinned OpenIndiana VM/nightly and six link targets.
+* **Run #5 remains:** CODE/TEST VERIFIED for the exact runtime and extracted callback paths listed in the lifecycle entry; it is not DDI attach/detach integration evidence.
+* **DEVICE VERIFIED:** NOT VERIFIED.
+
+### Audit conclusion and next safe step
+
+* TEM's supported initialization/failed-initialization paths do not demonstrate an old callable polledio pointer crossing a successful VIS_DEVFINI and a later reattach. The same-instance FINI/INIT case reuses the same live embedded polledio object and softc. No Generation ID is warranted by the pinned TEM contract.
+* The upstream `vgatext_detach()` return-value discard is a concrete integration defect in the error path introduced/exposed by making `gfxp_bm_detach()` fail on unsafe runtime fini. It must be addressed before treating detach-failure safety as complete. Do not change production code until the owner authorizes it.
+* The next validation should be a test-only integration harness that compiles the actual patched `gfxp_fb_detach()`, patched `gfxp_bm_detach()`, actual `vgatext_detach()`, and actual `rotfb_runtime_fini()` against narrowly scoped DDI stubs; inject the existing runtime pointer-mismatch condition and record whether the top-level detach frees softc and reports success. This is a separate DDI integration test, not a repeat of Run #5.
+* Journal update only. Build #89 not started; production code and all 12 production patches unchanged.
