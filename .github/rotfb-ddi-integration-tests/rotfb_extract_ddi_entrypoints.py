@@ -76,7 +76,10 @@ if "if (error != DDI_SUCCESS)" not in fb_detach:
     raise SystemExit("patched gfxp_fb_detach lacks the expected failure guard")
 if "error = gfxp_fb_detach" not in vgatext_detach:
     raise SystemExit("vgatext_detach does not capture gfxp_fb_detach result")
-if "if (error != DDI_SUCCESS)\\n\\t\\t\\treturn (error);" not in vgatext_detach:
+failure_guard = vgatext_detach.find("if (error != DDI_SUCCESS)")
+failure_return = vgatext_detach.find("return (error);", failure_guard)
+cleanup = vgatext_detach.find("gfxp_fb_softc_free")
+if failure_guard < 0 or failure_return < failure_guard or cleanup < failure_return:
     raise SystemExit("vgatext_detach does not propagate DDI_FAILURE before cleanup")
 if "gfxp_fb_softc_free" not in vgatext_detach or "ddi_soft_state_free" not in vgatext_detach:
     raise SystemExit("vgatext detach ownership/free path changed")
