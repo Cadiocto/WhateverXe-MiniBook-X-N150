@@ -1,0 +1,54 @@
+diff --git a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+--- a/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
++++ b/usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
+@@ -29,6 +29,7 @@
+ #include <sys/rgb.h>
+ #include <sys/rotfb.h>
+ #include <sys/rotfb_vis_cursor.h>
++#include <sys/rotfb_copy.h>
+ #include <sys/gfx_private.h>
+ #include "gfxp_fb.h"
+ 
+@@ -316,7 +316,6 @@ bitmap_cons_copy(struct gfxp_fb_softc *softc, struct vis_conscopy *ma)
+ 	uint64_t soffset, toffset, width;
+ 	uint32_t width_pixels, height, pitch;
+ 	uint8_t *src, *dst, *sdst;
+-	int i;
+ 
+ 	if (softc == NULL || ma == NULL || softc->console == NULL)
+ 		return;
+@@ -379,31 +378,9 @@ bitmap_cons_copy(struct gfxp_fb_softc *softc, struct vis_conscopy *ma)
+ 	width = (uint64_t)width_pixels * console->fb.bpp;
+ 	pitch = console->fb.pitch;
+ 
+-	if (toffset <= soffset) {
+-		for (i = 0; i < height; i++) {
+-			uint64_t increment = (uint64_t)i * pitch;
+-			if (softc->mode == KD_TEXT) {
+-				(void) memmove(dst + increment,
+-				    src + increment, width);
+-			}
+-			if (sdst != dst || softc->mode != KD_TEXT) {
+-				(void) memmove(sdst + increment, src + increment,
+-				    width);
+-			}
+-		}
+-	} else {
+-		for (i = height - 1; i >= 0; i--) {
+-			uint64_t increment = (uint64_t)i * pitch;
+-			if (softc->mode == KD_TEXT) {
+-				(void) memmove(dst + increment,
+-				    src + increment, width);
+-			}
+-			if (sdst != dst || softc->mode != KD_TEXT) {
+-				(void) memmove(sdst + increment, src + increment,
+-				    width);
+-			}
+-		}
+-	}
++	rotfb_copy_rows(dst, src, sdst, (size_t)width, height, pitch,
++	    softc->mode == KD_TEXT, B_TRUE, toffset <= soffset, memmove);
++
+ 	if (rotfb_info.runtime_ready && softc->mode == KD_TEXT) {
+ 		rotfb_runtime_flush_rect(&console->fb, ma->t_col, ma->t_row,
+ 		    ma->e_col - ma->s_col + 1, ma->e_row - ma->s_row + 1);

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Apply the complete ROTFB patch series to a disposable worktree at the pinned
-# illumos revision. Reproduce the pre-fix 0011 failure before accepting 0011.
+# illumos revision. Reproduce historical 0011 and 0012 context failures before
+# accepting their corrected patches.
 set -eu
 
 if [ "$#" -ne 3 ]; then
@@ -28,9 +29,11 @@ TEST_TREE="$TMP_PARENT/rotfb-patch-series-$$"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 OLD_PATCH="$SCRIPT_DIR/fixtures/0011-before-blank-context-fix.patch"
 OLD_LOG="$TMP_PARENT/0011-before-blank-context-fix.log"
+OLD_COPY_PATCH="$SCRIPT_DIR/fixtures/0012-before-errno-context.patch"
+OLD_COPY_LOG="$TMP_PARENT/0012-before-errno-context.log"
 cleanup() {
     git -C "$UPSTREAM" worktree remove --force "$TEST_TREE" >/dev/null 2>&1 || true
-    rm -f "$OLD_LOG"
+    rm -f "$OLD_LOG" "$OLD_COPY_LOG"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -38,7 +41,7 @@ git -C "$UPSTREAM" worktree add --detach "$TEST_TREE" "$PIN"
 
 set -- "$PATCH_DIR"/[0-9][0-9][0-9][0-9]-*.patch
 [ "$#" -eq 12 ] || {
-    echo "expected exactly 11 ROTFB patches, found $#" >&2
+    echo "expected exactly 12 ROTFB patches, found $#" >&2
     exit 1
 }
 EXPECTED_PATCH_ORDER=$(cat <<'EXPECTED_PATCHES'
@@ -109,6 +112,21 @@ COPY_PATCH="$PATCH_DIR/0012-gfxp-bitmap-copy-helper.patch"
     echo "missing 0012 bitmap-copy helper patch" >&2
     exit 1
 }
+[ -f "$OLD_COPY_PATCH" ] || {
+    echo "missing pre-fix 0012 context fixture" >&2
+    exit 1
+}
+if git -C "$TEST_TREE" apply --check "$OLD_COPY_PATCH" > "$OLD_COPY_LOG" 2>&1; then
+    echo "REGRESSION FAILED: pre-fix 0012 unexpectedly applies" >&2
+    exit 1
+fi
+if ! grep -F 'patch failed: usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c:29' "$OLD_COPY_LOG" >/dev/null ||
+    ! grep -F 'patch does not apply' "$OLD_COPY_LOG" >/dev/null; then
+    echo "REGRESSION FAILED: pre-fix 0012 did not reproduce the Build #81 include-context failure" >&2
+    cat "$OLD_COPY_LOG" >&2
+    exit 1
+fi
+echo "EXPECTED_FAILURE pre-fix 0012 reproduces missing sys/errno.h context at gfxp_bitmap.c:29"
 git -C "$TEST_TREE" apply --check "$COPY_PATCH"
 git -C "$TEST_TREE" apply "$COPY_PATCH"
 echo "APPLIED 0012-gfxp-bitmap-copy-helper.patch"
