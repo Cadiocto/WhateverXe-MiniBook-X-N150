@@ -29,6 +29,14 @@ jobs:
       - name: Checkout ROTFB source
         uses: actions/checkout@v4
 
+      - name: Initialize DDI diagnostic staging
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$LOG_DIR"
+          : > "$LOG_DIR/.keep"
+
       - name: Validate audit harness
         shell: bash
         run: |
@@ -52,6 +60,7 @@ jobs:
           echo "UPSTREAM_PIN_VERIFIED=PASS" | tee "$LOG_DIR/upstream-pin.txt"
 
       - name: Execute extracted production DDI detach entry points
+        id: ddi_harness
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -60,10 +69,28 @@ jobs:
             "$UPSTREAM" illumo_rotfb/patches "$LOG_DIR"
 
       - name: Upload DDI integration evidence
+        id: upload_artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rotfb-ddi-integration
+          name: rotfb-test-results-${{ github.run_id }}-${{ github.sha }}-ddi
           path: rotfb-ddi-integration-artifacts/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish DDI integration summary
+        if: always()
+        shell: bash
+        env:
+          DDI_OUTCOME: ${{ steps.ddi_harness.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload_artifacts.outcome }}
+        run: |
+          {
+            echo "# ROTFB DDI integration"
+            echo "- Run: [#$GITHUB_RUN_NUMBER](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Upstream: \`$UPSTREAM_PIN\`"
+            echo "- DDI harness: $DDI_OUTCOME"
+            echo "- Artifact upload: $UPLOAD_OUTCOME"
+            echo "- Artifact: \`rotfb-test-results-$GITHUB_RUN_ID-$GITHUB_SHA-ddi\`"
+          } >> "$GITHUB_STEP_SUMMARY"

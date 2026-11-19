@@ -2,6 +2,20 @@ name: illumos framebuffer rotation build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - gop-rotation-hook
+    paths:
+      - "illumo_rotfb/patches/**"
+      - "illumo_rotfb/rotfb.h"
+      - "illumo_rotfb/rotfb_boot.c"
+      - "illumo_rotfb/rotfb_copy.h"
+      - "illumo_rotfb/rotfb_runtime.c"
+      - "illumo_rotfb/rotfb_vis_cursor.h"
+      - "illumo_rotfb/rotfb_link_evidence.sh"
+      - "illumo_rotfb/tests/rotfb_patch_series_test.sh"
+      - "illumo_rotfb/tests/fixtures/**"
+      - ".github/workflows/build-illumos.yml"
 
 concurrency:
   group: rotfb-single-build
@@ -9,57 +23,138 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-illumos:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout ROTFB source
+        id: checkout
+        uses: actions/checkout@v4
 
       - name: ROTFB geometry and clipping model tests
-        run: python3 illumo_rotfb/tests/rotfb_model_test.py
-
-      - name: ROTFB linker evidence regression tests
-        run: sh illumo_rotfb/tests/rotfb_link_evidence_test.sh
-
-      - name: ROTFB VIS cursor C regression tests
-        run: |
-          cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/rotfb-vis-cursor-test" illumo_rotfb/tests/rotfb_vis_cursor_test.c
-          "$RUNNER_TEMP/rotfb-vis-cursor-test"
-
-      - name: ROTFB bitmap copy C regression tests
-        run: |
-          cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/rotfb-bitmap-copy-test" illumo_rotfb/tests/rotfb_bitmap_copy_test.c
-          "$RUNNER_TEMP/rotfb-bitmap-copy-test"
-
-      - name: ROTFB runtime lifecycle production C regression tests
-        run: sh illumo_rotfb/tests/rotfb_runtime_test.sh
-
-      - name: Initialize diagnostic artifact staging
-        if: always()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/rotfb-build-logs"
-          printf 'Artifact staging initialized on runner at %s\n' "$(date -u +%FT%TZ)" \
-            > "$GITHUB_WORKSPACE/rotfb-build-logs/collector-started.txt"
-
-      - name: ROTFB patched production bitmap callback integration tests
+        id: host_model
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          mkdir -p rotfb-test-results
+          log=rotfb-test-results/geometry-model.log
+          set +e
+          python3 illumo_rotfb/tests/rotfb_model_test.py > "$log" 2>&1
+          rc=$?
+          set -e
+          cat "$log"
+          printf '%s\n' "$rc" > rotfb-test-results/geometry-model.exit-code
+          exit "$rc"
+
+      - name: ROTFB linker evidence regression tests
+        id: host_link_evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p rotfb-test-results
+          log=rotfb-test-results/linker-evidence-regression.log
+          set +e
+          sh -x illumo_rotfb/tests/rotfb_link_evidence_test.sh > "$log" 2>&1
+          rc=$?
+          set -e
+          cat "$log"
+          printf '%s\n' "$rc" > rotfb-test-results/linker-evidence-regression.exit-code
+          exit "$rc"
+
+      - name: ROTFB VIS cursor C regression tests
+        id: host_vis_cursor
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p rotfb-test-results
+          log=rotfb-test-results/vis-cursor-c.log
+          set +e
+          cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/rotfb-vis-cursor-test" illumo_rotfb/tests/rotfb_vis_cursor_test.c > "$log" 2>&1
+          compile_rc=$?
+          test_rc=SKIPPED
+          if [ "$compile_rc" -eq 0 ]; then
+            "$RUNNER_TEMP/rotfb-vis-cursor-test" >> "$log" 2>&1
+            test_rc=$?
+          fi
+          set -e
+          cat "$log"
+          printf 'compile_exit_code=%s\ntest_exit_code=%s\n' "$compile_rc" "$test_rc" > rotfb-test-results/vis-cursor-c.exit-code
+          [ "$compile_rc" -eq 0 ] && [ "$test_rc" -eq 0 ]
+
+      - name: ROTFB bitmap copy C regression tests
+        id: host_bitmap_copy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p rotfb-test-results
+          log=rotfb-test-results/bitmap-copy-c.log
+          set +e
+          cc -std=c99 -Wall -Wextra -Werror -o "$RUNNER_TEMP/rotfb-bitmap-copy-test" illumo_rotfb/tests/rotfb_bitmap_copy_test.c > "$log" 2>&1
+          compile_rc=$?
+          test_rc=SKIPPED
+          if [ "$compile_rc" -eq 0 ]; then
+            "$RUNNER_TEMP/rotfb-bitmap-copy-test" >> "$log" 2>&1
+            test_rc=$?
+          fi
+          set -e
+          cat "$log"
+          printf 'compile_exit_code=%s\ntest_exit_code=%s\n' "$compile_rc" "$test_rc" > rotfb-test-results/bitmap-copy-c.exit-code
+          [ "$compile_rc" -eq 0 ] && [ "$test_rc" -eq 0 ]
+
+      - name: ROTFB runtime lifecycle production C regression tests
+        id: host_runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p rotfb-test-results
+          log=rotfb-test-results/runtime-lifecycle.log
+          set +e
+          sh -x illumo_rotfb/tests/rotfb_runtime_test.sh > "$log" 2>&1
+          rc=$?
+          set -e
+          cat "$log"
+          printf '%s\n' "$rc" > rotfb-test-results/runtime-lifecycle.exit-code
+          exit "$rc"
+
+      - name: Initialize diagnostic artifact staging
+        id: init_diagnostics
+        if: always()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/rotfb-build-logs" "$GITHUB_WORKSPACE/rotfb-build-diagnostics" "$GITHUB_WORKSPACE/rotfb-test-results"
+          : > "$GITHUB_WORKSPACE/rotfb-build-logs/.keep"
+          : > "$GITHUB_WORKSPACE/rotfb-build-diagnostics/.keep"
+          : > "$GITHUB_WORKSPACE/rotfb-test-results/.keep"
+          printf 'Artifact staging initialized at %s\n' "$(date -u +%FT%TZ)" > "$GITHUB_WORKSPACE/rotfb-build-diagnostics/collector-started.txt"
+
+      - name: ROTFB patched production bitmap callback integration tests
+        id: callback_harness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           UPSTREAM="$RUNNER_TEMP/illumos-gate-callback"
           PIN=098e95820891f8a83fae679daece7fcf58b7b3a4
           ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
-          LOG="$GITHUB_WORKSPACE/rotfb-build-logs/callback-level-tests.log"
-          git init "$UPSTREAM"
-          git -C "$UPSTREAM" remote add origin https://github.com/illumos/illumos-gate.git
-          git -C "$UPSTREAM" fetch --depth 1 origin "$PIN"
-          git -C "$UPSTREAM" checkout --detach FETCH_HEAD
-          test "$(git -C "$UPSTREAM" rev-parse HEAD)" = "$PIN"
-          sh "$ROTFB/tests/rotfb_bitmap_callback_test.sh" \
-            "$UPSTREAM" "$ROTFB/patches" 2>&1 | tee "$LOG"
+          LOG="$GITHUB_WORKSPACE/rotfb-test-results/callback-level-tests.log"
+          set +e
+          {
+            git init "$UPSTREAM"
+            git -C "$UPSTREAM" remote add origin https://github.com/illumos/illumos-gate.git
+            git -C "$UPSTREAM" fetch --depth 1 origin "$PIN"
+            git -C "$UPSTREAM" checkout --detach FETCH_HEAD
+            test "$(git -C "$UPSTREAM" rev-parse HEAD)" = "$PIN"
+            sh "$ROTFB/tests/rotfb_bitmap_callback_test.sh" "$UPSTREAM" "$ROTFB/patches"
+          } > "$LOG" 2>&1
+          rc=$?
+          set -e
+          cat "$LOG"
+          printf '%s\n' "$rc" > "$GITHUB_WORKSPACE/rotfb-test-results/callback-level-tests.exit-code"
+          exit "$rc"
 
       - name: Build in OpenIndiana VM
+        id: openindiana_vm
         uses: vmactions/openindiana-vm@v1
         with:
           release: "202610-build"
@@ -69,8 +164,23 @@ jobs:
           sync: nfs
           prepare: |
             set -eux
-            pkg refresh
-            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-542 runtime/perl-542/module/sun-solaris
+            mkdir -p "$GITHUB_WORKSPACE/rotfb-build-logs"
+            if pkg refresh > "$GITHUB_WORKSPACE/rotfb-build-logs/ips-refresh.log" 2>&1; then
+              :
+            else
+              rc=$?
+              cat "$GITHUB_WORKSPACE/rotfb-build-logs/ips-refresh.log"
+              exit "$rc"
+            fi
+            if pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-542 runtime/perl-542/module/sun-solaris > "$GITHUB_WORKSPACE/rotfb-build-logs/ips-install.log" 2>&1; then
+              :
+            else
+              rc=$?
+              cat "$GITHUB_WORKSPACE/rotfb-build-logs/ips-install.log"
+              exit "$rc"
+            fi
+            cat "$GITHUB_WORKSPACE/rotfb-build-logs/ips-refresh.log"
+            cat "$GITHUB_WORKSPACE/rotfb-build-logs/ips-install.log"
 
             # Audit IPS packages and actual Perl paths before configuring illumos.
             # OpenIndiana 202610 marks Perl 5.10 obsolete and ships Perl 5.42 as 64-bit.
@@ -198,7 +308,7 @@ jobs:
             : > "$PATCH_APPLY_LOG"
             for p in "$ROTFB"/patches/*.patch; do
               [ -f "$p" ] || continue
-              echo "CHECK $(basename "$p")" | tee -a "$PATCH_APPLY_LOG"
+              echo "CHECK $(basename "$p")" >> "$PATCH_APPLY_LOG"
               if [ "$(basename "$p")" = "0007-gfxp-bitmap-bounds-hardening.patch" ]; then
                 TARGET_BITMAP=usr/src/uts/i86pc/io/gfx_private/gfxp_bitmap.c
                 git --version > "$LOGDIR/openindiana-git-version.txt"
@@ -207,11 +317,32 @@ jobs:
                 sed -n '430,475p' "$TARGET_BITMAP" > "$LOGDIR/gfxp_bitmap-pre-0007-context.txt"
                 cp "$p" "$LOGDIR/0007-gfxp-bitmap-bounds-hardening.patch"
               fi
-              git apply --check "$p"
-              git apply "$p"
-              echo "APPLIED $(basename "$p")" | tee -a "$PATCH_APPLY_LOG"
+              if git apply --check "$p" >> "$PATCH_APPLY_LOG" 2>&1; then
+                :
+              else
+                rc=$?
+                printf 'APPLY_CHECK_FAILED %s exit_code=%s\n' "$(basename "$p")" "$rc" >> "$PATCH_APPLY_LOG"
+                cat "$PATCH_APPLY_LOG"
+                exit "$rc"
+              fi
+              if git apply "$p" >> "$PATCH_APPLY_LOG" 2>&1; then
+                :
+              else
+                rc=$?
+                printf 'APPLY_FAILED %s exit_code=%s\n' "$(basename "$p")" "$rc" >> "$PATCH_APPLY_LOG"
+                cat "$PATCH_APPLY_LOG"
+                exit "$rc"
+              fi
+              echo "APPLIED $(basename "$p")" >> "$PATCH_APPLY_LOG"
             done
-            git diff --check
+            if git diff --check > "$LOGDIR/git-diff-check.log" 2>&1; then
+              :
+            else
+              rc=$?
+              cat "$LOGDIR/git-diff-check.log"
+              exit "$rc"
+            fi
+            cat "$PATCH_APPLY_LOG"
             git status --short > "$LOGDIR/upstream-patched-status.txt"
             git diff --stat > "$LOGDIR/upstream-patched-diffstat.txt"
             mkdir -p usr/src/uts/i86pc/sys usr/src/uts/i86pc/boot usr/src/uts/i86pc/io/gfx_private
@@ -264,8 +395,16 @@ jobs:
             BUILD_NOISE_DIR="$LOGDIR/build-noise"
             GATE_LOG_DIR="$LOGDIR/gate-logs"
             mkdir -p "$BUILD_NOISE_DIR" "$GATE_LOG_DIR"
-            printf 'nightly invocation: %s\n' "$(date -u +%FT%TZ)" > "$LOGDIR/build-metadata.txt"
-            printf 'workspace=%s\nupstream_commit=098e95820891f8a83fae679daece7fcf58b7b3a4\n' "$CODEMGR_WS" >> "$LOGDIR/build-metadata.txt"
+            {
+              printf 'nightly_invocation_utc=%s\n' "$(date -u +%FT%TZ)"
+              printf 'workflow_run_id=%s\ncommit_sha=%s\nbranch=%s\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" "$GITHUB_REF_NAME"
+              printf 'workspace=%s\nupstream_commit=098e95820891f8a83fae679daece7fcf58b7b3a4\n' "$CODEMGR_WS"
+              echo "===== OpenIndiana environment ====="
+              uname -a
+              git --version
+              ksh93 --version 2>&1 | head -n 2 || true
+              pkg info entire 2>&1 || true
+            } > "$LOGDIR/build-metadata.txt"
 
             # Remove only ROTFB final link products and install a real ld-status recorder.
             sh "$ROTFB/rotfb_link_evidence.sh" prepare "$CODEMGR_WS" "$LOGDIR"
@@ -368,9 +507,12 @@ jobs:
             # The evidence helper verifies fresh target files, exact ROTFB link inputs,
             # and the exit status returned by the actual linker process.
             EVIDENCE_RC=0
-            if ! sh "$ROTFB/rotfb_link_evidence.sh" finalize "$CODEMGR_WS" "$LOGDIR"; then
+            if sh "$ROTFB/rotfb_link_evidence.sh" finalize "$CODEMGR_WS" "$LOGDIR" > "$LOGDIR/linker-finalize.log" 2>&1; then
+              :
+            else
               EVIDENCE_RC=1
             fi
+            cat "$LOGDIR/linker-finalize.log"
             if [ "$LD_WATCHER_RC" -ne 0 ]; then
               EVIDENCE_RC=1
             fi
@@ -433,11 +575,172 @@ jobs:
           echo "===== error scan ====="
           cat "$LOGDIR/runner-error-index.txt"
 
-      - name: Upload build diagnostics
+      - name: Capture workflow outcomes and prepare diagnostic artifacts
+        id: prepare_artifacts
+        if: always()
+        shell: bash
+        env:
+          MODEL_OUTCOME: ${{ steps.host_model.outcome }}
+          LINK_TEST_OUTCOME: ${{ steps.host_link_evidence.outcome }}
+          VIS_CURSOR_OUTCOME: ${{ steps.host_vis_cursor.outcome }}
+          BITMAP_COPY_OUTCOME: ${{ steps.host_bitmap_copy.outcome }}
+          RUNTIME_OUTCOME: ${{ steps.host_runtime.outcome }}
+          CALLBACK_OUTCOME: ${{ steps.callback_harness.outcome }}
+          OPENINDIANA_OUTCOME: ${{ steps.openindiana_vm.outcome }}
+        run: |
+          set +e
+          mkdir -p rotfb-build-logs rotfb-build-diagnostics rotfb-test-results
+          {
+            echo "workflow=build-illumos"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "event=$GITHUB_EVENT_NAME"
+            echo "branch=$GITHUB_REF_NAME"
+            echo "commit_sha=$GITHUB_SHA"
+            echo "upstream_sha=098e95820891f8a83fae679daece7fcf58b7b3a4"
+            echo "completed_utc=$(date -u +%FT%TZ)"
+          } > rotfb-build-diagnostics/run-metadata.txt
+          {
+            printf 'host_model\t%s\n' "$MODEL_OUTCOME"
+            printf 'host_link_evidence\t%s\n' "$LINK_TEST_OUTCOME"
+            printf 'host_vis_cursor\t%s\n' "$VIS_CURSOR_OUTCOME"
+            printf 'host_bitmap_copy\t%s\n' "$BITMAP_COPY_OUTCOME"
+            printf 'host_runtime\t%s\n' "$RUNTIME_OUTCOME"
+            printf 'callback_harness\t%s\n' "$CALLBACK_OUTCOME"
+            printf 'openindiana_vm\t%s\n' "$OPENINDIANA_OUTCOME"
+          } > rotfb-build-diagnostics/step-outcomes.tsv
+          : > rotfb-build-diagnostics/failure-context.txt
+          while IFS="$(printf '\t')" read -r step outcome; do
+            [ "$outcome" = success ] || printf 'step=%s outcome=%s\n' "$step" "$outcome" >> rotfb-build-diagnostics/failure-context.txt
+          done < rotfb-build-diagnostics/step-outcomes.tsv
+          [ -s rotfb-build-diagnostics/failure-context.txt ] || echo "no failed or skipped runner steps recorded" > rotfb-build-diagnostics/failure-context.txt
+          for f in rotfb-build-logs/runner-error-index.txt rotfb-build-logs/runner-file-index.txt rotfb-build-logs/rotfb-build-evidence.txt rotfb-build-logs/patch-apply.log rotfb-build-logs/nightly-exit-code.txt rotfb-build-logs/final-build-exit-code.txt; do [ ! -f "$f" ] || cp "$f" rotfb-build-diagnostics/; done
+          {
+            echo "===== diagnostic file index ====="
+            find rotfb-build-logs rotfb-test-results rotfb-build-diagnostics -type f -printf '%p %s bytes\n' 2>/dev/null | sort
+          } > rotfb-build-diagnostics/file-index.txt
+
+      - name: Resolve same-commit callback and DDI workflow results
+        id: independent_workflows
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          mkdir -p rotfb-build-diagnostics
+          API_LOG=rotfb-build-diagnostics/independent-workflow-query.log
+          RESULT=rotfb-build-diagnostics/independent-workflows.tsv
+          : > "$API_LOG"
+          callback_line=""
+          ddi_line=""
+          for attempt in $(seq 1 60); do
+            response=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" 2>>"$API_LOG")
+            if [ "$?" -eq 0 ]; then
+              callback_line=$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .path == ".github/workflows/rotfb-callback-tests.yml" and .event == "push")] | sort_by(.created_at) | last // empty | [.id,.status,.conclusion] | @tsv')
+              ddi_line=$(printf '%s' "$response" | jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .path == ".github/workflows/rotfb-ddi-integration.yml" and .event == "push")] | sort_by(.created_at) | last // empty | [.id,.status,.conclusion] | @tsv')
+              cbstate=$(printf '%s' "$callback_line" | awk -F '\t' '{print $2}')
+              ddistate=$(printf '%s' "$ddi_line" | awk -F '\t' '{print $2}')
+              [ "$cbstate" = completed ] && [ "$ddistate" = completed ] && break
+            fi
+            sleep 10
+          done
+          printf 'callback_only\t%s\nddi_integration\t%s\n' "${callback_line:-NOT_FOUND}" "${ddi_line:-NOT_FOUND}" > "$RESULT"
+
+      - name: Upload build logs
+        id: upload_logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: illumos-framebuffer-build-logs-${{ github.run_id }}
+          name: rotfb-build-logs-${{ github.run_id }}-${{ github.sha }}
           path: rotfb-build-logs/
-          if-no-files-found: warn
-          retention-days: 14
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build diagnostics
+        id: upload_diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-build-diagnostics-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-build-diagnostics/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload test results
+        id: upload_test_results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-test-results-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-test-results/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish full-build acceptance summary
+        id: job_summary
+        if: always()
+        shell: bash
+        env:
+          MODEL_OUTCOME: ${{ steps.host_model.outcome }}
+          LINK_TEST_OUTCOME: ${{ steps.host_link_evidence.outcome }}
+          VIS_CURSOR_OUTCOME: ${{ steps.host_vis_cursor.outcome }}
+          BITMAP_COPY_OUTCOME: ${{ steps.host_bitmap_copy.outcome }}
+          RUNTIME_OUTCOME: ${{ steps.host_runtime.outcome }}
+          CALLBACK_OUTCOME: ${{ steps.callback_harness.outcome }}
+          OPENINDIANA_OUTCOME: ${{ steps.openindiana_vm.outcome }}
+          LOGS_UPLOAD_OUTCOME: ${{ steps.upload_logs.outcome }}
+          DIAGNOSTICS_UPLOAD_OUTCOME: ${{ steps.upload_diagnostics.outcome }}
+          TESTS_UPLOAD_OUTCOME: ${{ steps.upload_test_results.outcome }}
+        run: |
+          set +e
+          status_from_outcome() { [ "$1" = success ] && echo PASS || { [ "$1" = skipped ] && echo SKIPPED || echo FAIL; }; }
+          host_status=PASS
+          for outcome in "$MODEL_OUTCOME" "$LINK_TEST_OUTCOME" "$VIS_CURSOR_OUTCOME" "$BITMAP_COPY_OUTCOME" "$RUNTIME_OUTCOME"; do [ "$outcome" = success ] || host_status=FAIL; done
+          patch_status=SKIPPED; patch_detail="OpenIndiana patch-apply stage did not run"
+          if [ -f rotfb-build-logs/patch-apply.log ]; then
+            applied=$(grep -c '^APPLIED ' rotfb-build-logs/patch-apply.log 2>/dev/null); applied=${applied:-0}
+            series=$(grep -c '^PATCH_SERIES_STATUS=PASS$' rotfb-build-logs/patch-series-regression.log 2>/dev/null); series=${series:-0}
+            if [ "$applied" -eq 13 ] && [ "$series" -eq 1 ]; then patch_status=PASS; patch_detail="13/13 patches applied; ordered series regression PASS"; else patch_status=FAIL; patch_detail="$applied/13 applied; series PASS count=$series"; fi
+          fi
+          cbrow=$(awk -F '\t' '$1=="callback_only"{print $2}' rotfb-build-diagnostics/independent-workflows.tsv 2>/dev/null)
+          ddirow=$(awk -F '\t' '$1=="ddi_integration"{print $2}' rotfb-build-diagnostics/independent-workflows.tsv 2>/dev/null)
+          IFS="$(printf '\t')" read -r cbid cbstate cbresult <<< "$cbrow"
+          IFS="$(printf '\t')" read -r ddiid ddistate ddiresult <<< "$ddirow"
+          callback_status=SKIPPED
+          if [ "$CALLBACK_OUTCOME" != success ]; then callback_status=FAIL; elif [ "$cbstate" = completed ]; then [ "$cbresult" = success ] && callback_status=PASS || callback_status=FAIL; fi
+          ddi_status=SKIPPED
+          if [ "$ddistate" = completed ]; then [ "$ddiresult" = success ] && ddi_status=PASS || ddi_status=FAIL; fi
+          vm_status=$(status_from_outcome "$OPENINDIANA_OUTCOME")
+          nightly_status=SKIPPED
+          if [ -f rotfb-build-logs/nightly-exit-code.txt ]; then
+            nrc=$(cat rotfb-build-logs/nightly-exit-code.txt); frc=$(cat rotfb-build-logs/final-build-exit-code.txt 2>/dev/null)
+            [ "$nrc" = 0 ] && [ "$frc" = 0 ] && nightly_status=PASS || nightly_status=FAIL
+          fi
+          linker_status=SKIPPED
+          if [ -f rotfb-build-logs/rotfb-build-evidence.txt ]; then
+            n=$(grep -c '^status=PASS$' rotfb-build-logs/rotfb-build-evidence.txt 2>/dev/null); n=${n:-0}
+            [ "$n" -eq 6 ] && grep -q '^overall_status=PASS$' rotfb-build-logs/rotfb-build-evidence.txt && linker_status=PASS || linker_status=FAIL
+          fi
+          artifact_status=PASS
+          [ "$LOGS_UPLOAD_OUTCOME" = success ] && [ "$DIAGNOSTICS_UPLOAD_OUTCOME" = success ] && [ "$TESTS_UPLOAD_OUTCOME" = success ] || artifact_status=FAIL
+          {
+            echo "# ROTFB full OpenIndiana build"
+            echo "- Run: [#$GITHUB_RUN_NUMBER](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+            echo "- Event: $GITHUB_EVENT_NAME"
+            echo "- Branch: $GITHUB_REF_NAME"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Upstream: \`098e95820891f8a83fae679daece7fcf58b7b3a4\`"
+            echo
+            echo "| Stage | Status | Result |"
+            echo "|---|---|---|"
+            echo "| Patch application | $patch_status | $patch_detail |"
+            echo "| Host regression | $host_status | model=$MODEL_OUTCOME; linker=$LINK_TEST_OUTCOME; cursor=$VIS_CURSOR_OUTCOME; copy=$BITMAP_COPY_OUTCOME; runtime=$RUNTIME_OUTCOME |"
+            echo "| Callback harness | $callback_status | in-build=$CALLBACK_OUTCOME; callback-only=$cbid/$cbresult |"
+            echo "| DDI integration | $ddi_status | run_id=$ddiid result=$ddiresult |"
+            echo "| OpenIndiana VM | $vm_status | outcome=$OPENINDIANA_OUTCOME |"
+            echo "| Nightly build | $nightly_status | exit=$nrc final=$frc |"
+            echo "| Linker verification | $linker_status | 6 target records required |"
+            echo "| Artifact upload | $artifact_status | logs=$LOGS_UPLOAD_OUTCOME; diagnostics=$DIAGNOSTICS_UPLOAD_OUTCOME; tests=$TESTS_UPLOAD_OUTCOME |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$patch_status" != PASS ] || [ "$host_status" != PASS ] || [ "$callback_status" != PASS ] || [ "$ddi_status" != PASS ] || [ "$vm_status" != PASS ] || [ "$nightly_status" != PASS ] || [ "$linker_status" != PASS ] || [ "$artifact_status" != PASS ]; then echo "FULL_BUILD_ACCEPTANCE=FAIL" >> "$GITHUB_STEP_SUMMARY"; exit 1; fi
+          echo "FULL_BUILD_ACCEPTANCE=PASS" >> "$GITHUB_STEP_SUMMARY"
