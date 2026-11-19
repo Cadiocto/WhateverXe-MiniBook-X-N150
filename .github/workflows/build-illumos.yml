@@ -119,6 +119,21 @@ jobs:
           printf '%s\n' "$rc" > rotfb-test-results/runtime-lifecycle.exit-code
           exit "$rc"
 
+      - name: ROTFB independent workflow evidence parser regression tests
+        id: host_independent_workflows
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p rotfb-test-results
+          log=rotfb-test-results/independent-workflows-parser.log
+          set +e
+          python3 .github/tests/test_independent_workflows.py > "$log" 2>&1
+          rc=$?
+          set -e
+          cat "$log"
+          printf '%s\n' "$rc" > rotfb-test-results/independent-workflows-parser.exit-code
+          exit "$rc"
+
       - name: Initialize diagnostic artifact staging
         id: init_diagnostics
         if: always()
@@ -591,6 +606,7 @@ jobs:
           VIS_CURSOR_OUTCOME: ${{ steps.host_vis_cursor.outcome }}
           BITMAP_COPY_OUTCOME: ${{ steps.host_bitmap_copy.outcome }}
           RUNTIME_OUTCOME: ${{ steps.host_runtime.outcome }}
+          INDEPENDENT_PARSER_OUTCOME: ${{ steps.host_independent_workflows.outcome }}
           CALLBACK_OUTCOME: ${{ steps.callback_harness.outcome }}
           OPENINDIANA_OUTCOME: ${{ steps.openindiana_vm.outcome }}
         run: |
@@ -611,6 +627,7 @@ jobs:
             printf 'host_vis_cursor\t%s\n' "$VIS_CURSOR_OUTCOME"
             printf 'host_bitmap_copy\t%s\n' "$BITMAP_COPY_OUTCOME"
             printf 'host_runtime\t%s\n' "$RUNTIME_OUTCOME"
+            printf 'host_independent_workflows\t%s\n' "$INDEPENDENT_PARSER_OUTCOME"
             printf 'callback_harness\t%s\n' "$CALLBACK_OUTCOME"
             printf 'openindiana_vm\t%s\n' "$OPENINDIANA_OUTCOME"
           } > rotfb-build-diagnostics/step-outcomes.tsv
@@ -692,6 +709,7 @@ jobs:
           VIS_CURSOR_OUTCOME: ${{ steps.host_vis_cursor.outcome }}
           BITMAP_COPY_OUTCOME: ${{ steps.host_bitmap_copy.outcome }}
           RUNTIME_OUTCOME: ${{ steps.host_runtime.outcome }}
+          INDEPENDENT_PARSER_OUTCOME: ${{ steps.host_independent_workflows.outcome }}
           CALLBACK_OUTCOME: ${{ steps.callback_harness.outcome }}
           OPENINDIANA_OUTCOME: ${{ steps.openindiana_vm.outcome }}
           LOGS_UPLOAD_OUTCOME: ${{ steps.upload_logs.outcome }}
@@ -701,21 +719,40 @@ jobs:
           set +e
           status_from_outcome() { [ "$1" = success ] && echo PASS || { [ "$1" = skipped ] && echo SKIPPED || echo FAIL; }; }
           host_status=PASS
-          for outcome in "$MODEL_OUTCOME" "$LINK_TEST_OUTCOME" "$VIS_CURSOR_OUTCOME" "$BITMAP_COPY_OUTCOME" "$RUNTIME_OUTCOME"; do [ "$outcome" = success ] || host_status=FAIL; done
+          for outcome in "$MODEL_OUTCOME" "$LINK_TEST_OUTCOME" "$VIS_CURSOR_OUTCOME" "$BITMAP_COPY_OUTCOME" "$RUNTIME_OUTCOME" "$INDEPENDENT_PARSER_OUTCOME"; do [ "$outcome" = success ] || host_status=FAIL; done
           patch_status=SKIPPED; patch_detail="OpenIndiana patch-apply stage did not run"
           if [ -f rotfb-build-logs/patch-apply.log ]; then
             applied=$(grep -c '^APPLIED ' rotfb-build-logs/patch-apply.log 2>/dev/null); applied=${applied:-0}
             series=$(grep -c '^PATCH_SERIES_STATUS=PASS$' rotfb-build-logs/patch-series-regression.log 2>/dev/null); series=${series:-0}
             if [ "$applied" -eq 13 ] && [ "$series" -eq 1 ]; then patch_status=PASS; patch_detail="13/13 patches applied; ordered series regression PASS"; else patch_status=FAIL; patch_detail="$applied/13 applied; series PASS count=$series"; fi
           fi
-          cbrow=$(awk -F '\t' '$1=="callback_only"{print $2}' rotfb-build-diagnostics/independent-workflows.tsv 2>/dev/null)
-          ddirow=$(awk -F '\t' '$1=="ddi_integration"{print $2}' rotfb-build-diagnostics/independent-workflows.tsv 2>/dev/null)
-          IFS="$(printf '\t')" read -r cbid cbstate cbresult <<< "$cbrow"
-          IFS="$(printf '\t')" read -r ddiid ddistate ddiresult <<< "$ddirow"
-          callback_status=SKIPPED
-          if [ "$CALLBACK_OUTCOME" != success ]; then callback_status=FAIL; elif [ "$cbstate" = completed ]; then [ "$cbresult" = success ] && callback_status=PASS || callback_status=FAIL; fi
-          ddi_status=SKIPPED
-          if [ "$ddistate" = completed ]; then [ "$ddiresult" = success ] && ddi_status=PASS || ddi_status=FAIL; fi
+          cbid=UNKNOWN; cbstate=UNKNOWN; cbresult=UNKNOWN; cbaccepted=false
+          ddiid=UNKNOWN; ddistate=UNKNOWN; ddiresult=UNKNOWN; ddiaccepted=false
+          independent_parse_status=FAIL
+          independent_status=FAIL
+          independent_detail="independent-workflows.tsv was not parsed"
+          independent_json=""
+          if [ -f rotfb-build-diagnostics/independent-workflows.tsv ]; then
+            if independent_json=$(python3 .github/scripts/independent_workflows.py rotfb-build-diagnostics/independent-workflows.tsv 2> rotfb-build-diagnostics/independent-workflow-parse-error.txt); then
+              independent_parse_status=PASS
+              cbid=$(printf '%s' "$independent_json" | jq -r '.callback_only.run_id')
+              cbstate=$(printf '%s' "$independent_json" | jq -r '.callback_only.status')
+              cbresult=$(printf '%s' "$independent_json" | jq -r '.callback_only.conclusion')
+              cbaccepted=$(printf '%s' "$independent_json" | jq -r '.callback_only.accepted')
+              ddiid=$(printf '%s' "$independent_json" | jq -r '.ddi_integration.run_id')
+              ddistate=$(printf '%s' "$independent_json" | jq -r '.ddi_integration.status')
+              ddiresult=$(printf '%s' "$independent_json" | jq -r '.ddi_integration.conclusion')
+              ddiaccepted=$(printf '%s' "$independent_json" | jq -r '.ddi_integration.accepted')
+              independent_detail="callback_only=$cbid/$cbstate/$cbresult; ddi_integration=$ddiid/$ddistate/$ddiresult"
+            else
+              independent_detail=$(cat rotfb-build-diagnostics/independent-workflow-parse-error.txt)
+            fi
+          fi
+          callback_status=FAIL
+          if [ "$INDEPENDENT_PARSER_OUTCOME" = success ] && [ "$independent_parse_status" = PASS ] && [ "$CALLBACK_OUTCOME" = success ] && [ "$cbaccepted" = true ]; then callback_status=PASS; fi
+          ddi_status=FAIL
+          if [ "$independent_parse_status" = PASS ] && [ "$ddiaccepted" = true ]; then ddi_status=PASS; fi
+          if [ "$callback_status" = PASS ] && [ "$ddi_status" = PASS ]; then independent_status=PASS; fi
           vm_status=$(status_from_outcome "$OPENINDIANA_OUTCOME")
           nightly_status=SKIPPED
           if [ -f rotfb-build-logs/nightly-exit-code.txt ]; then
@@ -741,12 +778,13 @@ jobs:
             echo "|---|---|---|"
             echo "| Patch application | $patch_status | $patch_detail |"
             echo "| Host regression | $host_status | model=$MODEL_OUTCOME; linker=$LINK_TEST_OUTCOME; cursor=$VIS_CURSOR_OUTCOME; copy=$BITMAP_COPY_OUTCOME; runtime=$RUNTIME_OUTCOME |"
-            echo "| Callback harness | $callback_status | in-build=$CALLBACK_OUTCOME; callback-only=$cbid/$cbresult |"
-            echo "| DDI integration | $ddi_status | run_id=$ddiid result=$ddiresult |"
+            echo "| Independent workflow evidence | $independent_status | $independent_detail |"
+            echo "| Callback harness | $callback_status | in-build=$CALLBACK_OUTCOME; callback-only=$cbid/$cbstate/$cbresult |"
+            echo "| DDI integration | $ddi_status | run_id=$ddiid status=$ddistate conclusion=$ddiresult |"
             echo "| OpenIndiana VM | $vm_status | outcome=$OPENINDIANA_OUTCOME |"
             echo "| Nightly build | $nightly_status | exit=$nrc final=$frc |"
             echo "| Linker verification | $linker_status | 6 target records required |"
             echo "| Artifact upload | $artifact_status | logs=$LOGS_UPLOAD_OUTCOME; diagnostics=$DIAGNOSTICS_UPLOAD_OUTCOME; tests=$TESTS_UPLOAD_OUTCOME |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$patch_status" != PASS ] || [ "$host_status" != PASS ] || [ "$callback_status" != PASS ] || [ "$ddi_status" != PASS ] || [ "$vm_status" != PASS ] || [ "$nightly_status" != PASS ] || [ "$linker_status" != PASS ] || [ "$artifact_status" != PASS ]; then echo "FULL_BUILD_ACCEPTANCE=FAIL" >> "$GITHUB_STEP_SUMMARY"; exit 1; fi
+          if [ "$patch_status" != PASS ] || [ "$host_status" != PASS ] || [ "$independent_status" != PASS ] || [ "$callback_status" != PASS ] || [ "$ddi_status" != PASS ] || [ "$vm_status" != PASS ] || [ "$nightly_status" != PASS ] || [ "$linker_status" != PASS ] || [ "$artifact_status" != PASS ]; then echo "FULL_BUILD_ACCEPTANCE=FAIL" >> "$GITHUB_STEP_SUMMARY"; exit 1; fi
           echo "FULL_BUILD_ACCEPTANCE=PASS" >> "$GITHUB_STEP_SUMMARY"

@@ -1776,3 +1776,26 @@ The harness supplies host stubs for DDI services, property removal, mutex destru
 * Fix: change the full-build callback step to invoke the same canonical 13-patch harness used by callback-only CI, export its diagnostic log directory, and run `sh -n` before execution. Add the full-build workflow path to callback-only and DDI path filters so their separate runs are triggered on the exact same CI-configuration commit.
 * Regression proof required on the next commit: callback-only and DDI workflows must pass on the exact new HEAD; the full-build callback step must pass; only then can the workflow enter OpenIndiana VM/nightly.
 * No production code, any of the 13 patches, framebuffer ABI, runtime architecture, upstream pin, or physical-device state was changed.
+
+
+## 2026-11-20 — Full-build Run 44605375271: build evidence and acceptance-gate defect
+
+### Previous-run evidence (preserved; not a new verification run)
+
+* Full-build Run 44605375271 used commit 6dbd033cfe96d9ad613743a8c75dfdb5221c8ac9. All five existing host regression steps and the in-build callback harness completed successfully. The OpenIndiana VM action completed successfully.
+* OpenIndiana patch application log records all 13 production patches in order; patch-series regression reports PATCH_SERIES_STATUS=PASS, patch count 13, and upstream pin 098e95820891f8a83fae679daece7fcf58b7b3a4.
+* nightly-exit-code.txt=0 and final-build-exit-code.txt=0. rotfb-build-evidence.txt reports patches_expected=13, patches_applied=13, patch_order_match=YES, linker_status_records=6, six target sections with status=PASS, and overall_status=PASS. linker-status.tsv contains six fresh target records, each with linker exit code 0, ELF magic valid, expected ROTFB object argument present, and no linker diagnostics.
+* The same-commit independent workflow evidence file has four tab-separated columns: workflow_name<TAB>run_id<TAB>status<TAB>conclusion. Its exact records are callback_only / 44605375129 / completed / success and ddi_integration / 44605375289 / completed / success. Both runs target the same commit SHA as the full build.
+* The full-build run uploaded three immutable historical artifacts: logs ID 14575223763, SHA-256 ae5756e2ed66f8b7a132ffb6956b5b230f7dd30613d6e5877cb3bb45325ef203; diagnostics ID 14575478518, SHA-256 7882ad4e852ca25c57cbe734c96cab98af5f1760807efd4d22c2077a6022268e; test results ID 14576651810, SHA-256 d001b99dfa7604faa652079da42970f3cf15edee544de4a181c4d0793e3b4909. Their retention expiry is 2026-12-19. Do not overwrite these artifacts.
+* The previous run proves its VM/nightly/linker stages passed on the 13-patch series, but its overall GitHub Actions conclusion is FAILURE. Do not relabel it as a passing acceptance run.
+
+### Exact CI defect
+
+* The resolver writes four TSV columns per row. The summary used awk to print only field 2 (run_id), then attempted to read three variables from that one-field string. This left status and conclusion empty and incorrectly marked successful independent runs as SKIPPED.
+* This was an acceptance-summary parsing defect, not a ROTFB source, patch application, compiler, nightly, or linker failure.
+
+### CI-only correction
+
+* Add a Python TSV parser that preserves empty fields, validates the exact four-column schema, requires one record per independent workflow, rejects missing, duplicate, blank, damaged, unexpected, or invalid records, and fails closed.
+* The parser emits accepted=true only for status=completed and conclusion=success. The acceptance summary consumes run_id, status, conclusion, and accepted independently. Regression tests cover the exact previous-run records, completed failure, in-progress, missing workflow, blank/damaged rows, duplicate records, and invalid status/conclusion combinations.
+* No production source, framebuffer architecture, or patches 0001–0013 are changed. The next control-build result will be recorded separately.
