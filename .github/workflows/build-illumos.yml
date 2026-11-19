@@ -48,6 +48,22 @@ jobs:
           printf 'Artifact staging initialized on runner at %s\n' "$(date -u +%FT%TZ)" \
             > "$GITHUB_WORKSPACE/rotfb-build-logs/collector-started.txt"
 
+      - name: ROTFB patched production bitmap callback integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM="$RUNNER_TEMP/illumos-gate-callback"
+          PIN=098e95820891f8a83fae679daece7fcf58b7b3a4
+          ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
+          LOG="$GITHUB_WORKSPACE/rotfb-build-logs/callback-level-tests.log"
+          git init "$UPSTREAM"
+          git -C "$UPSTREAM" remote add origin https://github.com/illumos/illumos-gate.git
+          git -C "$UPSTREAM" fetch --depth 1 origin "$PIN"
+          git -C "$UPSTREAM" checkout --detach FETCH_HEAD
+          test "$(git -C "$UPSTREAM" rev-parse HEAD)" = "$PIN"
+          sh "$ROTFB/tests/rotfb_bitmap_callback_test.sh" \
+            "$UPSTREAM" "$ROTFB/patches" 2>&1 | tee "$LOG"
+
       - name: Build in OpenIndiana VM
         uses: vmactions/openindiana-vm@v1
         with:
