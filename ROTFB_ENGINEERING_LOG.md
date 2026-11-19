@@ -1192,3 +1192,45 @@ The next source/workflow commit adds patch 0012 and a C test for the existing al
 * B CODE/TEST VERIFIED remains PARTIAL. Allocation failure, rollback, initial-sync equivalence, callback gate/drain and full teardown tests remain.
 * C DEVICE VERIFIED remains NOT VERIFIED. No physical Chuwi operation was performed.
 * Next action: observe Build #85, fetch full job log/artifact on completion, then audit all 12 patches, nightly/final exit bytes and six link tuples before any further source change.
+
+
+## ROTFB RUNTIME TEST DESIGN — production runtime C harness (read-only audit)
+
+* Timestamp UTC: 2026-11-19T02:20:00.320Z
+* Branch: `gop-rotation-hook`
+* HEAD before journal entry: `519c8bec9bc1744fbc941155fe877fd70f6b8a52`
+* Active source: `b30b33152bda3215068dbfa8c20aec1cb0c0a8ef`
+* Active Build #85: run `44443394283`, job `135289541389`; host geometry, linker evidence, VIS C and bitmap-copy C steps are PASS; OpenIndiana VM is IN_PROGRESS. No nightly/link/artifact claims yet.
+
+### Files inspected
+
+* `illumo_rotfb/rotfb_runtime.c`, blob `8d6e8000262fd97aee1325f0067a0f6871f39db5`.
+* `illumo_rotfb/rotfb.h`, blob `2dfdda3c14f957e5666fc9f5bf9ece9598ea7208`.
+* `illumo_rotfb/rotfb_copy.h`, blob `f57759cdfc881278563e152707e150aaf6303f6c`.
+* `illumo_rotfb/rotfb_vis_cursor.h`, blob `bf828cf0d8636585eea3d92f22b5569c68f8901e`.
+* `illumo_rotfb/tests/rotfb_bitmap_copy_test.c` (111 lines) and `rotfb_vis_cursor_test.c` (102 lines).
+* Lifecycle patches 0005 and 0008; VIS patch 0010; bitmap-copy patch 0012.
+
+### Confirmed code behavior and remaining coverage gaps
+
+* `rotfb_runtime_init()` maps the physical WC surface first, allocates a separate shadow, unmaps the just-created mapping if shadow allocation fails, copies the boot logical framebuffer into the runtime shadow, publishes pointers, flushes the full logical surface, then opens the callback gate.
+* `rotfb_runtime_flush_rect()` validates the published framebuffer state, rejects zero/out-of-range origins, clips width/height using subtraction before end-coordinate addition, applies clockwise mapping `px = physical_width - 1 - y`, `py = x`, writes four bytes per pixel, then calls `membar_producer()`.
+* `rotfb_runtime_fini()` validates owner/pointers before teardown, sets the quiescing bit, waits for active callback count to drain, flushes while the WC mapping is still valid, copies runtime shadow back to the boot-owned framebuffer, restores pointers/geometry, then unmaps and frees allocations. The callback gate remains managed and closed after fini.
+* Existing `rotfb_bitmap_copy_test.c` exercises the production `rotfb_copy_rows()` helper, including overlap direction and aliased destinations.
+* Existing `rotfb_vis_cursor_test.c` exercises the production validation/update helper and compares position/origin/visible state in its local struct. However, `visible` is not passed to `rotfb_vis_cursor_update()`; this does not prove that the production VIS callback leaves its visible flag unchanged after rejection.
+* No direct C test currently executes the production `rotfb_runtime.c` lifecycle. Allocation failure/unmap rollback, initial-sync pixel equivalence, clipping canaries, callback gate/drain and full fini/teardown are not yet directly tested.
+
+### Proposed next test implementation (not changed in this run)
+
+* Compile the actual `rotfb_runtime.c` into a host C test translation unit using minimal illumos compatibility headers/stubs for atomic primitives, kmem, gfxp map/unmap, bcopy, delay and framebuffer types. Do not create a parallel model of the lifecycle.
+* Inject map failure and shadow-allocation failure; assert return status, exact map/unmap/free counts, unchanged published pointers and readiness flags.
+* Run successful init with the real fixed 1200x1920 / 1920x1200 geometry, patterned boot shadow and canary-protected physical/shadow buffers; assert selected/all pixels follow the production clockwise transform and row pitches.
+* Exercise clipped and overflowing rectangles through the production `rotfb_runtime_flush_rect()`; assert canaries and untouched pixels remain unchanged.
+* Exercise callback enter/exit, quiescing rejection and fini drain; a deterministic stub `delay()` can complete an injected active callback so the real production wait loop is executed without a timing race.
+* Exercise pointer-mismatch rollback: fini must return failure without freeing mappings or changing published pointers. Then run successful fini and assert restored pointers, copied-back shadow contents, one unmap/free, and rejection of stale callbacks.
+
+### Validation status
+
+* This entry records source inspection and a test design only. No runtime C harness was added or executed; no new PASS is claimed.
+* Build #85 remains the only active target run. No source/workflow change was made during it.
+* Next step: inspect Build #85 original log/artifact when complete; only then add the production-runtime harness and one source commit if its design can be kept isolated and testable.
