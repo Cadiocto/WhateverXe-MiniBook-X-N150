@@ -796,10 +796,10 @@ test_runtime_lifecycle_race_and_recovery(struct gfxp_fb_softc *softc)
 	callback_race_arg_t callback_arg;
 	fini_race_arg_t fini_arg;
 	pthread_t callback_thread, fini_thread;
-	struct vis_conscopy stale_request;
+	struct vis_conscursor stale_request;
 	uint64_t restored_checksum;
 	unsigned int maps_before, unmaps_before, allocs_before, frees_before;
-	uint32_t moves_before;
+	uint32_t flushes_before;
 	int gate_closed = 0;
 	unsigned int i;
 
@@ -846,9 +846,9 @@ test_runtime_lifecycle_race_and_recovery(struct gfxp_fb_softc *softc)
 			rotfb_runtime_callback_exit(entered);
 		(void) sched_yield();
 	}
-	check(gate_closed, "fini closes callback gate during active production copy");
+	check(gate_closed, "fini closes callback gate during active production cursor");
 	check(!__atomic_load_n(&fini_arg.done, __ATOMIC_ACQUIRE),
-	    "fini waits while the real production callback holds its reference");
+	    "fini waits while the real production cursor callback holds its reference");
 	check(unmap_calls == unmaps_before && free_calls == frees_before,
 	    "fini does not unmap WC memory or free shadow before callback exit");
 
@@ -871,11 +871,11 @@ test_runtime_lifecycle_race_and_recovery(struct gfxp_fb_softc *softc)
 
 	/* A stale polled callback is rejected after fini, before softc access. */
 	stale_request = make_cursor(VIS_DISPLAY_CURSOR, 176, 176, 8, 16);
-	moves_before = move_count;
+	flushes_before = flush_count;
 	restored_checksum = buffer_checksum(boot_memory, LOGICAL_BYTES,
 	    physical_memory, PHYSICAL_BYTES);
 	bitmap_polled_cursor((struct vis_polledio_arg *)softc, &stale_request);
-	check(move_count == moves_before &&
+	check(flush_count == flushes_before &&
 	    buffer_checksum(boot_memory, LOGICAL_BYTES, physical_memory,
 	    PHYSICAL_BYTES) == restored_checksum,
 	    "stale production polled cursor after fini is rejected without writes");
