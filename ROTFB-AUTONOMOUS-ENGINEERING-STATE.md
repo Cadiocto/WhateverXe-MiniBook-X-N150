@@ -1,6 +1,6 @@
 # ROTFB Autonomous Engineering State
 
-Last updated: 2026-11-20T21:59:02.859Z
+Last updated: 2026-11-20T22:02:38.779Z
 
 ## Current repository state
 
@@ -82,9 +82,9 @@ Fixes applied:
 |---|---|---|
 | 1. Workflow recovery | IN PROGRESS / NOT VERIFIED | Fixes committed; full YAML/actionlint/guest shell validation and post-fix run outstanding |
 | 2. Control build | NOT RUN for packaging workflow | Historical full build passed on source SHA, not current packaging workflow |
-| 3. IPS repository validation | NOT VERIFIED | No successfully generated current repository artifact inspected |
+| 3. IPS repository validation | PARTIAL / NOT VERIFIED | Failed-run archive structure inspected; IPS-native pkgrepo verification still not executed |
 | 4. Offline dependency closure | BLOCKED | Target-equivalent OpenIndiana 2026.10 package baseline and offline solver proof absent |
-| 5. Kernel payload validation | NOT VERIFIED | No successful current packaging payload inspected |
+| 5. Kernel payload validation | PARTIAL / NOT VERIFIED | Failed-run i86pc kernel payload ELF and ROTFB symbols inspected; no successful packaging run or target-side validation |
 | 6. Offline Install Kit assembly | NOT RUN / BLOCKED | Assembly intentionally refuses unless offline closure is PASS |
 | 7. ZIP revalidation | NOT RUN | No kit ZIP uploaded |
 | 8. Physical-device preparation | NOT RUN | Target-side runbook still required |
@@ -126,3 +126,15 @@ Fixes applied:
 - Replaced its stale build-only prompt with the staged offline-kit mission, current failure evidence, protected-component constraints, mandatory offline closure gate, and truthful status requirements.
 - Re-enabled the existing hourly condition-watch schedule in Europe/Helsinki. No duplicate automation was created.
 - The automation does not itself prove a workflow run or release artifact; it must inspect live GitHub evidence on each execution.
+
+
+### 2026-11-20T22:02:38.779Z — failed-run artifact forensic analysis and package selection fix
+
+- Recovered and downloaded diagnostic artifact 14663616959 from Run 44795246582 (commit cc9657aa313760621f5642fb7a0d4afe4a3d5a30). Downloaded ZIP SHA-256: ddbf8793402301e19a3ce23241be5061e6b3981ff6a756e21c94703d67e9900e; 220,263,301 bytes.
+- The failed run's nightly exit code is 1. mail_msg.txt shows empty build-error, build-warning and package-build-error sections. pkglint_noise.txt contains only shell xtrace commands (+ cd, + dmake -e pkglint, + tee, + egrep). build_noise shows pkglint_noise nonempty and upstream build_extras_ok=n. This establishes the false PKGLINT noise caused by nightly xtrace; removal of -x was the correct fix.
+- Inspected failed-package-repository.tar.gz (217,960,383 bytes; SHA-256 0736fa6e47bc46244d1c9ba1c0cce2f5f676d50e088d5181e250d53883b0b242). It contains packages/i386/nightly-nd/repo.redist with catalog, pkg and file directories; 32,208 archive entries, 557 package manifest files, 1,115 pkg-tree entries and 24,445 file-tree entries. The repository has not passed IPS-native pkgrepo verify/list in this environment.
+- Found the actual payload-owning FMRI in the repository manifest: pkg://on-nightly/system/kernel/platform@0.5.11,5.11-999999.1:20261120T195202Z. Its manifest includes platform/i86pc/kernel/amd64/unix and platform/i86pc/kernel/misc/amd64/gfx_private (plus i86xpv counterparts). The package manifest contains no ROTFB-named path; ROTFB is linked into gfx_private and rotfb_info is defined by unix. The prior workflow's search for literal rotfb strings would therefore fail to select the package.
+- Corrected package discovery to match the actual i86pc unix and gfx_private manifest paths in commit e8e47e10612dcba79849a39f0a6e59366cdd4677. This is workflow-only; no protected production source or patch changed.
+- Extracted the failed-run kernel payload (51 files). unix is ELF64 x86-64 Solaris EXEC, 2,384,808 bytes, SHA-256 1ea83d1d5597d50893aeef6b8d3b79f3be9b439ca509ba31062529bb87d1f300. gfx_private is ELF64 x86-64 Solaris REL, 70,352 bytes, SHA-256 53487c33f17d63b3670f15df4585149da6fea1198380f01a639abbd7e9de9207. nm shows rotfb_runtime_init/fini/flush/callback symbols in gfx_private; gfx_private has U rotfb_info and unix defines global B rotfb_info. Kernel payload archive SHA-256: 80b137cbe005addf098fb25fc120386f8697d3a2253b854736e207695c2405f4.
+- Local validation against the recovered actual package manifest: package-selection regex PASS; POSIX shell parameter-expansion fixture PASS; one-backslash find -exec syntax fixture PASS. These are targeted fixtures, not a full workflow YAML or guest-script syntax pass.
+- No post-fix packaging run was started. Latest observed Actions runs remain historical failures; the current workflow is dispatch-only.
