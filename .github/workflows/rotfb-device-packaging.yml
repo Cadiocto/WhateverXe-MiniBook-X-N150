@@ -137,7 +137,7 @@ jobs:
             # and per-stage install logs on the NFS-shared runner workspace.
             # Run #92 used an asynchronous heartbeat; Run #2 did not preserve
             # the guest's internal log before nightly returned nonzero.
-            NIGHTLY_DRIVER_LOG="$LOG/nightly-driver-trace.log"
+            NIGHTLY_DRIVER_LOG="$LOG/nightly-driver.log"
             BUILD_NOISE_DIR="$LOG/build-noise"
             GATE_LOG_DIR="$LOG/gate-logs"
             BUILD_OUTPUT_DIR="$LOG/build-output"
@@ -284,7 +284,7 @@ jobs:
             if [ "$NIGHTLY_RC" -ne 0 ]; then
               preserve_failed_guest_outputs
             fi
-            printf 'nightly_exit_code=%s\nnightly_trace=%s\n' "$NIGHTLY_RC" "$NIGHTLY_DRIVER_LOG" > "$LOG/nightly-result.txt"
+            printf 'nightly_exit_code=%s\nnightly_driver_log=%s\n' "$NIGHTLY_RC" "$NIGHTLY_DRIVER_LOG" > "$LOG/nightly-result.txt"
             test -f "$NIGHTLY_DRIVER_LOG"
             test -s "$LOG/nightly-exit-code.txt"
             test "$NIGHTLY_RC" -eq 0
