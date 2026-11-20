@@ -13,7 +13,7 @@ This procedure is for the device owner. CI agents must not run it against the ph
 
 1. Keep the existing working boot environment (BE) intact. Do not install ROTFB into it.
 2. Use only the kit's `INSTALL.sh` after the kit has passed all release gates, including the target-equivalent offline IPS dependency-closure gate.
-3. The installer must verify `manifests/SHA256SUMS`, verify the local IPS repository, run an IPS solver dry-run, and install into a separately named BE using `--no-be-activate`.
+3. The installer must verify `manifests/SHA256SUMS` and the local IPS repository, run solver dry-runs against the current image and the mounted test BE, create a separate BE with `beadm create`, and use `pkg -R` to install into that inactive BE. It must not call `beadm activate`.
 4. The new test BE may appear in the boot menu, but it must not become the default next-boot BE. Do not reboot if the original BE is no longer the default.
 5. Do not change BIOS/UEFI settings, firmware, EFI variables, NVRAM variables, bootloader configuration files, or the active BE manually.
 6. Do not run `bootadm update-archive` until the test BE has actually been booted. Run it only while booted into that test BE.
@@ -96,13 +96,16 @@ The installer is expected to:
 1. verify the checksum manifest and each listed file;
 2. verify the local IPS repository and its package inventory;
 3. confirm the ROTFB package FMRI list is present in the repository;
-4. run `pkg install -n` as a solver dry-run;
-5. install into a uniquely named BE with `--no-refresh --no-be-activate --be-name`;
-6. confirm the new BE exists without activating it.
+4. run `pkg install -n` against the current image, then run a second dry-run against the mounted test BE;
+5. create a uniquely named BE with `beadm create`, mount it under `/mnt`, and use `pkg -R` with `--no-refresh` and the local repository to install into that inactive BE;
+6. unmount the test BE, leave it inactive, and confirm it appears in `beadm list`;
+7. if installation fails after BE creation, leave the inactive BE for manual inspection rather than activating or automatically destroying it.
 
 The installer must not run `beadm activate`. It must not install into the current BE. It must not alter BIOS/UEFI firmware or NVRAM.
 
-After it finishes, capture:
+If the installer exits nonzero after creating the test BE, do not boot that BE. Preserve its name and installer output for manual inspection; the installer intentionally leaves an incomplete inactive BE rather than destroying it automatically.
+
+After it finishes successfully, capture:
 
 ```sh
 beadm list > "$EVIDENCE_DIR/beadm-list-after-install.txt"
