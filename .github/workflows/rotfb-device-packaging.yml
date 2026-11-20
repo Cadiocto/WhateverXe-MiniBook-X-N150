@@ -406,16 +406,15 @@ jobs:
           Target: OpenIndiana 2026.10 x86_64 / Chuwi MiniBook X N150
 
           Read ROLLBACK-README.txt before use. Keep the directory structure intact.
-          INSTALL.sh verifies SHA256SUMS, the local IPS repository and required
-          package manifests, then performs an IPS solver dry-run before installing
-          only into a separately named boot environment.
-          INSTALL.sh validates the kit and runs an IPS solver dry-run before
-          creating a test BE with beadm create. It mounts that BE and uses pkg -R
-          to install into the inactive BE, then unmounts it. It does not activate
-          the test BE or change the default next-boot selection. Review beadm list
-          and activate the test BE manually only when ready. If installation fails
-          after BE creation, the inactive test BE is left for manual inspection.
-          Firmware settings and NVRAM variables are not changed.
+          INSTALL.sh validates SHA256SUMS, the local IPS repository and required
+          package manifests, then performs an IPS solver dry-run before creating
+          a separately named inactive test BE with beadm create. It mounts that BE,
+          uses pkg -R to install into it, and unmounts it. The script does not call
+          beadm activate and does not change the default next-boot selection.
+          Review beadm list; when ready, manually run:
+            beadm activate <rotfb-test-BE-name>
+          If installation fails after BE creation, the inactive test BE is left
+          for manual inspection. Firmware settings and NVRAM variables are not changed.
 
           No boot archive is included. After booting the test BE, update its own
           archive with the target system's native bootadm update-archive command.
@@ -423,8 +422,12 @@ jobs:
           EOF
           cat > "$STAGE/ROLLBACK-README.txt" <<'EOF'
           ROLLBACK
-          Keep the original boot environment. If the test BE fails, reboot and
-          select the original BE from the existing boot environment menu.
+          Keep the original boot environment. The installer creates an inactive
+          test BE and never activates it. If installation fails after BE creation,
+          inspect the retained test BE with beadm list; destroy it only after
+          confirming that the original BE is intact and the test BE is not needed.
+          If you later activate the test BE and it fails, reboot and select the
+          original BE from the existing boot environment menu.
           Inspect with beadm list. If necessary, activate the original BE:
             beadm activate <original-BE-name>
           Reboot. Only after confirming the original BE works, remove the failed
@@ -476,6 +479,10 @@ jobs:
           [ "$#" -gt 0 ] || { echo "No ROTFB package FMRI" >&2; exit 1; }
           BE="rotfb-test-$(date +%Y%m%d-%H%M%S)"
           MOUNT="/mnt/$BE"
+          if beadm list "$BE" >/dev/null 2>&1; then
+            echo "Test BE already exists: $BE" >&2
+            exit 1
+          fi
           [ ! -e "$MOUNT" ] || { echo "Mount point already exists: $MOUNT" >&2; exit 1; }
           mkdir -p /mnt
           echo "Preflight IPS solver dry-run against the current image"
