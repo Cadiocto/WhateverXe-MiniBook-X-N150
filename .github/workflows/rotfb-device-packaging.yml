@@ -222,8 +222,10 @@ jobs:
               } > "$LOG/failed-guest-output-status.txt"
 
               if [ -d "$PKGDIR" ]; then
-                find "$PKGDIR" -type f -printf '%P %s bytes\\n' | sort \
+                find "$PKGDIR" -type f -print | sort \
                   > "$LOG/failed-package-file-index.txt"
+                find "$PKGDIR" -type f -exec ls -ln {} \\; | sort \
+                  > "$LOG/failed-package-file-sizes.txt"
                 if [ -f "$PKGDIR/pkg5.repository" ]; then
                   if pkgrepo verify -s "$PKGDIR" > "$LOG/failed-pkgrepo-verify.log" 2>&1; then
                     echo "PKGREPO_VERIFY=PASS" >> "$LOG/failed-guest-output-status.txt"
@@ -238,7 +240,7 @@ jobs:
                 else
                   echo "PKG5_REPOSITORY=MISSING" >> "$LOG/failed-guest-output-status.txt"
                 fi
-                if tar -czf "$LOG/failed-package-repository.tar.gz" -C "$CODEMGR_WS" packages/i386/nightly-nd; then
+                if tar -czf "$LOG/failed-package-repository.tar.gz" -C "$(dirname "$PKGDIR")" "$(basename "$PKGDIR")"; then
                   echo "PACKAGE_REPOSITORY_ARCHIVE=CAPTURED" >> "$LOG/failed-guest-output-status.txt"
                 else
                   echo "PACKAGE_REPOSITORY_ARCHIVE=FAILED" >> "$LOG/failed-guest-output-status.txt"
