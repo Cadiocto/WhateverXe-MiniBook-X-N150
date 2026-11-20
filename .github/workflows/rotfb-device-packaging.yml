@@ -411,8 +411,10 @@ jobs:
           a separately named inactive test BE with beadm create. It mounts that BE,
           uses pkg -R to install into it, and unmounts it. The script does not call
           beadm activate and does not change the default next-boot selection.
-          Review beadm list; when ready, manually run:
-            beadm activate <rotfb-test-BE-name>
+          Review beadm list. When ready, select the test BE once from the
+          normal boot menu; do not change the default next-boot selection or
+          edit boot configuration files. If the test BE is not available as a
+          one-time boot choice, stop and preserve the original BE.
           If installation fails after BE creation, the inactive test BE is left
           for manual inspection. Firmware settings and NVRAM variables are not changed.
 
