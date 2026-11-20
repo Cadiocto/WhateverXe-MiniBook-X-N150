@@ -413,8 +413,9 @@ jobs:
           creating a test BE with beadm create. It mounts that BE and uses pkg -R
           to install into the inactive BE, then unmounts it. It does not activate
           the test BE or change the default next-boot selection. Review beadm list
-          and activate the test BE manually only when ready. Firmware settings
-          and NVRAM variables are not changed.
+          and activate the test BE manually only when ready. If installation fails
+          after BE creation, the inactive test BE is left for manual inspection.
+          Firmware settings and NVRAM variables are not changed.
 
           No boot archive is included. After booting the test BE, update its own
           archive with the target system's native bootadm update-archive command.
@@ -476,6 +477,7 @@ jobs:
           BE="rotfb-test-$(date +%Y%m%d-%H%M%S)"
           MOUNT="/mnt/$BE"
           [ ! -e "$MOUNT" ] || { echo "Mount point already exists: $MOUNT" >&2; exit 1; }
+          mkdir -p /mnt
           echo "Preflight IPS solver dry-run against the current image"
           pkg install -n --no-refresh --accept -g "file://$REPO" "$@"
           BE_CREATED=0
@@ -489,9 +491,9 @@ jobs:
             fi
             if [ "$BE_MOUNTED" -eq 0 ]; then
               rmdir "$MOUNT" 2>/dev/null || true
-              if [ "$BE_CREATED" -eq 1 ] && [ "$INSTALL_OK" -eq 0 ]; then
-                beadm destroy "$BE" || rc=1
-              fi
+            fi
+            if [ "$BE_CREATED" -eq 1 ] && [ "$INSTALL_OK" -eq 0 ]; then
+              echo "Incomplete inactive test BE left for manual inspection: $BE" >&2
             fi
             exit "$rc"
           }
