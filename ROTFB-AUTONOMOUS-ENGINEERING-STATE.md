@@ -213,3 +213,13 @@ Fixes applied:
 - The embedded historical kernel archive has 67 entries / 49 files. `platform/i86pc/kernel/amd64/unix` is ELF 64-bit AMD64, 2,384,808 bytes, mode 0755, SHA-256 `1ea83d1d5597d50893aeef6b8d3b79f3be9b439ca509ba31062529bb87d1f300`. `platform/i86pc/kernel/misc/amd64/gfx_private` is ELF 64-bit x86-64 relocatable, 70,352 bytes, mode 0755, SHA-256 `53487c33f17d63b3670f15df4585149da6fea1198380f01a639abbd7e9de9207`. This is historical payload evidence only, not a successful current packaging build.
 - Current workflow and installer static validation results from the preceding cycle remain applicable; no new build or device operation was performed.
 - Stage 3 remains NOT VERIFIED pending a successful controlled build and live `pkgrepo verify/list`. Stage 5 remains historical-only until the current control build produces and validates its payload. Stages 2, 4, 6 and 7 remain BLOCKED/NOT RUN as recorded above.
+
+
+### 2026-11-20T22:18:51Z — recovered partial owner-side device baseline
+
+- Searched the user's Library for a target-equivalent OpenIndiana baseline. Found and read `текст.txt`, created 2026-11-20 16:43 UTC. It is useful owner-provided target evidence, not a complete IPS baseline.
+- Recorded facts: `uname -a` = `SunOS openindiana 5.11 illumos-c893fd03ad i86pc i386 i86pc`; `isainfo -kv` reports 64-bit amd64 kernel modules; `beadm list` shows one BE, `openindiana`, marked `NR`; `zpool status` shows `rpool ONLINE` with no known data errors; `zfs list` shows approximately 89.0 GB available; `prtconf` identifies CHUWI Innovation And Technology and 16,127 MB memory.
+- The snapshot does not include `/etc/release`, complete installed package FMRIs, publisher configuration, incorporations, variants, or facets. The separate `perl-package-audit.txt` contains only a Perl package subset and is not a substitute. Therefore Stage 4 remains BLOCKED.
+- Updated `ROTFB-PHYSICAL-TEST-RUNBOOK.md` in commit 52713a57dc0deb0458eb38feb13f0bd342f45b14 to record these historical facts, require immediate re-capture before any install, and identify the missing IPS baseline fields.
+- The existing snapshot indicates a healthy pool and substantial free space at capture time, but it is not a current guarantee. Do not use it to skip the pre-install checks.
+- Stage 8 remains PREPARED. Stage 4 remains BLOCKED pending a fresh target-side package/publisher/incorporation/variant/facet capture and a real offline IPS solver dry-run. No physical command or installation was performed.
