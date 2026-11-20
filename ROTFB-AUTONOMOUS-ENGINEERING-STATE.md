@@ -187,3 +187,18 @@ Fixes applied:
 - Stage 9 — NOT VERIFIED; no owner-provided physical-device evidence.
 - Current release status: INSTALL KIT NOT READY. READY FOR PHYSICAL DEVICE TEST and DEVICE VERIFIED have not been reached.
 - Next concrete action: obtain a target-equivalent OpenIndiana 2026.10 x86_64 baseline snapshot for the mandatory offline solver proof, while preserving the default-branch/dispatch constraint for a later owner-approved release path.
+
+
+### 2026-11-20T22:15:23Z — final test-BE activation guidance and exact-current validation
+
+- Workflow-only commit 234760dc6f8bcf663861a64bbb72e0f9cbe25837 changes the generated INSTALL-README: the installer leaves the test BE inactive; the owner is instructed to select it once from the normal boot menu, without changing the default next-boot selection or editing boot configuration files. If no one-time boot-menu choice is available, stop and preserve the original BE.
+- The current runbook remains aligned: one-time owner-selected test boot, no default-selection change, and no bootloader/EFI/NVRAM edits. It separately documents rollback if the owner later makes a deliberate BE selection change.
+- Revalidated the exact current workflow blob f6c29bdd10fbb45fbd294e2efacbb21e46e66f79. The local file's Git blob hash matches GitHub exactly.
+- Repeated full static validation after the README change: PyYAML full parse PASS; seven steps and both ${{ ... }} expressions recognized; dispatch-only trigger and no push trigger PASS; `assemble_kit`/USB upload gate PASS; diagnostics artifact restricted to logs PASS; no Solaris `find -maxdepth` remains; inactive mounted-BE installer and offline closure gate remain present.
+- Exact extracted guest run block (337 lines) `sh -n` PASS; guest prepare block `sh -n` PASS; all host run blocks `bash -n` PASS; exact INSTALL.sh heredoc (87 lines) `sh -n` PASS.
+- Current installer stub harness: success path PASS; checksum tamper rejected before package/BE side effects PASS; current-image solver failure stops before BE creation PASS; inactive-BE solver failure unmounts and retains the BE PASS; actual inactive-BE install failure unmounts and retains the BE PASS; pre-existing BE collision rejected before package solver/creation PASS. All IPS and BE commands were stubbed; this is not target runtime proof.
+- `actionlint`, `shellcheck`, and `yq` remain unavailable. Target OpenIndiana shell/IPS runtime tests remain NOT RUN.
+- No new Actions run was started; latest packaging runs remain historical failures 44795290315 and 44795246582. No run is queued or in progress.
+- Stage 1 remains PASS for static YAML/shell/workflow acceptance. Stage 2 remains BLOCKED because the workflow is dispatch-only on `gop-rotation-hook`, while the repository default branch is `main`; the workflow must exist on the default branch for workflow_dispatch, and no dispatch capability is available. `main` was not modified.
+- Stage 4 remains BLOCKED pending target-equivalent OpenIndiana 2026.10 x86_64 baseline evidence. Stage 6/7 remain blocked/not run; the kit is not assembled. Stage 8 runbook is PREPARED. Stage 9 is NOT VERIFIED.
+- Release status remains INSTALL KIT NOT READY; READY FOR PHYSICAL DEVICE TEST and DEVICE VERIFIED have not been reached.
