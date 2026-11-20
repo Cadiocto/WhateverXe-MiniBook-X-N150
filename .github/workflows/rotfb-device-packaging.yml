@@ -392,9 +392,13 @@ jobs:
           Target: OpenIndiana 2026.10 x86_64 / Chuwi MiniBook X N150
 
           Read ROLLBACK-README.txt before use. Keep the directory structure intact.
-          INSTALL.sh installs only the ROTFB package set into a separate boot
-          environment. It does not write EFI variables, NVRAM, BIOS settings,
-          EFI boot entries, or the active boot environment.
+          INSTALL.sh verifies SHA256SUMS, the local IPS repository and required
+          package manifests, then performs an IPS solver dry-run before installing
+          only into a separately named boot environment.
+          pkg install --be-name leaves the running BE's package contents unchanged,
+          but IPS may change the next-boot BE selection. Review beadm list and the
+          boot selection before rebooting. The script does not change BIOS/UEFI
+          firmware settings or NVRAM variables.
 
           No boot archive is included. After booting the test BE, update its own
           archive with the target system's native bootadm update-archive command.
@@ -428,15 +432,19 @@ jobs:
           [ -s "$BASE/manifests/SHA256SUMS" ] || { echo "SHA256SUMS missing or empty" >&2; exit 1; }
           (
             cd "$BASE"
+            CHECKED=0
             while read -r expected rel; do
               [ -n "$expected" ] || continue
               [ "${#expected}" -eq 64 ] || { echo "Invalid SHA-256 entry: $rel" >&2; exit 1; }
               case "$expected" in *[!0-9a-f]*) echo "Invalid SHA-256 value: $rel" >&2; exit 1 ;; esac
               case "$rel" in ./*) ;; *) echo "Unsafe checksum path: $rel" >&2; exit 1 ;; esac
+              case "$rel" in *"/../"*|./../*|*/..) echo "Unsafe checksum path: $rel" >&2; exit 1 ;; esac
               [ -f "$rel" ] || { echo "Kit file missing: $rel" >&2; exit 1; }
               actual=$(digest -a sha256 "$rel")
               [ "$actual" = "$expected" ] || { echo "Checksum mismatch: $rel" >&2; exit 1; }
+              CHECKED=$((CHECKED + 1))
             done < manifests/SHA256SUMS
+            [ "$CHECKED" -gt 0 ] || { echo "No checksum entries found" >&2; exit 1; }
           )
           [ -d "$REPO/catalog" ] && [ -d "$REPO/pkg" ] && [ -d "$REPO/file" ] || { echo "IPS repository layout missing" >&2; exit 1; }
           pkgrepo verify -s "$REPO"
