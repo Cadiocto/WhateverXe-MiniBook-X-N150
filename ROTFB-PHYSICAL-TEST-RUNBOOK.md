@@ -57,6 +57,13 @@ Confirm all of the following before proceeding:
 
 Do not assume that a generic OpenIndiana VM is an equivalent baseline for this laptop. The release, architecture, installed FMRIs, publishers, incorporations, variants, and facets must match the target.
 
+
+### Last owner-provided device snapshot (2026-11-20)
+
+A saved target-side snapshot records the host as `SunOS openindiana 5.11 illumos-c893fd03ad i86pc i386 i86pc`, `isainfo -kv` as 64-bit amd64 kernel modules, one BE named `openindiana` marked `NR`, and pool `rpool` as ONLINE with approximately 89.0 GB available in `zfs list`. `prtconf` identifies CHUWI Innovation And Technology and reports 16,127 MB memory. Treat this only as historical pre-test evidence: repeat the capture immediately before installation and confirm the current release and BE state.
+
+This snapshot does **not** contain `/etc/release`, the complete installed FMRI inventory, publisher configuration, incorporation inventory, variants, or facets. It is therefore useful hardware/storage evidence but is **not** the target-equivalent IPS baseline required for the offline dependency-closure gate. A Perl-only package audit elsewhere in the Library is not a substitute for the complete target inventory.
+
 ## 3. Verify the release kit before installation
 
 Proceed only when the release record explicitly says:
