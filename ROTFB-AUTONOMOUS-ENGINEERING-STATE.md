@@ -1,6 +1,6 @@
 # ROTFB Autonomous Engineering State
 
-Last updated: 2026-11-20T21:58:30.115Z
+Last updated: 2026-11-20T21:59:02.859Z
 
 ## Current repository state
 
@@ -96,7 +96,7 @@ Fixes applied:
 - No target-equivalent OpenIndiana 2026.10 x86_64 baseline snapshot has been supplied or validated.
 - The current connected GitHub toolset exposes run/job/artifact inspection and repository writes, but no workflow-dispatch operation. The new workflow has workflow_dispatch; no run was started from this session.
 - The local container cannot resolve external GitHub hosts, so it cannot fetch the workflow for local parser execution. The GitHub API fetch remains the source of repository content.
-- The hourly ROTFB automation previously found in ChatGPT is paused/disabled and contains an older build-only prompt; it must be updated before it is re-enabled for the packaging release mission.
+- The prior ROTFB Autonomous Build Watch automation was paused and had an obsolete build-only prompt. This was resolved by updating that existing automation to the offline-kit release mission and enabling its hourly condition-watch schedule.
 
 ## Next concrete actions
 
@@ -117,3 +117,12 @@ Fixes applied:
 - Committed workflow-only corrections in 0599b94938607ad941c72ef187ff12bc9b7b1184 and 929e3dfb2d0c63152c73fa10da7375b4a42d97d7.
 - Confirmed no build, workflow dispatch, rerun, packaging execution, or physical-device action was performed.
 - Stage 4 remains BLOCKED; no Install Kit readiness claim is made.
+
+
+### 2026-11-20T21:59:02.859Z — persistent automation resumed
+
+- Rechecked live branch HEAD before this state update: 2dcb15ea6d7a76985f09a9e8c138e78bc861252d.
+- Updated existing automation ROTFB Autonomous Build Watch (ID 6aff5a46fff881918dcc37ed37bd0366) to ROTFB Offline Kit Release.
+- Replaced its stale build-only prompt with the staged offline-kit mission, current failure evidence, protected-component constraints, mandatory offline closure gate, and truthful status requirements.
+- Re-enabled the existing hourly condition-watch schedule in Europe/Helsinki. No duplicate automation was created.
+- The automation does not itself prove a workflow run or release artifact; it must inspect live GitHub evidence on each execution.
