@@ -172,7 +172,15 @@ jobs:
                 \( -path '/tmp/nightly.tmpdir.*/build_noise' -o \
                    -path '/tmp/nightly.tmpdir.*/mail_msg' -o \
                    -path '/tmp/nightly.tmpdir.*/build_time' -o \
-                   -path '/tmp/nightly.tmpdir.*/build_environ' \) -print 2>/dev/null |
+                   -path '/tmp/nightly.tmpdir.*/build_environ' -o \
+                   -path '/tmp/nightly.tmpdir.*/pkglint_noise' -o \
+                   -path '/tmp/nightly.tmpdir.*/protocmp_noise' -o \
+                   -path '/tmp/nightly.tmpdir.*/package' -o \
+                   -path '/tmp/nightly.tmpdir.*/clobber_errs' -o \
+                   -path '/tmp/nightly.tmpdir.*/check_errors' -o \
+                   -path '/tmp/nightly.tmpdir.*/build_errs*' -o \
+                   -path '/tmp/nightly.tmpdir.*/build_warnings*' -o \
+                   -path '/tmp/nightly.tmpdir.*/signing' \) -print 2>/dev/null |
               while IFS= read -r f; do
                 d=$(basename "$(dirname "$f")")
                 b=$(basename "$f")
@@ -194,6 +202,66 @@ jobs:
                 rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
                 sync_append_file "$f" "$BUILD_OUTPUT_DIR/$rel" "$LOG_STATE_DIR/output-$rel.offset" || true
               done
+
+              if [ -f "$CODEMGR_WS/usr/src/check-paths.out" ]; then
+                sync_append_file "$CODEMGR_WS/usr/src/check-paths.out" \
+                  "$LOG/check-paths.out" "$LOG_STATE_DIR/check-paths.offset" || true
+              fi
+            }
+
+            preserve_failed_guest_outputs() {
+              MACH=$(uname -p)
+              PKGARCHIVE_BASE=$(ksh93 -c '. /tmp/rotfb-packaging.env; print -r -- "$PKGARCHIVE"')
+              PKGDIR="${PKGARCHIVE_BASE}-nd"
+              ROOT="$CODEMGR_WS/proto/root_$MACH"
+              {
+                echo "NIGHTLY_EXIT_CODE=$NIGHTLY_RC"
+                echo "PKGDIR=$PKGDIR"
+                echo "ROOT=$ROOT"
+                echo "PRESERVATION_MODE=FAILED_NIGHTLY_DIAGNOSTICS_ONLY"
+              } > "$LOG/failed-guest-output-status.txt"
+
+              if [ -d "$PKGDIR" ]; then
+                find "$PKGDIR" -type f -printf '%P %s bytes\\n' | sort \
+                  > "$LOG/failed-package-file-index.txt"
+                if [ -f "$PKGDIR/pkg5.repository" ]; then
+                  if pkgrepo verify -s "$PKGDIR" > "$LOG/failed-pkgrepo-verify.log" 2>&1; then
+                    echo "PKGREPO_VERIFY=PASS" >> "$LOG/failed-guest-output-status.txt"
+                  else
+                    echo "PKGREPO_VERIFY=FAIL" >> "$LOG/failed-guest-output-status.txt"
+                  fi
+                  if pkgrepo list -s "$PKGDIR" -F tsv > "$LOG/failed-package-inventory.tsv" 2> "$LOG/failed-pkgrepo-list.err"; then
+                    echo "PKGREPO_LIST=PASS" >> "$LOG/failed-guest-output-status.txt"
+                  else
+                    echo "PKGREPO_LIST=FAIL" >> "$LOG/failed-guest-output-status.txt"
+                  fi
+                else
+                  echo "PKG5_REPOSITORY=MISSING" >> "$LOG/failed-guest-output-status.txt"
+                fi
+                if tar -czf "$LOG/failed-package-repository.tar.gz" -C "$CODEMGR_WS" packages/i386/nightly-nd; then
+                  echo "PACKAGE_REPOSITORY_ARCHIVE=CAPTURED" >> "$LOG/failed-guest-output-status.txt"
+                else
+                  echo "PACKAGE_REPOSITORY_ARCHIVE=FAILED" >> "$LOG/failed-guest-output-status.txt"
+                fi
+              else
+                echo "PKGDIR=MISSING" >> "$LOG/failed-guest-output-status.txt"
+              fi
+
+              if [ -d "$ROOT/platform/i86pc/kernel" ]; then
+                if [ -f "$ROOT/platform/i86pc/kernel/amd64/unix" ]; then
+                  file "$ROOT/platform/i86pc/kernel/amd64/unix" > "$LOG/failed-kernel-unix-file.txt"
+                  wc -c < "$ROOT/platform/i86pc/kernel/amd64/unix" > "$LOG/failed-kernel-unix-size.txt"
+                  digest=$(digest -a sha256 "$ROOT/platform/i86pc/kernel/amd64/unix")
+                  echo "$digest  unix" > "$LOG/failed-kernel-unix-sha256.txt"
+                fi
+                if tar -czf "$LOG/failed-kernel-payload.tar.gz" -C "$ROOT" platform/i86pc/kernel; then
+                  echo "KERNEL_PAYLOAD_ARCHIVE=CAPTURED" >> "$LOG/failed-guest-output-status.txt"
+                else
+                  echo "KERNEL_PAYLOAD_ARCHIVE=FAILED" >> "$LOG/failed-guest-output-status.txt"
+                fi
+              else
+                echo "KERNEL_PAYLOAD=MISSING" >> "$LOG/failed-guest-output-status.txt"
+              fi
             }
 
             ksh93 -x tools/scripts/nightly /tmp/rotfb-packaging.env > "$NIGHTLY_TRACE" 2>&1 &
@@ -212,6 +280,9 @@ jobs:
             snapshot_nightly_logs
             cp /tmp/rotfb-packaging.env "$LOG/rotfb-packaging.env.final" 2>/dev/null || true
             printf '%s\n' "$NIGHTLY_RC" > "$LOG/nightly-exit-code.txt"
+            if [ "$NIGHTLY_RC" -ne 0 ]; then
+              preserve_failed_guest_outputs
+            fi
             printf 'nightly_exit_code=%s\nnightly_trace=%s\n' "$NIGHTLY_RC" "$NIGHTLY_TRACE" > "$LOG/nightly-result.txt"
             test -s "$NIGHTLY_TRACE"
             test -s "$LOG/nightly-exit-code.txt"
