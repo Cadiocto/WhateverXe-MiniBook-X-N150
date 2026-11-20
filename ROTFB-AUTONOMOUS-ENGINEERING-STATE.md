@@ -1,6 +1,6 @@
 # ROTFB Autonomous Engineering State
 
-Last updated: 2026-11-20T22:02:38.779Z
+Last updated: 2026-11-20T22:03:48.973Z
 
 ## Current repository state
 
@@ -84,7 +84,7 @@ Fixes applied:
 | 2. Control build | NOT RUN for packaging workflow | Historical full build passed on source SHA, not current packaging workflow |
 | 3. IPS repository validation | PARTIAL / NOT VERIFIED | Failed-run archive structure inspected; IPS-native pkgrepo verification still not executed |
 | 4. Offline dependency closure | BLOCKED | Target-equivalent OpenIndiana 2026.10 package baseline and offline solver proof absent |
-| 5. Kernel payload validation | PARTIAL / NOT VERIFIED | Failed-run i86pc kernel payload ELF and ROTFB symbols inspected; no successful packaging run or target-side validation |
+| 5. Kernel payload validation | PASS (i86pc payload scope) | Run 44795246582 artifact: 29 file hashes, 40 mode checks, 11 directories and 1 hardlink match the system/kernel/platform IPS manifest; unix/gfx_private ELF and ROTFB symbols verified. The enclosing nightly run failed at PKGLINT, so this is not a successful full build or release |
 | 6. Offline Install Kit assembly | NOT RUN / BLOCKED | Assembly intentionally refuses unless offline closure is PASS |
 | 7. ZIP revalidation | NOT RUN | No kit ZIP uploaded |
 | 8. Physical-device preparation | NOT RUN | Target-side runbook still required |
@@ -138,3 +138,15 @@ Fixes applied:
 - Extracted the failed-run kernel payload (51 files). unix is ELF64 x86-64 Solaris EXEC, 2,384,808 bytes, SHA-256 1ea83d1d5597d50893aeef6b8d3b79f3be9b439ca509ba31062529bb87d1f300. gfx_private is ELF64 x86-64 Solaris REL, 70,352 bytes, SHA-256 53487c33f17d63b3670f15df4585149da6fea1198380f01a639abbd7e9de9207. nm shows rotfb_runtime_init/fini/flush/callback symbols in gfx_private; gfx_private has U rotfb_info and unix defines global B rotfb_info. Kernel payload archive SHA-256: 80b137cbe005addf098fb25fc120386f8697d3a2253b854736e207695c2405f4.
 - Local validation against the recovered actual package manifest: package-selection regex PASS; POSIX shell parameter-expansion fixture PASS; one-backslash find -exec syntax fixture PASS. These are targeted fixtures, not a full workflow YAML or guest-script syntax pass.
 - No post-fix packaging run was started. Latest observed Actions runs remain historical failures; the current workflow is dispatch-only.
+
+
+### 2026-11-20T22:03:48.973Z — i86pc kernel payload manifest-integrity verification
+
+- Revalidated live branch HEAD before this update: 7b747ce4eecd72ae057157d2bfad1c9d7698581a. Current packaging workflow blob: c2033bf0e6811d3c977624904dd3882bb9ecaf3e.
+- Parsed the actual system/kernel/platform manifest from Run 44795246582 and compared it against the extracted platform/i86pc/kernel payload from that same run's failed-kernel-payload.tar.gz.
+- Verified 29 regular-file SHA-512/256 content hashes, 40 file/directory mode values, 11 directory entries and one hardlink inode relationship. Result: zero missing entries, zero content-hash mismatches, zero mode mismatches, zero hardlink mismatches.
+- Verified unix: ELF64, x86-64, Solaris EXEC, 2,384,808 bytes; SHA-256 1ea83d1d5597d50893aeef6b8d3b79f3be9b439ca509ba31062529bb87d1f300. Its SHA-512/256 matches the IPS manifest value 7eb15466f9274b330d8ad39cdda78d2d264f0d4a084375611365dc0ddd5dbc4d.
+- Verified gfx_private: ELF64, x86-64, Solaris REL, 70,352 bytes; SHA-256 53487c33f17d63b3670f15df4585149da6fea1198380f01a639abbd7e9de9207. Its SHA-512/256 matches the IPS manifest value fd128f5222eb2f17f6bda36ab2b077651da9f5019986988244cc2090638a1e1a.
+- Symbol check: gfx_private contains rotfb_runtime_init, rotfb_runtime_fini, rotfb_runtime_flush_all, rotfb_runtime_callback_enter and rotfb_runtime_callback_exit; gfx_private references rotfb_info as undefined and the i86pc unix image defines global B rotfb_info.
+- Kernel payload tar SHA-256: 80b137cbe005addf098fb25fc120386f8697d3a2253b854736e207695c2405f4.
+- This validates the i86pc kernel payload from the failed packaging run against its own IPS manifest. It does not convert Run 44795246582 into a successful nightly/control build and does not validate the full repository with pkgrepo.
