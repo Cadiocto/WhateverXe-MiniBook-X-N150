@@ -2,9 +2,6 @@ name: ROTFB offline device packaging
 
 on:
   workflow_dispatch:
-  push:
-    branches: [gop-rotation-hook]
-    paths: [".github/workflows/rotfb-device-packaging.yml"]
 
 concurrency:
   group: rotfb-device-packaging
@@ -140,7 +137,7 @@ jobs:
             # and per-stage install logs on the NFS-shared runner workspace.
             # Run #92 used an asynchronous heartbeat; Run #2 did not preserve
             # the guest's internal log before nightly returned nonzero.
-            NIGHTLY_TRACE="$LOG/nightly-driver-trace.log"
+            NIGHTLY_DRIVER_LOG="$LOG/nightly-driver-trace.log"
             BUILD_NOISE_DIR="$LOG/build-noise"
             GATE_LOG_DIR="$LOG/gate-logs"
             BUILD_OUTPUT_DIR="$LOG/build-output"
@@ -190,7 +187,7 @@ jobs:
               if [ -d "$CODEMGR_WS/log" ]; then
                 find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
                 while IFS= read -r f; do
-                  rel=\${f#"$CODEMGR_WS/log"/}
+                  rel=${f#"$CODEMGR_WS/log"/}
                   rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
                   sync_append_file "$f" "$GATE_LOG_DIR/$rel" "$LOG_STATE_DIR/gate-$rel.offset" || true
                 done
@@ -198,7 +195,7 @@ jobs:
 
               find "$CODEMGR_WS/usr/src" -type f -name 'install*-i386.out' -print 2>/dev/null |
               while IFS= read -r f; do
-                rel=\${f#"$CODEMGR_WS/usr/src"/}
+                rel=${f#"$CODEMGR_WS/usr/src"/}
                 rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
                 sync_append_file "$f" "$BUILD_OUTPUT_DIR/$rel" "$LOG_STATE_DIR/output-$rel.offset" || true
               done
@@ -213,10 +210,12 @@ jobs:
               MACH=$(uname -p)
               PKGARCHIVE_BASE=$(ksh93 -c '. /tmp/rotfb-packaging.env; print -r -- "$PKGARCHIVE"')
               PKGDIR="${PKGARCHIVE_BASE}-nd"
+              PKG_REPO="$PKGDIR/repo.redist"
               ROOT="$CODEMGR_WS/proto/root_$MACH"
               {
                 echo "NIGHTLY_EXIT_CODE=$NIGHTLY_RC"
                 echo "PKGDIR=$PKGDIR"
+                echo "PKG_REPO=$PKG_REPO"
                 echo "ROOT=$ROOT"
                 echo "PRESERVATION_MODE=FAILED_NIGHTLY_DIAGNOSTICS_ONLY"
               } > "$LOG/failed-guest-output-status.txt"
@@ -224,21 +223,21 @@ jobs:
               if [ -d "$PKGDIR" ]; then
                 find "$PKGDIR" -type f -print | sort \
                   > "$LOG/failed-package-file-index.txt"
-                find "$PKGDIR" -type f -exec ls -ln {} \\; | sort \
+                find "$PKGDIR" -type f -exec ls -ln {} \; | sort \
                   > "$LOG/failed-package-file-sizes.txt"
-                if [ -f "$PKGDIR/pkg5.repository" ]; then
-                  if pkgrepo verify -s "$PKGDIR" > "$LOG/failed-pkgrepo-verify.log" 2>&1; then
+                if [ -d "$PKG_REPO/catalog" ] && [ -d "$PKG_REPO/pkg" ] && [ -d "$PKG_REPO/file" ]; then
+                  if pkgrepo verify -s "$PKG_REPO" > "$LOG/failed-pkgrepo-verify.log" 2>&1; then
                     echo "PKGREPO_VERIFY=PASS" >> "$LOG/failed-guest-output-status.txt"
                   else
                     echo "PKGREPO_VERIFY=FAIL" >> "$LOG/failed-guest-output-status.txt"
                   fi
-                  if pkgrepo list -s "$PKGDIR" -F tsv > "$LOG/failed-package-inventory.tsv" 2> "$LOG/failed-pkgrepo-list.err"; then
+                  if pkgrepo list -s "$PKG_REPO" -F tsv > "$LOG/failed-package-inventory.tsv" 2> "$LOG/failed-pkgrepo-list.err"; then
                     echo "PKGREPO_LIST=PASS" >> "$LOG/failed-guest-output-status.txt"
                   else
                     echo "PKGREPO_LIST=FAIL" >> "$LOG/failed-guest-output-status.txt"
                   fi
                 else
-                  echo "PKG5_REPOSITORY=MISSING" >> "$LOG/failed-guest-output-status.txt"
+                  echo "IPS_REPOSITORY_LAYOUT=MISSING" >> "$LOG/failed-guest-output-status.txt"
                 fi
                 if tar -czf "$LOG/failed-package-repository.tar.gz" -C "$(dirname "$PKGDIR")" "$(basename "$PKGDIR")"; then
                   echo "PACKAGE_REPOSITORY_ARCHIVE=CAPTURED" >> "$LOG/failed-guest-output-status.txt"
@@ -266,7 +265,7 @@ jobs:
               fi
             }
 
-            ksh93 -x tools/scripts/nightly /tmp/rotfb-packaging.env > "$NIGHTLY_TRACE" 2>&1 &
+            ksh93 tools/scripts/nightly /tmp/rotfb-packaging.env > "$NIGHTLY_DRIVER_LOG" 2>&1 &
             BUILD_PID=$!
             NIGHTLY_RC=0
             while kill -0 "$BUILD_PID" 2>/dev/null; do
@@ -285,8 +284,8 @@ jobs:
             if [ "$NIGHTLY_RC" -ne 0 ]; then
               preserve_failed_guest_outputs
             fi
-            printf 'nightly_exit_code=%s\nnightly_trace=%s\n' "$NIGHTLY_RC" "$NIGHTLY_TRACE" > "$LOG/nightly-result.txt"
-            test -s "$NIGHTLY_TRACE"
+            printf 'nightly_exit_code=%s\nnightly_trace=%s\n' "$NIGHTLY_RC" "$NIGHTLY_DRIVER_LOG" > "$LOG/nightly-result.txt"
+            test -f "$NIGHTLY_DRIVER_LOG"
             test -s "$LOG/nightly-exit-code.txt"
             test "$NIGHTLY_RC" -eq 0
 
@@ -294,7 +293,8 @@ jobs:
             PKGARCHIVE_BASE=$(ksh93 -c '. /tmp/rotfb-packaging.env; print -r -- "$PKGARCHIVE"')
             test -n "$PKGARCHIVE_BASE"
             PKGARCHIVE_SUFFIX=-nd
-            PKGDIR="\${PKGARCHIVE_BASE}\${PKGARCHIVE_SUFFIX}"
+            PKGDIR="${PKGARCHIVE_BASE}${PKGARCHIVE_SUFFIX}"
+            PKG_REPO="$PKGDIR/repo.redist"
             ROOT="$CODEMGR_WS/proto/root_$MACH"
             TOOLS_PROTO_REL="proto/root_$MACH-nd"
             TOOLS_PROTO="$CODEMGR_WS/usr/src/tools/$TOOLS_PROTO_REL"
@@ -303,15 +303,18 @@ jobs:
               echo "PKGARCHIVE_BASE=$PKGARCHIVE_BASE"
               echo "PKGARCHIVE_SUFFIX=$PKGARCHIVE_SUFFIX"
               echo "PKGARCHIVE_FINAL=$PKGDIR"
+              echo "PKG_REPO=$PKG_REPO"
               echo "TOOLS_PROTO_REL=$TOOLS_PROTO_REL"
               echo "TOOLS_PROTO=$TOOLS_PROTO"
             } >> "$LOG/effective-build-config.txt"
             test -d "$PKGDIR"
             test -d "$TOOLS_PROTO"
             test -d "$ROOT"
-            test -f "$PKGDIR/pkg5.repository"
-            pkgrepo verify -s "$PKGDIR" > "$LOG/pkgrepo-verify.log" 2>&1
-            pkgrepo list -s "$PKGDIR" -F tsv > "$LOG/package-inventory.tsv"
+            test -d "$PKG_REPO/catalog"
+            test -d "$PKG_REPO/pkg"
+            test -d "$PKG_REPO/file"
+            pkgrepo verify -s "$PKG_REPO" > "$LOG/pkgrepo-verify.log" 2>&1
+            pkgrepo list -s "$PKG_REPO" -F tsv > "$LOG/package-inventory.tsv"
             test -s "$LOG/package-inventory.tsv"
 
             : > "$LOG/package-manifests.txt"
@@ -323,8 +326,8 @@ jobs:
               [ -n "$pkgname" ] || continue
               fmri="pkg://$publisher/$pkgname@$version"
               count=$((count + 1))
-              pkg contents -m -g "$PKGDIR" "$fmri" >> "$LOG/package-manifests.txt"
-              if pkg contents -m -g "$PKGDIR" "$fmri" 2>/dev/null | grep -Eiq 'rotfb_(boot|runtime)|rotfb(_|\.)'; then
+              pkg contents -m -g "$PKG_REPO" "$fmri" >> "$LOG/package-manifests.txt"
+              if pkg contents -m -g "$PKG_REPO" "$fmri" 2>/dev/null | grep -Eiq 'rotfb_(boot|runtime)|rotfb(_|\.)'; then
                 echo "$fmri" >> "$LOG/rotfb-package-fmris.txt"
               fi
             done < "$LOG/package-inventory.tsv"
@@ -334,7 +337,7 @@ jobs:
             depfail=0
             while IFS= read -r dep; do
               [ -n "$dep" ] || continue
-              pkg contents -m -g "$PKGDIR" "$dep" >/dev/null 2>&1 || { echo "$dep" >> "$LOG/unresolved-dependencies.txt"; depfail=1; }
+              pkg contents -m -g "$PKG_REPO" "$dep" >/dev/null 2>&1 || { echo "$dep" >> "$LOG/unresolved-dependencies.txt"; depfail=1; }
             done < "$LOG/package-dependencies.txt"
             test "$depfail" -eq 0
             echo "DIRECT_BUILD_REPO_DEPENDENCIES=RESOLVED" > "$LOG/offline-dependency-closure.txt"
@@ -372,6 +375,7 @@ jobs:
             } > "$STAGE/manifests/build-evidence.txt"
 
       - name: Assemble, hash and recheck USB kit
+        id: assemble_kit
         if: success()
         shell: bash
         run: |
@@ -411,12 +415,12 @@ jobs:
           #!/bin/sh
           set -eu
           BASE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-          REPO="$BASE/packages/nightly-nd"
+          REPO="$BASE/packages/nightly-nd/repo.redist"
           [ "$(id -u)" -eq 0 ] || { echo "Run as root" >&2; exit 1; }
           [ "$(uname -p)" = i386 ] || { echo "Unsupported architecture" >&2; exit 1; }
           grep -qi OpenIndiana /etc/release || { echo "OpenIndiana required" >&2; exit 1; }
           grep -q 2026.10 /etc/release || { echo "OpenIndiana 2026.10 required" >&2; exit 1; }
-          [ -f "$REPO/pkg5.repository" ] || { echo "IPS repository missing" >&2; exit 1; }
+          [ -d "$REPO/catalog" ] && [ -d "$REPO/pkg" ] && [ -d "$REPO/file" ] || { echo "IPS repository layout missing" >&2; exit 1; }
           set --
           while IFS= read -r fmri; do [ -n "$fmri" ] && set -- "$@" "$fmri"; done < "$BASE/manifests/rotfb-package-fmris.txt"
           [ "$#" -gt 0 ] || { echo "No ROTFB package FMRI" >&2; exit 1; }
@@ -447,7 +451,7 @@ jobs:
           [ -f rotfb-package-logs/packaging-acceptance.txt ] || echo "PACKAGING_ACCEPTANCE=FAIL_OR_INCOMPLETE" > rotfb-package-logs/packaging-acceptance.txt
 
       - name: Upload USB kit
-        if: always() && hashFiles('rotfb-package-staging/ROTFB-DEVICE-KIT.zip') != ''
+        if: always() && steps.assemble_kit.outcome == 'success' && hashFiles('rotfb-package-staging/ROTFB-DEVICE-KIT.zip') != ''
         uses: actions/upload-artifact@v4
         with:
           name: ROTFB-OpenIndiana-2026.10-x86_64-Install-Kit
@@ -463,5 +467,6 @@ jobs:
           path: |
             rotfb-package-logs/
             rotfb-package-staging/
+            !rotfb-package-staging/ROTFB-DEVICE-KIT.zip
           if-no-files-found: warn
           retention-days: 30
