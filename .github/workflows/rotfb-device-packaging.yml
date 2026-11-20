@@ -70,6 +70,13 @@ jobs:
             cd illumos-gate
             git checkout --detach "$UPSTREAM_SHA"
             test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+            BUILDVERSION_RESULT=$(git describe --all --long --dirty --always)
+            test -n "$BUILDVERSION_RESULT"
+            {
+              echo "UPSTREAM_CHECKOUT_SHA=$(git rev-parse HEAD)"
+              echo "BUILDVERSION_EXEC=git describe --all --long --dirty --always"
+              echo "BUILDVERSION_RESULT=$BUILDVERSION_RESULT"
+            } > "$LOG/buildversion-preflight.txt"
 
             ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
             sh "$ROTFB/tests/rotfb_patch_series_test.sh" "$WS/illumos-gate" "$ROTFB/patches" "$WS" > "$LOG/patch-series.log" 2>&1
@@ -100,6 +107,7 @@ jobs:
             export GATE="$CODEMGR_WS"
             export PATH="/opt/onbld/bin:/usr/bin:/usr/sbin:/usr/gnu/bin"
             sed -e "s/^export NIGHTLY_OPTIONS=.*/export NIGHTLY_OPTIONS='-np'/" \
+              -e "s|^export BUILDVERSION_EXEC=.*|export BUILDVERSION_EXEC='git describe --all --long --dirty --always'|" \
               -e "s/^export SHADOW_CCS=.*/export SHADOW_CCS=/" \
               -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
               -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
@@ -121,6 +129,7 @@ jobs:
               echo "lowercase_p=$(grep -n -A1 '^[[:space:]]*p[[:space:]]*)' tools/scripts/nightly | head -n 2)"
             } > "$LOG/effective-build-config.txt"
             grep -q "NIGHTLY_OPTIONS='-np'" /tmp/rotfb-packaging.env
+            grep -q "BUILDVERSION_EXEC='git describe --all --long --dirty --always'" /tmp/rotfb-packaging.env
             grep -q "export PERL_VERSION=5.42" /tmp/rotfb-packaging.env
             grep -q "export PERL_VARIANT=-thread-multi" /tmp/rotfb-packaging.env
             grep -q "export PERL_PKGVERS=-542" /tmp/rotfb-packaging.env
