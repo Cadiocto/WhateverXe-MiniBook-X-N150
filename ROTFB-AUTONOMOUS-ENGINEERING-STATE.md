@@ -163,3 +163,27 @@ Fixes applied:
 - OpenIndiana docs confirm pkg install -n is a no-change dry-run and --be-name installs into a new BE while leaving the current BE's package contents unchanged; --no-refresh avoids refreshing configured publishers. The next-boot selection must still be inspected before reboot.
 - Official actions/upload-artifact@v4 documentation confirms multiline path inputs support negative glob exclusions; the diagnostic ZIP exclusion syntax is supported.
 - Full workflow YAML parse, actionlint, full guest run-block sh -n, and target OpenIndiana IPS runtime tests remain NOT RUN. No workflow dispatch or build was started.
+
+
+### 2026-11-20T22:14:03Z — workflow static acceptance, inactive-BE installer and physical runbook
+
+- Revalidated live branch HEAD: 4c17935c1318366183910cb8d46cf4b5fc15b206. Current workflow blob: b151fa92aa0db89f22ae846cdb2f2ab25246f70b5. The local validation copy's Git blob hash matched the live GitHub blob exactly.
+- Workflow-only changes in c00b34f66acca7de08fe0d1d56e8472309fa9783 close two release defects: the guest snapshot no longer uses unsupported Solaris/OpenSolaris `find -maxdepth`, and the diagnostics artifact now uploads only `rotfb-package-logs/`, not the staging tree. The package repository, kernel and boot payloads are preserved as named diagnostic archives under the logs directory. An incomplete uncompressed kit, ZIP or recheck tree is no longer included in diagnostics.
+- The workflow now asserts the exact `$CODEMGR_WS/packages/$MACH/nightly-nd` PKGDIR, records IPS repository integrity as NOT_VERIFIED until both `pkgrepo verify` and `pkgrepo list` succeed, and preserves the offline dependency-closure gate unchanged.
+- Installer evolution: ff575663773cd76a61c706e38afe401d295fff50 changed installation to a mounted inactive BE using `beadm create`, `beadm mount`, `pkg -R`, and `beadm unmount`; 9188900356d9feb0fdebcf5c90c93d0a3b1da826 leaves an incomplete inactive test BE for manual inspection after a failed install instead of automatically destroying it; 1aafc75de85325a064c9be74812c762d12cf0897 adds an existing-BE collision precheck and clarifies the README/rollback behavior. The installer does not call `beadm activate` or `beadm destroy`.
+- Installer safety harness using stubbed digest/pkg/pkgrepo/beadm/uname/grep commands: success path PASS; checksum tampering rejected before package/BE side effects PASS; current-image solver failure stops before BE creation PASS; inactive-BE solver failure unmounts and retains the BE PASS; actual inactive-BE install failure unmounts and retains the BE PASS; pre-existing BE collision rejected before package solver or BE creation PASS. These are control-flow tests only, not real IPS/BE runtime tests.
+- Exact current workflow validation: PyYAML 6.0.3 full YAML parse PASS; seven workflow steps recognized; `sh -n` on the exact extracted 337-line guest run block PASS; `sh -n` on guest prepare block PASS; `bash -n` on all host run blocks PASS; `sh -n` on the exact extracted 87-line INSTALL.sh PASS. Static audit of dispatch-only trigger, step IDs, expressions, PKG_REPO paths, PKGDIR assertion, closure gate, USB assembly gate and diagnostic upload scope PASS.
+- `actionlint`, `shellcheck` and `yq` are not installed in the available validation environment. Target OpenIndiana /bin/sh runtime and real IPS/beadm execution remain NOT RUN. No physical device command was run.
+- Created `ROTFB-PHYSICAL-TEST-RUNBOOK.md` in e94cbfe331b51f8d8bb33d6a31ed20326eded79d and aligned it with the mounted inactive-BE installer in 4c17935c1318366183910cb8d46cf4b5fc15b206. It is owner-operated and explicitly says not to execute until READY FOR PHYSICAL DEVICE TEST.
+- Latest observed packaging Actions runs remain historical failures: 44795290315 and 44795246582. No new control build was dispatched; there is no queued or in-progress packaging run.
+- Stage 1 — PASS for static workflow/YAML/shell acceptance; actionlint unavailable is recorded above.
+- Stage 2 — BLOCKED: workflow is dispatch-only but exists only on `gop-rotation-hook`; repository default branch is `main`, and GitHub workflow_dispatch requires the workflow to exist on the default branch. No workflow-dispatch write capability is available here. No push trigger was added and `main` was not modified.
+- Stage 3 — NOT VERIFIED on a successful control build. Historical failed-run repository structure is known, but no new live `pkgrepo verify/list` evidence exists.
+- Stage 4 — BLOCKED: no target-equivalent OpenIndiana 2026.10 x86_64 baseline snapshot with installed FMRIs, publishers, incorporations, variants and facets is available. Direct build-repository dependency resolution is not offline closure.
+- Stage 5 — historical failed-run i86pc kernel payload matched its own IPS manifest with no content/mode/hardlink mismatches, but current control-build payload remains NOT VERIFIED.
+- Stage 6 — BLOCKED by Stage 4; no kit assembled or published.
+- Stage 7 — NOT RUN; no release ZIP exists.
+- Stage 8 — PREPARED; owner-side test/rollback runbook committed.
+- Stage 9 — NOT VERIFIED; no owner-provided physical-device evidence.
+- Current release status: INSTALL KIT NOT READY. READY FOR PHYSICAL DEVICE TEST and DEVICE VERIFIED have not been reached.
+- Next concrete action: obtain a target-equivalent OpenIndiana 2026.10 x86_64 baseline snapshot for the mandatory offline solver proof, while preserving the default-branch/dispatch constraint for a later owner-approved release path.
