@@ -56,7 +56,13 @@ jobs:
             set -eu
             LOG="$GITHUB_WORKSPACE/rotfb-package-logs"
             STAGE="$GITHUB_WORKSPACE/rotfb-package-staging/ROTFB-DEVICE-KIT"
-            mkdir -p "$LOG" "$STAGE/packages" "$STAGE/kernel" "$STAGE/boot"
+            mkdir -p "$LOG" "$STAGE/packages" "$STAGE/kernel" "$STAGE/boot" "$STAGE/manifests"
+            # vmactions guest environment is not assumed to inherit GitHub job env.
+            UPSTREAM_SHA=098e95820891f8a83fae679daece7fcf58b7b3a4
+            ROTFB_SOURCE_SHA=8e2a6e8f246c43c151793046934bcb848371768d
+            export UPSTREAM_SHA ROTFB_SOURCE_SHA
+            test "$UPSTREAM_SHA" = "098e95820891f8a83fae679daece7fcf58b7b3a4"
+            test "$ROTFB_SOURCE_SHA" = "8e2a6e8f246c43c151793046934bcb848371768d"
             WS="$HOME/illumos-rotfb-packaging"
             mkdir -p "$WS"
             cd "$WS"
@@ -119,9 +125,17 @@ jobs:
             grep -q "export PERL_VARIANT=-thread-multi" /tmp/rotfb-packaging.env
             grep -q "export PERL_PKGVERS=-542" /tmp/rotfb-packaging.env
             grep -q "export BUILDPERL32='#'" /tmp/rotfb-packaging.env
-            ksh93 -x tools/scripts/nightly /tmp/rotfb-packaging.env > "$LOG/nightly.log" 2>&1
-            echo "$?" > "$LOG/nightly-exit-code.txt"
             cp /tmp/rotfb-packaging.env "$LOG/rotfb-packaging.env"
+            if ksh93 -x tools/scripts/nightly /tmp/rotfb-packaging.env > "$LOG/nightly.log" 2>&1; then
+              NIGHTLY_RC=0
+            else
+              NIGHTLY_RC=$?
+            fi
+            printf '%s\n' "$NIGHTLY_RC" > "$LOG/nightly-exit-code.txt"
+            test -s "$LOG/nightly.log"
+            test "$NIGHTLY_RC" -eq 0
+            test -f "$LOG/nightly-exit-code.txt"
+            test "$(cat "$LOG/nightly-exit-code.txt")" = 0
 
             PKGDIR="$CODEMGR_WS/packages/i386/nightly-nd"
             ROOT="$CODEMGR_WS/proto/root_i386"
@@ -155,7 +169,8 @@ jobs:
               pkg contents -m -g "$PKGDIR" "$dep" >/dev/null 2>&1 || { echo "$dep" >> "$LOG/unresolved-dependencies.txt"; depfail=1; }
             done < "$LOG/package-dependencies.txt"
             test "$depfail" -eq 0
-            echo "OFFLINE_DEPENDENCY_CLOSURE=PASS" > "$LOG/offline-dependency-closure.txt"
+            echo "DIRECT_BUILD_REPO_DEPENDENCIES=RESOLVED" > "$LOG/offline-dependency-closure.txt"
+            echo "OFFLINE_DEPENDENCY_CLOSURE=NOT_VERIFIED_TARGET_BASE_REQUIRED" >> "$LOG/offline-dependency-closure.txt"
 
             cp -p "$ROOT/platform/i86pc/kernel/amd64/unix" "$STAGE/kernel/unix"
             mkdir -p "$STAGE/kernel/platform/i86pc"
@@ -172,7 +187,7 @@ jobs:
               echo "ARCH=x86_64"
               echo "NIGHTLY_OPTIONS=-np"
               echo "PKGARCHIVE=packages/i386/nightly-nd"
-              echo "NIGHTLY_EXIT_CODE=0"
+              echo "NIGHTLY_EXIT_CODE=$NIGHTLY_RC"
               echo "PATCH_COUNT=$n"
             } > "$STAGE/manifests/source-revision.txt"
             {
@@ -182,7 +197,8 @@ jobs:
               echo "kernel_unix=$(file "$ROOT/platform/i86pc/kernel/amd64/unix")"
               echo "kernel_unix_bytes=$(wc -c < "$ROOT/platform/i86pc/kernel/amd64/unix")"
               echo "pkgrepo_verify=PASS"
-              echo "offline_dependency_closure=PASS"
+              echo "direct_build_repo_dependencies=RESOLVED"
+              echo "offline_dependency_closure=NOT_VERIFIED_TARGET_BASE_REQUIRED"
               echo "boot_archive=NOT_INCLUDED; target system updates its own archive"
             } > "$STAGE/manifests/build-evidence.txt"
 
@@ -244,7 +260,7 @@ jobs:
           (cd rotfb-package-staging/recheck/ROTFB-DEVICE-KIT && sha256sum -c manifests/SHA256SUMS)
           stat -c '%s' rotfb-package-staging/ROTFB-DEVICE-KIT.zip > rotfb-package-logs/kit-size-bytes.txt
           sha256sum rotfb-package-staging/ROTFB-DEVICE-KIT.zip > rotfb-package-logs/kit-sha256.txt
-          echo "PACKAGING_ACCEPTANCE=PASS" > rotfb-package-logs/packaging-acceptance.txt
+          echo "PACKAGING_ACCEPTANCE=PASS_WITH_TARGET_DEPENDENCY_GATE_PENDING" > rotfb-package-logs/packaging-acceptance.txt
 
       - name: Preserve diagnostics on all outcomes
         if: always()
