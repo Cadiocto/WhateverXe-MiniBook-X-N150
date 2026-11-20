@@ -327,7 +327,7 @@ jobs:
               fmri="pkg://$publisher/$pkgname@$version"
               count=$((count + 1))
               pkg contents -m -g "$PKG_REPO" "$fmri" >> "$LOG/package-manifests.txt"
-              if pkg contents -m -g "$PKG_REPO" "$fmri" 2>/dev/null | grep -Eiq 'rotfb_(boot|runtime)|rotfb(_|\.)'; then
+              if pkg contents -m -g "$PKG_REPO" "$fmri" 2>/dev/null | grep -Eiq 'path=platform/i86pc/kernel/amd64/unix([[:space:]]|$)|path=platform/i86pc/kernel/misc/amd64/gfx_private([[:space:]]|$)'; then
                 echo "$fmri" >> "$LOG/rotfb-package-fmris.txt"
               fi
             done < "$LOG/package-inventory.tsv"
