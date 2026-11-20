@@ -414,20 +414,53 @@ jobs:
           cat > "$STAGE/INSTALL.sh" <<'EOF'
           #!/bin/sh
           set -eu
-          BASE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+          SCRIPT_DIR=$(dirname "$0")
+          BASE=$(CDPATH= cd -P "$SCRIPT_DIR" && pwd)
           REPO="$BASE/packages/nightly-nd/repo.redist"
           [ "$(id -u)" -eq 0 ] || { echo "Run as root" >&2; exit 1; }
           [ "$(uname -p)" = i386 ] || { echo "Unsupported architecture" >&2; exit 1; }
           grep -qi OpenIndiana /etc/release || { echo "OpenIndiana required" >&2; exit 1; }
           grep -q 2026.10 /etc/release || { echo "OpenIndiana 2026.10 required" >&2; exit 1; }
+          command -v digest >/dev/null 2>&1 || { echo "OpenIndiana digest command required" >&2; exit 1; }
+          command -v pkg >/dev/null 2>&1 || { echo "IPS pkg command required" >&2; exit 1; }
+          command -v pkgrepo >/dev/null 2>&1 || { echo "IPS pkgrepo command required" >&2; exit 1; }
+          command -v beadm >/dev/null 2>&1 || { echo "beadm command required" >&2; exit 1; }
+          [ -s "$BASE/manifests/SHA256SUMS" ] || { echo "SHA256SUMS missing or empty" >&2; exit 1; }
+          (
+            cd "$BASE"
+            while read -r expected rel; do
+              [ -n "$expected" ] || continue
+              [ "${#expected}" -eq 64 ] || { echo "Invalid SHA-256 entry: $rel" >&2; exit 1; }
+              case "$expected" in *[!0-9a-f]*) echo "Invalid SHA-256 value: $rel" >&2; exit 1 ;; esac
+              case "$rel" in ./*) ;; *) echo "Unsafe checksum path: $rel" >&2; exit 1 ;; esac
+              [ -f "$rel" ] || { echo "Kit file missing: $rel" >&2; exit 1; }
+              actual=$(digest -a sha256 "$rel")
+              [ "$actual" = "$expected" ] || { echo "Checksum mismatch: $rel" >&2; exit 1; }
+            done < manifests/SHA256SUMS
+          )
           [ -d "$REPO/catalog" ] && [ -d "$REPO/pkg" ] && [ -d "$REPO/file" ] || { echo "IPS repository layout missing" >&2; exit 1; }
+          pkgrepo verify -s "$REPO"
+          pkgrepo list -s "$REPO" -F tsv >/dev/null
+          [ -s "$BASE/manifests/rotfb-package-fmris.txt" ] || { echo "ROTFB package FMRI inventory missing" >&2; exit 1; }
           set --
-          while IFS= read -r fmri; do [ -n "$fmri" ] && set -- "$@" "$fmri"; done < "$BASE/manifests/rotfb-package-fmris.txt"
+          while IFS= read -r fmri; do
+            [ -n "$fmri" ] || continue
+            pkg contents -m -g "$REPO" "$fmri" >/dev/null
+            set -- "$@" "$fmri"
+          done < "$BASE/manifests/rotfb-package-fmris.txt"
           [ "$#" -gt 0 ] || { echo "No ROTFB package FMRI" >&2; exit 1; }
           BE="rotfb-test-$(date +%Y%m%d-%H%M%S)"
-          echo "Install to separate BE: $BE"
-          pkg install --accept --be-name "$BE" -g "file://$REPO" "$@"
-          echo "Review beadm list; boot the test BE only when ready."
+          if beadm list "$BE" >/dev/null 2>&1; then
+            echo "Test BE already exists: $BE" >&2
+            exit 1
+          fi
+          echo "Preflight IPS solver dry-run for separate BE: $BE"
+          pkg install -n --no-refresh --accept --be-name "$BE" -g "file://$REPO" "$@"
+          echo "Preflight passed. Creating the separate test BE: $BE"
+          pkg install --no-refresh --accept --be-name "$BE" -g "file://$REPO" "$@"
+          beadm list "$BE" >/dev/null
+          echo "Test BE created: $BE"
+          echo "The script did not call beadm activate. Review beadm list and boot selection before rebooting."
           EOF
           chmod 0755 "$STAGE/INSTALL.sh"
           (cd "$STAGE" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > manifests/SHA256SUMS)
