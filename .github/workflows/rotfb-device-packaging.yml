@@ -126,22 +126,108 @@ jobs:
             grep -q "export PERL_PKGVERS=-542" /tmp/rotfb-packaging.env
             grep -q "export BUILDPERL32='#'" /tmp/rotfb-packaging.env
             cp /tmp/rotfb-packaging.env "$LOG/rotfb-packaging.env"
-            if ksh93 -x tools/scripts/nightly /tmp/rotfb-packaging.env > "$LOG/nightly.log" 2>&1; then
+
+            # Preserve the real in-guest nightly.log, transient build_noise,
+            # and per-stage install logs on the NFS-shared runner workspace.
+            # Run #92 used an asynchronous heartbeat; Run #2 did not preserve
+            # the guest's internal log before nightly returned nonzero.
+            NIGHTLY_TRACE="$LOG/nightly-driver-trace.log"
+            BUILD_NOISE_DIR="$LOG/build-noise"
+            GATE_LOG_DIR="$LOG/gate-logs"
+            BUILD_OUTPUT_DIR="$LOG/build-output"
+            LOG_STATE_DIR="$LOG/.log-copy-state"
+            mkdir -p "$BUILD_NOISE_DIR" "$GATE_LOG_DIR" "$BUILD_OUTPUT_DIR" "$LOG_STATE_DIR"
+
+            sync_append_file() {
+              src="$1"
+              dst="$2"
+              state="$3"
+              [ -f "$src" ] || return 0
+              mkdir -p "$(dirname "$dst")" "$(dirname "$state")"
+              size=$(wc -c < "$src" | tr -d ' ')
+              old=0
+              [ ! -f "$state" ] || old=$(cat "$state")
+              case "$old" in ''|*[!0-9]*) old=0 ;; esac
+              if [ "$size" -lt "$old" ]; then
+                : > "$dst"
+                old=0
+              fi
+              if [ "$size" -gt "$old" ]; then
+                tail -c "+$((old + 1))" "$src" >> "$dst"
+                printf '%s\n' "$size" > "$state"
+              fi
+            }
+
+            snapshot_nightly_logs() {
+              find /tmp -maxdepth 3 -type f \
+                \( -path '/tmp/nightly.tmpdir.*/build_noise' -o \
+                   -path '/tmp/nightly.tmpdir.*/mail_msg' -o \
+                   -path '/tmp/nightly.tmpdir.*/build_time' -o \
+                   -path '/tmp/nightly.tmpdir.*/build_environ' \) -print 2>/dev/null |
+              while IFS= read -r f; do
+                d=$(basename "$(dirname "$f")")
+                b=$(basename "$f")
+                sync_append_file "$f" "$BUILD_NOISE_DIR/$d-$b.txt" "$LOG_STATE_DIR/tmp-$d-$b.offset" || true
+              done
+
+              if [ -d "$CODEMGR_WS/log" ]; then
+                find "$CODEMGR_WS/log" -type f -print 2>/dev/null |
+                while IFS= read -r f; do
+                  rel=\${f#"$CODEMGR_WS/log"/}
+                  rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                  sync_append_file "$f" "$GATE_LOG_DIR/$rel" "$LOG_STATE_DIR/gate-$rel.offset" || true
+                done
+              fi
+
+              find "$CODEMGR_WS/usr/src" -type f -name 'install*-i386.out' -print 2>/dev/null |
+              while IFS= read -r f; do
+                rel=\${f#"$CODEMGR_WS/usr/src"/}
+                rel=$(printf '%s' "$rel" | sed 's/[^A-Za-z0-9._/-]/_/g')
+                sync_append_file "$f" "$BUILD_OUTPUT_DIR/$rel" "$LOG_STATE_DIR/output-$rel.offset" || true
+              done
+            }
+
+            ksh93 -x tools/scripts/nightly /tmp/rotfb-packaging.env > "$NIGHTLY_TRACE" 2>&1 &
+            BUILD_PID=$!
+            NIGHTLY_RC=0
+            while kill -0 "$BUILD_PID" 2>/dev/null; do
+              snapshot_nightly_logs
+              printf 'OpenIndiana packaging heartbeat: %s nightly_pid=%s\n' "$(date -u +%FT%TZ)" "$BUILD_PID"
+              sleep 10
+            done
+            if wait "$BUILD_PID"; then
               NIGHTLY_RC=0
             else
               NIGHTLY_RC=$?
             fi
+            snapshot_nightly_logs
+            cp /tmp/rotfb-packaging.env "$LOG/rotfb-packaging.env.final" 2>/dev/null || true
             printf '%s\n' "$NIGHTLY_RC" > "$LOG/nightly-exit-code.txt"
-            test -s "$LOG/nightly.log"
+            printf 'nightly_exit_code=%s\nnightly_trace=%s\n' "$NIGHTLY_RC" "$NIGHTLY_TRACE" > "$LOG/nightly-result.txt"
+            test -s "$NIGHTLY_TRACE"
+            test -s "$LOG/nightly-exit-code.txt"
             test "$NIGHTLY_RC" -eq 0
-            test -f "$LOG/nightly-exit-code.txt"
-            test "$(cat "$LOG/nightly-exit-code.txt")" = 0
 
-            PKGDIR="$CODEMGR_WS/packages/i386/nightly-nd"
-            ROOT="$CODEMGR_WS/proto/root_i386"
+            MACH=$(uname -p)
+            PKGARCHIVE_BASE=$(ksh93 -c '. /tmp/rotfb-packaging.env; print -r -- "$PKGARCHIVE"')
+            test -n "$PKGARCHIVE_BASE"
+            PKGARCHIVE_SUFFIX=-nd
+            PKGDIR="\${PKGARCHIVE_BASE}\${PKGARCHIVE_SUFFIX}"
+            ROOT="$CODEMGR_WS/proto/root_$MACH"
+            TOOLS_PROTO_REL="proto/root_$MACH-nd"
+            TOOLS_PROTO="$CODEMGR_WS/usr/src/tools/$TOOLS_PROTO_REL"
+            {
+              echo "MACH=$MACH"
+              echo "PKGARCHIVE_BASE=$PKGARCHIVE_BASE"
+              echo "PKGARCHIVE_SUFFIX=$PKGARCHIVE_SUFFIX"
+              echo "PKGARCHIVE_FINAL=$PKGDIR"
+              echo "TOOLS_PROTO_REL=$TOOLS_PROTO_REL"
+              echo "TOOLS_PROTO=$TOOLS_PROTO"
+            } >> "$LOG/effective-build-config.txt"
             test -d "$PKGDIR"
+            test -d "$TOOLS_PROTO"
+            test -d "$ROOT"
             test -f "$PKGDIR/pkg5.repository"
-            test -f "$ROOT/platform/i86pc/kernel/amd64/unix"
             pkgrepo verify -s "$PKGDIR" > "$LOG/pkgrepo-verify.log" 2>&1
             pkgrepo list -s "$PKGDIR" -F tsv > "$LOG/package-inventory.tsv"
             test -s "$LOG/package-inventory.tsv"
@@ -171,6 +257,7 @@ jobs:
             test "$depfail" -eq 0
             echo "DIRECT_BUILD_REPO_DEPENDENCIES=RESOLVED" > "$LOG/offline-dependency-closure.txt"
             echo "OFFLINE_DEPENDENCY_CLOSURE=NOT_VERIFIED_TARGET_BASE_REQUIRED" >> "$LOG/offline-dependency-closure.txt"
+            echo "DEVICE_KIT_STATUS=BLOCKED_UNTIL_OFFLINE_DEPENDENCY_CLOSURE_IS_PROVEN" > "$LOG/device-kit-status.txt"
 
             cp -p "$ROOT/platform/i86pc/kernel/amd64/unix" "$STAGE/kernel/unix"
             mkdir -p "$STAGE/kernel/platform/i86pc"
@@ -208,6 +295,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           STAGE=rotfb-package-staging/ROTFB-DEVICE-KIT
+          LOG=rotfb-package-logs
+          if ! grep -qx 'OFFLINE_DEPENDENCY_CLOSURE=PASS' "$LOG/offline-dependency-closure.txt"; then
+            echo "DEVICE_KIT_STATUS=BLOCKED; offline dependency closure has not been proven" | tee "$LOG/device-kit-status.txt"
+            exit 1
+          fi
           test -d "$STAGE/packages/nightly-nd"
           cat > "$STAGE/INSTALL-README.txt" <<'EOF'
           ROTFB DEVICE TEST KIT
@@ -260,7 +352,8 @@ jobs:
           (cd rotfb-package-staging/recheck/ROTFB-DEVICE-KIT && sha256sum -c manifests/SHA256SUMS)
           stat -c '%s' rotfb-package-staging/ROTFB-DEVICE-KIT.zip > rotfb-package-logs/kit-size-bytes.txt
           sha256sum rotfb-package-staging/ROTFB-DEVICE-KIT.zip > rotfb-package-logs/kit-sha256.txt
-          echo "PACKAGING_ACCEPTANCE=PASS_WITH_TARGET_DEPENDENCY_GATE_PENDING" > rotfb-package-logs/packaging-acceptance.txt
+          echo "PACKAGING_ACCEPTANCE=PASS" > rotfb-package-logs/packaging-acceptance.txt
+          echo "DEVICE_KIT_STATUS=READY" > rotfb-package-logs/device-kit-status.txt
 
       - name: Preserve diagnostics on all outcomes
         if: always()
@@ -275,7 +368,7 @@ jobs:
         if: always() && hashFiles('rotfb-package-staging/ROTFB-DEVICE-KIT.zip') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: ROTFB-DEVICE-KIT-${{ github.run_id }}-${{ env.ROTFB_SOURCE_SHA }}
+          name: ROTFB-OpenIndiana-2026.10-x86_64-Install-Kit
           path: rotfb-package-staging/ROTFB-DEVICE-KIT.zip
           if-no-files-found: warn
           retention-days: 30
