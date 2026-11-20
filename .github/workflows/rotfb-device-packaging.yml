@@ -1,0 +1,276 @@
+name: ROTFB offline device packaging
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [gop-rotation-hook]
+    paths: [".github/workflows/rotfb-device-packaging.yml"]
+
+concurrency:
+  group: rotfb-device-packaging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 420
+    env:
+      ROTFB_SOURCE_SHA: 8e2a6e8f246c43c151793046934bcb848371768d
+      UPSTREAM_SHA: 098e95820891f8a83fae679daece7fcf58b7b3a4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8e2a6e8f246c43c151793046934bcb848371768d
+
+      - name: Initialize diagnostics
+        if: always()
+        run: |
+          mkdir -p rotfb-package-logs rotfb-package-staging
+          {
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "workflow_commit=$GITHUB_SHA"
+            echo "source_sha=$ROTFB_SOURCE_SHA"
+            echo "upstream_sha=$UPSTREAM_SHA"
+          } > rotfb-package-logs/run-metadata.txt
+
+      - name: Build IPS repository and kernel payload on OpenIndiana 2026.10
+        id: package_build
+        uses: vmactions/openindiana-vm@v1
+        with:
+          release: "202610-build"
+          arch: x86_64
+          mem: 8192
+          cpu: 4
+          sync: nfs
+          prepare: |
+            set -eux
+            mkdir -p "$GITHUB_WORKSPACE/rotfb-package-logs"
+            pkg refresh > "$GITHUB_WORKSPACE/rotfb-package-logs/ips-refresh.log" 2>&1
+            pkg install --accept developer/build/gnu-make developer/build/onbld developer/versioning/git shell/ksh93 runtime/perl-542 runtime/perl-542/module/sun-solaris > "$GITHUB_WORKSPACE/rotfb-package-logs/ips-install.log" 2>&1
+            test "$(/usr/bin/perl -V:version)" = "version='5.42.3';"
+            test "$(/usr/bin/perl -V:archname)" = "archname='i86pc-solaris-thread-multi-64';"
+          run: |
+            set -eu
+            LOG="$GITHUB_WORKSPACE/rotfb-package-logs"
+            STAGE="$GITHUB_WORKSPACE/rotfb-package-staging/ROTFB-DEVICE-KIT"
+            mkdir -p "$LOG" "$STAGE/packages" "$STAGE/kernel" "$STAGE/boot"
+            WS="$HOME/illumos-rotfb-packaging"
+            mkdir -p "$WS"
+            cd "$WS"
+            git clone https://github.com/illumos/illumos-gate.git
+            cd illumos-gate
+            git checkout --detach "$UPSTREAM_SHA"
+            test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+            ROTFB="$GITHUB_WORKSPACE/illumo_rotfb"
+            sh "$ROTFB/tests/rotfb_patch_series_test.sh" "$WS/illumos-gate" "$ROTFB/patches" "$WS" > "$LOG/patch-series.log" 2>&1
+            : > "$LOG/patch-apply.log"
+            n=0
+            for p in "$ROTFB"/patches/*.patch; do
+              [ -f "$p" ] || continue
+              git apply --check "$p" >> "$LOG/patch-apply.log" 2>&1
+              git apply "$p" >> "$LOG/patch-apply.log" 2>&1
+              echo "APPLIED $(basename "$p")" >> "$LOG/patch-apply.log"
+              n=$((n + 1))
+            done
+            test "$n" -eq 13
+            git diff --check > "$LOG/git-diff-check.log"
+            git status --short > "$LOG/upstream-patched-status.txt"
+            git diff --stat > "$LOG/upstream-patched-diffstat.txt"
+
+            mkdir -p usr/src/uts/i86pc/sys usr/src/uts/i86pc/boot usr/src/uts/i86pc/io/gfx_private
+            cp "$ROTFB/rotfb.h" usr/src/uts/i86pc/sys/rotfb.h
+            cp "$ROTFB/rotfb_vis_cursor.h" usr/src/uts/i86pc/sys/rotfb_vis_cursor.h
+            cp "$ROTFB/rotfb_copy.h" usr/src/uts/i86pc/sys/rotfb_copy.h
+            cp "$ROTFB/rotfb_boot.c" usr/src/uts/i86pc/boot/rotfb_boot.c
+            cp "$ROTFB/rotfb_runtime.c" usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
+            chmod 0644 usr/src/uts/i86pc/sys/rotfb.h usr/src/uts/i86pc/sys/rotfb_vis_cursor.h usr/src/uts/i86pc/sys/rotfb_copy.h usr/src/uts/i86pc/boot/rotfb_boot.c usr/src/uts/i86pc/io/gfx_private/rotfb_runtime.c
+
+            cd usr/src
+            export CODEMGR_WS="$WS/illumos-gate"
+            export GATE="$CODEMGR_WS"
+            export PATH="/opt/onbld/bin:/usr/bin:/usr/sbin:/usr/gnu/bin"
+            sed -e "s/^export NIGHTLY_OPTIONS=.*/export NIGHTLY_OPTIONS='-np'/" \
+              -e "s/^export SHADOW_CCS=.*/export SHADOW_CCS=/" \
+              -e "s/^export SHADOW_CCCS=.*/export SHADOW_CCCS=/" \
+              -e "s/^export ENABLE_SMATCH=.*/export ENABLE_SMATCH=/" \
+              tools/env/illumos.sh > /tmp/rotfb-packaging.env
+            echo "export PERL_VERSION=5.42" >> /tmp/rotfb-packaging.env
+            echo "export PERL_VARIANT=-thread-multi" >> /tmp/rotfb-packaging.env
+            echo "export PERL_PKGVERS=-542" >> /tmp/rotfb-packaging.env
+            echo "export BUILDPERL32='#'" >> /tmp/rotfb-packaging.env
+            echo "export VERSION=illumos-098e958-rotfb" >> /tmp/rotfb-packaging.env
+            {
+              echo "NIGHTLY_OPTIONS=-np"
+              echo "PERL_VERSION=5.42"
+              echo "PERL_VARIANT=-thread-multi"
+              echo "PERL_PKGVERS=-542"
+              echo "BUILDPERL32=#"
+              echo "PKGVERS_BRANCH=$(grep '^[[:space:]]*export PKGVERS_BRANCH=' /tmp/rotfb-packaging.env || echo UNSET)"
+              echo "PKGARCHIVE_EXPECTED=$CODEMGR_WS/packages/i386/nightly-nd"
+              echo "lowercase_n=$(grep -n -A1 '^[[:space:]]*n[[:space:]]*)' tools/scripts/nightly | head -n 2)"
+              echo "lowercase_p=$(grep -n -A1 '^[[:space:]]*p[[:space:]]*)' tools/scripts/nightly | head -n 2)"
+            } > "$LOG/effective-build-config.txt"
+            grep -q "NIGHTLY_OPTIONS='-np'" /tmp/rotfb-packaging.env
+            grep -q "export PERL_VERSION=5.42" /tmp/rotfb-packaging.env
+            grep -q "export PERL_VARIANT=-thread-multi" /tmp/rotfb-packaging.env
+            grep -q "export PERL_PKGVERS=-542" /tmp/rotfb-packaging.env
+            grep -q "export BUILDPERL32='#'" /tmp/rotfb-packaging.env
+            ksh93 -x tools/scripts/nightly /tmp/rotfb-packaging.env > "$LOG/nightly.log" 2>&1
+            echo "$?" > "$LOG/nightly-exit-code.txt"
+            cp /tmp/rotfb-packaging.env "$LOG/rotfb-packaging.env"
+
+            PKGDIR="$CODEMGR_WS/packages/i386/nightly-nd"
+            ROOT="$CODEMGR_WS/proto/root_i386"
+            test -d "$PKGDIR"
+            test -f "$PKGDIR/pkg5.repository"
+            test -f "$ROOT/platform/i86pc/kernel/amd64/unix"
+            pkgrepo verify -s "$PKGDIR" > "$LOG/pkgrepo-verify.log" 2>&1
+            pkgrepo list -s "$PKGDIR" -F tsv > "$LOG/package-inventory.tsv"
+            test -s "$LOG/package-inventory.tsv"
+
+            : > "$LOG/package-manifests.txt"
+            : > "$LOG/rotfb-package-fmris.txt"
+            : > "$LOG/package-dependencies.txt"
+            count=0
+            while IFS="$(printf '\t')" read -r publisher pkgname version rest; do
+              [ "$pkgname" = "name" ] && continue
+              [ -n "$pkgname" ] || continue
+              fmri="pkg://$publisher/$pkgname@$version"
+              count=$((count + 1))
+              pkg contents -m -g "$PKGDIR" "$fmri" >> "$LOG/package-manifests.txt"
+              if pkg contents -m -g "$PKGDIR" "$fmri" 2>/dev/null | grep -Eiq 'rotfb_(boot|runtime)|rotfb(_|\.)'; then
+                echo "$fmri" >> "$LOG/rotfb-package-fmris.txt"
+              fi
+            done < "$LOG/package-inventory.tsv"
+            test "$count" -gt 0
+            test -s "$LOG/rotfb-package-fmris.txt"
+            sed -n 's/.*depend[[:space:]].*fmri=\([^[:space:]]*\).*type=require.*/\1/p' "$LOG/package-manifests.txt" | sort -u > "$LOG/package-dependencies.txt"
+            depfail=0
+            while IFS= read -r dep; do
+              [ -n "$dep" ] || continue
+              pkg contents -m -g "$PKGDIR" "$dep" >/dev/null 2>&1 || { echo "$dep" >> "$LOG/unresolved-dependencies.txt"; depfail=1; }
+            done < "$LOG/package-dependencies.txt"
+            test "$depfail" -eq 0
+            echo "OFFLINE_DEPENDENCY_CLOSURE=PASS" > "$LOG/offline-dependency-closure.txt"
+
+            cp -p "$ROOT/platform/i86pc/kernel/amd64/unix" "$STAGE/kernel/unix"
+            mkdir -p "$STAGE/kernel/platform/i86pc"
+            cp -Rp "$ROOT/platform/i86pc/kernel" "$STAGE/kernel/platform/i86pc/"
+            if [ -d "$ROOT/platform/i86pc/boot" ]; then cp -Rp "$ROOT/platform/i86pc/boot" "$STAGE/boot/platform-i86pc-boot"; fi
+            cp -Rp "$PKGDIR" "$STAGE/packages/nightly-nd"
+            cp "$LOG/package-inventory.tsv" "$STAGE/manifests/package-inventory.txt"
+            cp "$LOG/package-dependencies.txt" "$STAGE/manifests/package-dependencies.txt"
+            cp "$LOG/rotfb-package-fmris.txt" "$STAGE/manifests/rotfb-package-fmris.txt"
+            {
+              echo "ROTFB_SOURCE_SHA=$ROTFB_SOURCE_SHA"
+              echo "UPSTREAM_SHA=$UPSTREAM_SHA"
+              echo "OPENINDIANA_RELEASE=202610-build"
+              echo "ARCH=x86_64"
+              echo "NIGHTLY_OPTIONS=-np"
+              echo "PKGARCHIVE=packages/i386/nightly-nd"
+              echo "NIGHTLY_EXIT_CODE=0"
+              echo "PATCH_COUNT=$n"
+            } > "$STAGE/manifests/source-revision.txt"
+            {
+              echo "package_count=$count"
+              echo "rotfb_package_count=$(wc -l < "$LOG/rotfb-package-fmris.txt")"
+              echo "upstream_head=$(git -C "$CODEMGR_WS" rev-parse HEAD)"
+              echo "kernel_unix=$(file "$ROOT/platform/i86pc/kernel/amd64/unix")"
+              echo "kernel_unix_bytes=$(wc -c < "$ROOT/platform/i86pc/kernel/amd64/unix")"
+              echo "pkgrepo_verify=PASS"
+              echo "offline_dependency_closure=PASS"
+              echo "boot_archive=NOT_INCLUDED; target system updates its own archive"
+            } > "$STAGE/manifests/build-evidence.txt"
+
+      - name: Assemble, hash and recheck USB kit
+        if: success()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          STAGE=rotfb-package-staging/ROTFB-DEVICE-KIT
+          test -d "$STAGE/packages/nightly-nd"
+          cat > "$STAGE/INSTALL-README.txt" <<'EOF'
+          ROTFB DEVICE TEST KIT
+          Target: OpenIndiana 2026.10 x86_64 / Chuwi MiniBook X N150
+
+          Read ROLLBACK-README.txt before use. Keep the directory structure intact.
+          INSTALL.sh installs only the ROTFB package set into a separate boot
+          environment. It does not write EFI variables, NVRAM, BIOS settings,
+          EFI boot entries, or the active boot environment.
+
+          No boot archive is included. After booting the test BE, update its own
+          archive with the target system's native bootadm update-archive command.
+          Never copy a boot archive from CI or another operating system.
+          EOF
+          cat > "$STAGE/ROLLBACK-README.txt" <<'EOF'
+          ROLLBACK
+          Keep the original boot environment. If the test BE fails, reboot and
+          select the original BE from the existing boot environment menu.
+          Inspect with beadm list. If necessary, activate the original BE:
+            beadm activate <original-BE-name>
+          Reboot. Only after confirming the original BE works, remove the failed
+          test BE with:
+            beadm destroy <rotfb-test-BE-name>
+          Do not delete the original BE. Do not alter EFI/NVRAM or BIOS.
+          EOF
+          cat > "$STAGE/INSTALL.sh" <<'EOF'
+          #!/bin/sh
+          set -eu
+          BASE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+          REPO="$BASE/packages/nightly-nd"
+          [ "$(id -u)" -eq 0 ] || { echo "Run as root" >&2; exit 1; }
+          [ "$(uname -p)" = i386 ] || { echo "Unsupported architecture" >&2; exit 1; }
+          grep -qi OpenIndiana /etc/release || { echo "OpenIndiana required" >&2; exit 1; }
+          grep -q 2026.10 /etc/release || { echo "OpenIndiana 2026.10 required" >&2; exit 1; }
+          [ -f "$REPO/pkg5.repository" ] || { echo "IPS repository missing" >&2; exit 1; }
+          set --
+          while IFS= read -r fmri; do [ -n "$fmri" ] && set -- "$@" "$fmri"; done < "$BASE/manifests/rotfb-package-fmris.txt"
+          [ "$#" -gt 0 ] || { echo "No ROTFB package FMRI" >&2; exit 1; }
+          BE="rotfb-test-$(date +%Y%m%d-%H%M%S)"
+          echo "Install to separate BE: $BE"
+          pkg install --accept --be-name "$BE" -g "file://$REPO" "$@"
+          echo "Review beadm list; boot the test BE only when ready."
+          EOF
+          chmod 0755 "$STAGE/INSTALL.sh"
+          (cd "$STAGE" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > manifests/SHA256SUMS)
+          (cd rotfb-package-staging && zip -qr ROTFB-DEVICE-KIT.zip ROTFB-DEVICE-KIT)
+          unzip -t rotfb-package-staging/ROTFB-DEVICE-KIT.zip > rotfb-package-logs/zip-integrity.log
+          mkdir -p rotfb-package-staging/recheck
+          unzip -q rotfb-package-staging/ROTFB-DEVICE-KIT.zip -d rotfb-package-staging/recheck
+          (cd rotfb-package-staging/recheck/ROTFB-DEVICE-KIT && sha256sum -c manifests/SHA256SUMS)
+          stat -c '%s' rotfb-package-staging/ROTFB-DEVICE-KIT.zip > rotfb-package-logs/kit-size-bytes.txt
+          sha256sum rotfb-package-staging/ROTFB-DEVICE-KIT.zip > rotfb-package-logs/kit-sha256.txt
+          echo "PACKAGING_ACCEPTANCE=PASS" > rotfb-package-logs/packaging-acceptance.txt
+
+      - name: Preserve diagnostics on all outcomes
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p rotfb-package-logs
+          find rotfb-package-logs rotfb-package-staging -type f -printf '%p %s bytes\n' 2>/dev/null | sort > rotfb-package-logs/final-file-index.txt
+          [ -f rotfb-package-logs/packaging-acceptance.txt ] || echo "PACKAGING_ACCEPTANCE=FAIL_OR_INCOMPLETE" > rotfb-package-logs/packaging-acceptance.txt
+
+      - name: Upload USB kit
+        if: always() && hashFiles('rotfb-package-staging/ROTFB-DEVICE-KIT.zip') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ROTFB-DEVICE-KIT-${{ github.run_id }}-${{ env.ROTFB_SOURCE_SHA }}
+          path: rotfb-package-staging/ROTFB-DEVICE-KIT.zip
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload packaging diagnostics and raw outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-device-packaging-diagnostics-${{ github.run_id }}-${{ env.ROTFB_SOURCE_SHA }}
+          path: |
+            rotfb-package-logs/
+            rotfb-package-staging/
+          if-no-files-found: warn
+          retention-days: 30
