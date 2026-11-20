@@ -1,6 +1,6 @@
 # ROTFB Autonomous Engineering State
 
-Last updated: 2026-11-20T22:03:48.973Z
+Last updated: 2026-11-20T22:07:31.438Z
 
 ## Current repository state
 
@@ -85,7 +85,7 @@ Fixes applied:
 | 3. IPS repository validation | PARTIAL / NOT VERIFIED | Failed-run archive structure inspected; IPS-native pkgrepo verification still not executed |
 | 4. Offline dependency closure | BLOCKED | Target-equivalent OpenIndiana 2026.10 package baseline and offline solver proof absent |
 | 5. Kernel payload validation | PASS (i86pc payload scope) | Run 44795246582 artifact: 29 file hashes, 40 mode checks, 11 directories and 1 hardlink match the system/kernel/platform IPS manifest; unix/gfx_private ELF and ROTFB symbols verified. The enclosing nightly run failed at PKGLINT, so this is not a successful full build or release |
-| 6. Offline Install Kit assembly | NOT RUN / BLOCKED | Assembly intentionally refuses unless offline closure is PASS |
+| 6. Offline Install Kit assembly | NOT RUN / BLOCKED | Assembly intentionally refuses unless offline closure is PASS; installer preflight has been hardened but not exercised on OpenIndiana |
 | 7. ZIP revalidation | NOT RUN | No kit ZIP uploaded |
 | 8. Physical-device preparation | NOT RUN | Target-side runbook still required |
 | 9. Physical-device verification | NOT VERIFIED | Requires user-performed test-BE installation and hardware evidence |
@@ -150,3 +150,16 @@ Fixes applied:
 - Symbol check: gfx_private contains rotfb_runtime_init, rotfb_runtime_fini, rotfb_runtime_flush_all, rotfb_runtime_callback_enter and rotfb_runtime_callback_exit; gfx_private references rotfb_info as undefined and the i86pc unix image defines global B rotfb_info.
 - Kernel payload tar SHA-256: 80b137cbe005addf098fb25fc120386f8697d3a2253b854736e207695c2405f4.
 - This validates the i86pc kernel payload from the failed packaging run against its own IPS manifest. It does not convert Run 44795246582 into a successful nightly/control build and does not validate the full repository with pkgrepo.
+
+
+### 2026-11-20T22:07:31.438Z — installer preflight hardening and failure-path harness
+
+- Revalidated live branch HEAD before this update: c00b34f66acca7de08fe0d1d56e8472309fa9783. Current packaging workflow blob: 49c0190e2f122ede8328e81435ca2bef0b68cff0.
+- Workflow-only commits: aed244f7db9e064bf2775843ee7a6909a7028bdf (installer preflight) and 50ffd620ae75116ee7e32a4f33aba34b528acbb1 (checksum path validation and BE-selection warning).
+- INSTALL.sh now verifies every SHA256SUMS entry using the target OpenIndiana digest utility, rejects malformed hashes and unsafe paths, requires at least one checksum entry, verifies the actual repo.redist with pkgrepo verify/list, verifies each selected FMRI with pkg contents, performs pkg install -n --no-refresh against a named test BE, and only then runs the actual install into that separate BE. It does not call beadm activate.
+- INSTALL-README now accurately warns that IPS may change the next-boot BE selection; the running BE's package contents remain separate, and the user must inspect beadm list/boot selection before reboot. Firmware/NVRAM changes are not performed by the script.
+- Extracted the exact INSTALL.sh heredoc from the workflow and ran sh -n: PASS (Linux /bin/sh syntax only; not target OpenIndiana runtime validation).
+- Installer harness with stubbed digest/pkg/pkgrepo/beadm/uname/grep commands: success path PASS; tampered-file checksum rejection PASS before any pkg/pkgrepo call; solver dry-run failure PASS and no real pkg install call followed. This validates shell control flow only, not real IPS behavior or a physical install.
+- OpenIndiana docs confirm pkg install -n is a no-change dry-run and --be-name installs into a new BE while leaving the current BE's package contents unchanged; --no-refresh avoids refreshing configured publishers. The next-boot selection must still be inspected before reboot.
+- Official actions/upload-artifact@v4 documentation confirms multiline path inputs support negative glob exclusions; the diagnostic ZIP exclusion syntax is supported.
+- Full workflow YAML parse, actionlint, full guest run-block sh -n, and target OpenIndiana IPS runtime tests remain NOT RUN. No workflow dispatch or build was started.
