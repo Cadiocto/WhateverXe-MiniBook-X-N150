@@ -40,7 +40,7 @@ jobs:
             | sha256sum --check -
           unzip -Z1 rotfb-preflight-artifacts/run8-artifact.zip \
             > rotfb-preflight-artifacts/run8-artifact-members.txt
-          entry="$(grep -E '(^|/)illumosfb_drv\\.so$' rotfb-preflight-artifacts/run8-artifact-members.txt | head -n 1)"
+          entry="$(grep -E '(^|/)illumosfb_drv\.so$' rotfb-preflight-artifacts/run8-artifact-members.txt | head -n 1)"
           test -n "$entry"
           unzip -p rotfb-preflight-artifacts/run8-artifact.zip "$entry" \
             > rotfb-preflight-artifacts/illumosfb_drv.so
