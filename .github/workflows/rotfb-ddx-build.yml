@@ -39,9 +39,34 @@ jobs:
             ART="$GITHUB_WORKSPACE/rotfb-ddx-artifacts"
             mkdir -p "$ART"
             exec > "$ART/build.log" 2>&1
+            TEMP_PROBE_TARGET=
+            TEMP_PROBE_STAGE=
+            TEMP_PROBE_OWNED=0
+            : > "$ART/xorg-probe-cleanup.txt"
+            cleanup_temporary_probe() {
+              if [ "$TEMP_PROBE_OWNED" -eq 1 ] && [ -n "$TEMP_PROBE_STAGE" ] && [ -e "$TEMP_PROBE_STAGE" ]; then
+                if [ -n "$TEMP_PROBE_TARGET" ] && [ -e "$TEMP_PROBE_TARGET" ] &&
+                  [ "$TEMP_PROBE_TARGET" -ef "$TEMP_PROBE_STAGE" ]; then
+                  rm -f "$TEMP_PROBE_TARGET" &&
+                    echo "removed temporary target: $TEMP_PROBE_TARGET" >> "$ART/xorg-probe-cleanup.txt" ||
+                    echo "ERROR removing temporary target: $TEMP_PROBE_TARGET" >> "$ART/xorg-probe-cleanup.txt"
+                else
+                  echo "target was not this run's staged inode; left untouched: $TEMP_PROBE_TARGET" >> "$ART/xorg-probe-cleanup.txt"
+                fi
+                rm -f "$TEMP_PROBE_STAGE" &&
+                  echo "removed temporary stage: $TEMP_PROBE_STAGE" >> "$ART/xorg-probe-cleanup.txt" ||
+                  echo "ERROR removing temporary stage: $TEMP_PROBE_STAGE" >> "$ART/xorg-probe-cleanup.txt"
+              else
+                echo "no temporary probe stage remained" >> "$ART/xorg-probe-cleanup.txt"
+              fi
+              TEMP_PROBE_TARGET=
+              TEMP_PROBE_STAGE=
+              TEMP_PROBE_OWNED=0
+            }
             finish_build() {
               rc=$?
               trap - EXIT
+              cleanup_temporary_probe
               printf 'exit_code=%s\n' "$rc" > "$ART/build-status.txt"
               printf 'completed_utc=%s\n' "$(date -u +%FT%TZ)" >> "$ART/build-status.txt"
               printf 'Build finished with exit code %s.\n' "$rc" > "$ART/STATUS.txt"
@@ -376,8 +401,8 @@ jobs:
             # dlopen() process cannot resolve symbols exported only by /usr/bin/Xorg.
             # Build a temporary, genuine Xorg module whose SetupProc asks Xorg's own
             # LoaderSymbol() for the server and helper exports after fb/shadow load.
-            PROBE_DIR="$ART/xorg-loader-probe"
-            mkdir -p "$PROBE_DIR"
+            mkdir -p "$ART/xorg-loader-probe"
+            PROBE_DIR=$(cd "$ART/xorg-loader-probe" && pwd -P)
             cat > "$ART/xorg-loader-probe.c" <<'EOF'
             #include <stdio.h>
             #include "xorg-server.h"
@@ -461,10 +486,118 @@ jobs:
               record_acceptance FAIL "Compile Xorg-native LoaderSymbol probe module" "compiler exit=$rc; see xorg-loader-probe-build.log"
             fi
 
-            if [ "$XORG_PROBE_COMPILED" -eq 1 ] && [ -s "$PROBE_DIR/librotfbprobe.so" ]; then
+            # Capture the probe path, permissions and ELF diagnostics omitted from Run #7.
+            PROBE_SO="$PROBE_DIR/librotfbprobe.so"
+            XORG_PROBE_INSTALLED=0
+            : > "$ART/xorg-probe-source-diagnostics.txt"
+            : > "$ART/xorg-probe-install-diagnostics.txt"
+            : > "$ART/xorg-probe-root-cause-report.txt"
+            if [ "$XORG_PROBE_COMPILED" -eq 1 ] && [ -s "$PROBE_SO" ]; then
+              {
+                echo "PROBE_DIR=$PROBE_DIR"
+                echo "PROBE_SO=$PROBE_SO"
+                echo "MODULEDIR=$MODULEDIR"
+                echo "Load name=rotfbprobe; expected basename=librotfbprobe.so"
+                echo "Xorg launcher identity:"
+                id -a
+                python3 -c 'import os,pwd; print("launcher_euid=%s user=%s" % (os.geteuid(), pwd.getpwuid(os.geteuid()).pw_name))'
+                echo "probe and every parent directory:"
+                p="$PROBE_SO"
+                while :; do
+                  ls -ld "$p" 2>&1 || true
+                  if [ -d "$p" ]; then
+                    if [ -x "$p" ]; then echo "PASS directory searchable: $p"; else echo "FAIL directory not searchable: $p"; fi
+                  fi
+                  [ "$p" != "/" ] || break
+                  p=$(dirname "$p")
+                done
+                if [ -r "$PROBE_SO" ]; then echo "PASS probe readable by Xorg launcher identity"; else echo "FAIL probe unreadable by Xorg launcher identity"; fi
+                if [ "$(basename "$PROBE_SO")" = "librotfbprobe.so" ]; then echo "PASS filename matches Load name"; else echo "FAIL filename mismatch"; fi
+              } > "$ART/xorg-probe-source-diagnostics.txt" 2>&1
+              probe_diag() {
+                label=$1; shift
+                {
+                  echo "### $label"; printf 'command='; printf '%s ' "$@"; echo
+                  if "$@"; then echo "exit_code=0"; else rc=$?; echo "exit_code=$rc"; fi
+                } >> "$ART/xorg-probe-source-diagnostics.txt" 2>&1
+              }
+              probe_diag "file" file "$PROBE_SO"
+              probe_diag "elfdump -e" elfdump -e "$PROBE_SO"
+              probe_diag "elfdump -d" elfdump -d "$PROBE_SO"
+              probe_diag "ldd" ldd "$PROBE_SO"
+              probe_diag "SHA-256" digest -a sha256 "$PROBE_SO"
+
+              TEMP_PROBE_TARGET="$MODULEDIR/librotfbprobe.so"
+              TEMP_PROBE_STAGE="$MODULEDIR/.rotfbprobe-$GITHUB_RUN_ID-$$.stage"
+              {
+                echo "target=$TEMP_PROBE_TARGET"; echo "stage=$TEMP_PROBE_STAGE"
+                echo "MODULEDIR metadata:"; ls -ld "$MODULEDIR" 2>&1 || true
+                if [ -e "$TEMP_PROBE_TARGET" ] || [ -L "$TEMP_PROBE_TARGET" ]; then
+                  echo "FAIL target already exists; it will not be overwritten"
+                else echo "PASS target absent before test"; fi
+                if [ -e "$TEMP_PROBE_STAGE" ] || [ -L "$TEMP_PROBE_STAGE" ]; then
+                  echo "FAIL stage already exists"
+                else echo "PASS stage absent"; fi
+                if [ -r "$MODULEDIR" ] && [ -x "$MODULEDIR" ] && [ -w "$MODULEDIR" ]; then
+                  echo "PASS MODULEDIR readable/searchable/writable by launcher identity"
+                else echo "FAIL MODULEDIR access check"; fi
+              } > "$ART/xorg-probe-install-diagnostics.txt" 2>&1
+
+              if [ ! -e "$TEMP_PROBE_TARGET" ] && [ ! -L "$TEMP_PROBE_TARGET" ] &&
+                [ -r "$MODULEDIR" ] && [ -x "$MODULEDIR" ] && [ -w "$MODULEDIR" ]; then
+                if (set -C; : > "$TEMP_PROBE_STAGE") >> "$ART/xorg-probe-install-diagnostics.txt" 2>&1; then
+                  TEMP_PROBE_OWNED=1
+                  if cp -p "$PROBE_SO" "$TEMP_PROBE_STAGE" >> "$ART/xorg-probe-install-diagnostics.txt" 2>&1 &&
+                    ln "$TEMP_PROBE_STAGE" "$TEMP_PROBE_TARGET" >> "$ART/xorg-probe-install-diagnostics.txt" 2>&1; then
+                  {
+                    echo "test -r:"; test -r "$TEMP_PROBE_TARGET" && echo PASS || echo FAIL
+                    echo "test -s:"; test -s "$TEMP_PROBE_TARGET" && echo PASS || echo FAIL
+                    echo "ls -l:"; ls -l "$TEMP_PROBE_TARGET"
+                    echo "file:"; file "$TEMP_PROBE_TARGET"
+                    echo "target SHA-256:"; digest -a sha256 "$TEMP_PROBE_TARGET"
+                    echo "source SHA-256:"; digest -a sha256 "$PROBE_SO"
+                    echo "byte comparison:"; cmp "$PROBE_SO" "$TEMP_PROBE_TARGET" && echo PASS
+                    echo "elfdump -e:"; elfdump -e "$TEMP_PROBE_TARGET"
+                    echo "elfdump -d:"; elfdump -d "$TEMP_PROBE_TARGET"
+                    echo "ldd:"; ldd "$TEMP_PROBE_TARGET"
+                    } >> "$ART/xorg-probe-install-diagnostics.txt" 2>&1 || true
+                    if test -r "$TEMP_PROBE_TARGET" && test -s "$TEMP_PROBE_TARGET" &&
+                      cmp -s "$PROBE_SO" "$TEMP_PROBE_TARGET" &&
+                      [ "$(digest -a sha256 "$PROBE_SO" | awk '{print $1}')" = "$(digest -a sha256 "$TEMP_PROBE_TARGET" | awk '{print $1}')" ]; then
+                      XORG_PROBE_INSTALLED=1
+                    else echo "FAIL target verification or SHA mismatch" >> "$ART/xorg-probe-install-diagnostics.txt"; fi
+                  else
+                    echo "FAIL copy/link into MODULEDIR; owned stage will be cleaned by EXIT trap" >> "$ART/xorg-probe-install-diagnostics.txt"
+                  fi
+                else
+                  echo "FAIL could not exclusively create stage path; pre-existing stage left untouched" >> "$ART/xorg-probe-install-diagnostics.txt"
+                fi
+              else
+                echo "FAIL target pre-exists or MODULEDIR access denied; no overwrite attempted" >> "$ART/xorg-probe-install-diagnostics.txt"
+              fi
+
+              if [ "$XORG_PROBE_INSTALLED" -eq 1 ]; then
+                {
+                  echo "Run #7: Xorg loaded libfb.so and libshadow.so from MODULEDIR but did not discover rotfbprobe from additional PROBE_DIR."
+                  echo "Run #7 omitted probe file/parent permissions, probe ELF diagnostics, and Xorg launcher identity."
+                  echo "The exact lower-level reason for the additional-PROBE_DIR lookup failure is not established."
+                  echo "This run tests canonical MODULEDIR placement and captures the missing evidence."
+                } > "$ART/xorg-probe-root-cause-report.txt"
+              else
+                {
+                  echo "Probe could not be safely installed and verified in MODULEDIR."
+                  echo "No pre-existing target was overwritten. See source and install diagnostics."
+                  echo "The exact lower-level Run #7 failure remains unproven."
+                } > "$ART/xorg-probe-root-cause-report.txt"
+              fi
+            fi
+
+            if [ "$XORG_PROBE_COMPILED" -eq 1 ] &&
+              [ "$XORG_PROBE_INSTALLED" -eq 1 ] &&
+              [ -s "$PROBE_SO" ]; then
               cat > "$ART/xorg-module-loader-test.conf" <<EOF
             Section "Files"
-                ModulePath "$PROBE_DIR,$MODULEDIR"
+                ModulePath "$MODULEDIR"
             EndSection
 
             Section "Module"
@@ -495,7 +628,7 @@ jobs:
                 "$ART/xorg-module-loader.log" "$ART/xorg-module-loader-stdout.txt" \
                 "$ART/xorg-module-loader-stderr.txt" \
                 > "$ART/xorg-module-loader-exit-status.txt" 2>&1 <<'PY'
-            import subprocess, sys
+            import os, pwd, subprocess, sys
             xorg, config, logfile, stdout_path, stderr_path = sys.argv[1:]
             command = [
                 xorg, ":97", "-config", config, "-logfile", logfile,
@@ -503,6 +636,7 @@ jobs:
                 "-verbose", "7", "-logverbose", "7"
             ]
             print("command=" + " ".join(command))
+            print(f"launcher_euid={os.geteuid()} launcher_user={pwd.getpwuid(os.geteuid()).pw_name}")
             try:
                 with open(stdout_path, "w") as stdout, open(stderr_path, "w") as stderr:
                     result = subprocess.run(command, stdout=stdout, stderr=stderr,
@@ -522,6 +656,27 @@ jobs:
                 "$ART/xorg-module-loader-stderr.txt" \
                 > "$ART/xorg-module-loader-combined.log"
 
+              if grep -Fq "ModulePath set to \"$MODULEDIR\"" "$ART/xorg-module-loader.log"; then
+                record_acceptance PASS "Xorg uses canonical MODULEDIR for probe discovery" "$MODULEDIR; see xorg-module-loader.log"
+              else
+                record_acceptance FAIL "Xorg uses canonical MODULEDIR for probe discovery" "effective ModulePath not confirmed"
+              fi
+              if grep -Fq "Loading $TEMP_PROBE_TARGET" "$ART/xorg-module-loader.log"; then
+                record_acceptance PASS "Xorg native loader discovered librotfbprobe.so" "$TEMP_PROBE_TARGET; see xorg-module-loader.log"
+              else
+                record_acceptance FAIL "Xorg native loader discovered librotfbprobe.so" "exact Loading path not confirmed"
+              fi
+              if grep -Fq 'Module rotfbprobe:' "$ART/xorg-module-loader.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=PixmapWidthPaddingInfo ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=fbScreenInit ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=fbPictureInit ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=shadowSetup ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=shadowAdd ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=shadowUpdateRotate32_270 ' "$ART/xorg-module-loader-combined.log"; then
+                record_acceptance PASS "Xorg accepted rotfbprobe module SetupProc" "Module record and all six SetupProc markers confirmed"
+              else
+                record_acceptance FAIL "Xorg accepted rotfbprobe module SetupProc" "SetupProc execution not proven by all six markers"
+              fi
               if grep -Fq 'Module fb:' "$ART/xorg-module-loader.log" &&
                 grep -Fq "$FB_LIB" "$ART/xorg-module-loader.log"; then
                 record_acceptance PASS "Xorg native loader loaded libfb.so" "$FB_LIB; see xorg-module-loader.log"
@@ -548,6 +703,9 @@ jobs:
                 ! grep -Eiq 'relocation error|referenced symbol not found|ROTFB_XORG_LOADER_PROBE_FAIL' "$ART/xorg-module-loader-combined.log" &&
                 grep -Fq 'Module fb:' "$ART/xorg-module-loader.log" &&
                 grep -Fq 'Module shadow:' "$ART/xorg-module-loader.log" &&
+                grep -Fq "ModulePath set to \"$MODULEDIR\"" "$ART/xorg-module-loader.log" &&
+                grep -Fq "Loading $TEMP_PROBE_TARGET" "$ART/xorg-module-loader.log" &&
+                grep -Fq 'Module rotfbprobe:' "$ART/xorg-module-loader.log" &&
                 grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=PixmapWidthPaddingInfo ' "$ART/xorg-module-loader-combined.log" &&
                 grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=fbScreenInit ' "$ART/xorg-module-loader-combined.log" &&
                 grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=fbPictureInit ' "$ART/xorg-module-loader-combined.log" &&
@@ -571,9 +729,18 @@ jobs:
                 record_acceptance FAIL "Xorg-native module loader runtime resolution" "missing module/symbol proof, unexpected loader error, or test did not reach expected terminal condition"
               fi
             else
-              printf 'NOT RUN: Xorg LoaderSymbol probe module did not compile.\\n' > "$ART/xorg-module-loader-resolution.txt"
-              record_acceptance FAIL "Xorg-native module loader runtime resolution" "probe module unavailable; see xorg-loader-probe-build.log"
+              printf 'NOT RUN: Xorg LoaderSymbol probe module did not compile or could not be safely installed.\\n' > "$ART/xorg-module-loader-resolution.txt"
+              record_acceptance FAIL "Xorg uses canonical MODULEDIR for probe discovery" "probe unavailable; see probe diagnostics"
+              record_acceptance FAIL "Xorg native loader discovered librotfbprobe.so" "probe unavailable; runtime not launched"
+              record_acceptance FAIL "Xorg accepted rotfbprobe module SetupProc" "probe unavailable; runtime not launched"
+              record_acceptance FAIL "Xorg native loader loaded libfb.so" "runtime not launched"
+              record_acceptance FAIL "Xorg native loader loaded libshadow.so" "runtime not launched"
+              for sym in PixmapWidthPaddingInfo fbScreenInit fbPictureInit shadowSetup shadowAdd shadowUpdateRotate32_270; do
+                record_acceptance FAIL "Xorg LoaderSymbol resolves $sym" "probe unavailable; lookup not performed"
+              done
+              record_acceptance FAIL "Xorg-native module loader runtime resolution" "probe unavailable; see probe diagnostics"
             fi
+            cleanup_temporary_probe
 
             # Resolve every strong undefined DDX symbol against the target
             # Xorg executable, installed Xorg modules and DT_NEEDED libraries.
