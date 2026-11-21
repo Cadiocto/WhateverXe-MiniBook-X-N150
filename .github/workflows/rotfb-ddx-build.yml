@@ -1,0 +1,356 @@
+name: ROTFB DDX native OpenIndiana build
+
+on:
+  push:
+    branches: [gop-rotation-hook]
+    paths:
+      - "rotfb-ddx/**"
+      - ".github/workflows/rotfb-ddx-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-illumosfb-ddx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout isolated ROTFB DDX inputs
+        uses: actions/checkout@v4
+
+      - name: Prepare artifact staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p rotfb-ddx-artifacts
+          echo "Build has not started" > rotfb-ddx-artifacts/STATUS.txt
+
+      - name: Build and validate illumosfb_drv.so in OpenIndiana 202610
+        uses: vmactions/openindiana-vm@v1
+        with:
+          release: "202610-build"
+          arch: x86_64
+          mem: 8192
+          cpu: 4
+          sync: nfs
+          run: |
+            /usr/bin/bash -s <<'ROTFB_DDX_BUILD'
+            set -Eeuo pipefail
+            ART="$GITHUB_WORKSPACE/rotfb-ddx-artifacts"
+            mkdir -p "$ART"
+            exec > "$ART/build.log" 2>&1
+            finish_build() {
+              rc=$?
+              trap - EXIT
+              printf 'exit_code=%s\n' "$rc" > "$ART/build-status.txt"
+              printf 'completed_utc=%s\n' "$(date -u +%FT%TZ)" >> "$ART/build-status.txt"
+              printf 'Build finished with exit code %s.\n' "$rc" > "$ART/STATUS.txt"
+              [ ! -f "$ART/illumosfb_drv.so" ] || echo binary=present >> "$ART/build-status.txt"
+              [ -f "$ART/illumosfb_drv.so" ] || echo binary=absent >> "$ART/build-status.txt"
+              : > "$ART/SHA256SUMS"
+              find "$ART" -type f ! -name SHA256SUMS -print | sort | while IFS= read -r f; do
+                digest -a sha256 "$f" | awk -v n="$(basename "$f")" '{print $1 "  " n}'
+              done >> "$ART/SHA256SUMS"
+              exit "$rc"
+            }
+            trap finish_build EXIT
+
+            uname -a
+            test "$(uname -s)" = SunOS
+            isainfo -kv | tee "$ART/target-abi.txt"
+            grep -qi amd64 "$ART/target-abi.txt"
+            cat /etc/release | tee "$ART/openindiana-release.txt"
+            grep -q 'OpenIndiana' "$ART/openindiana-release.txt"
+
+            pkg refresh
+            pkg install --accept \
+              pkg://openindiana.org/x11/server/xorg@1.19.7-2026.0.0.18 \
+              library/graphics/pixman \
+              developer/build/autoconf/xorg-macros developer/build/autoconf \
+              developer/build/automake developer/build/libtool \
+              developer/build/pkg-config developer/build/gnu-make \
+              developer/versioning/git developer/gcc-14 \
+              x11/header/x11-protocols x11/font-util system/library
+
+            pkg info x11/server/xorg | tee "$ART/xorg-package-info.txt"
+            awk -F: '
+              /^[[:space:]]*Version:/ {
+                v=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+              }
+              /^[[:space:]]*Branch:/ {
+                b=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", b)
+              }
+              END { if (v != "1.19.7" || b !~ /\.18$/) exit 1 }
+            ' "$ART/xorg-package-info.txt"
+
+            export PATH="/usr/gcc/14/bin:/usr/bin:/usr/sbin"
+            export PKG_CONFIG_PATH="/usr/lib/amd64/pkgconfig:/usr/lib/pkgconfig"
+            export CC=/usr/gcc/14/bin/gcc CFLAGS=-m64 LDFLAGS=-m64
+            XORG_PC_VERSION=$(pkg-config --modversion xorg-server)
+            test "$XORG_PC_VERSION" = 1.19.7
+            PC_DIR=$(pkg-config --variable=pcfiledir xorg-server)
+            PC_FILE="$PC_DIR/xorg-server.pc"
+            test -r "$PC_FILE"
+            grep -Eq '^Version:[[:space:]]*1\.19\.7[[:space:]]*$' "$PC_FILE"
+            {
+              echo "pkg-config version=$XORG_PC_VERSION"
+              echo "pkg-config file=$PC_FILE"
+              echo "pkg-config cflags=$(pkg-config --cflags xorg-server)"
+              echo "pkg-config libs=$(pkg-config --libs xorg-server)"
+              cat "$PC_FILE"
+            } > "$ART/xorg-pkg-config.txt"
+            pkg-config --exists xorg-server xproto fontsproto pixman-1
+
+            # Compile a header/ABI probe against the installed target SDK.
+            cat > "$ART/xorg-sdk-probe.c" <<'EOF'
+            #include <sys/fbio.h>
+            #include <sys/kd.h>
+            #include <sys/visual_io.h>
+            #include "xorg-server.h"
+            #include "xf86.h"
+            #include "xf86_OSproc.h"
+            #include "xf86Module.h"
+            #include "mipointer.h"
+            #include "micmap.h"
+            #include "colormapst.h"
+            #include "fb.h"
+            #include "shadow.h"
+            #include "damage.h"
+            #include "regionstr.h"
+            #include <stdio.h>
+            #ifndef ABI_VIDEODRV_VERSION
+            #error ABI_VIDEODRV_VERSION missing from target headers
+            #endif
+            #ifndef ABI_CLASS_VIDEODRV
+            #error ABI_CLASS_VIDEODRV missing from target headers
+            #endif
+            int main(void) {
+                printf("XORG_VERSION_CURRENT=%u\n", (unsigned)XORG_VERSION_CURRENT);
+                printf("ABI_CLASS_VIDEODRV=%s\n", ABI_CLASS_VIDEODRV);
+                printf("ABI_VIDEODRV_VERSION=%u\n", (unsigned)ABI_VIDEODRV_VERSION);
+                return (GET_ABI_MAJOR(ABI_VIDEODRV_VERSION) != 23 ||
+                    GET_ABI_MINOR(ABI_VIDEODRV_VERSION) != 0);
+            }
+            EOF
+            $CC -m64 $(pkg-config --cflags xorg-server) -o "$ART/xorg-sdk-probe" "$ART/xorg-sdk-probe.c"
+            "$ART/xorg-sdk-probe" | tee "$ART/xorg-module-abi.txt"
+            $CC -m64 $(pkg-config --cflags xorg-server) -dM -E "$ART/xorg-sdk-probe.c" \
+              | grep -E '^#define (ABI_VIDEODRV_VERSION|ABI_CLASS_VIDEODRV|XORG_VERSION_CURRENT)' \
+              > "$ART/xorg-module-abi-macros.txt"
+            grep -q 'ABI_VIDEODRV_VERSION' "$ART/xorg-module-abi-macros.txt"
+
+            SRC=/tmp/xf86-video-illumosfb
+            PIN=8ad57812ca2e99be6281f5142101811482026c55
+            git init "$SRC"
+            git -C "$SRC" remote add origin https://github.com/LuminousMonkey/xf86-video-illumosfb.git
+            git -C "$SRC" fetch --depth 1 origin "$PIN"
+            git -C "$SRC" checkout --detach FETCH_HEAD
+            test "$(git -C "$SRC" rev-parse HEAD)" = "$PIN"
+            test "$(digest -a sha256 "$SRC/src/illumosfb_driver.c")" = 649d6d6dc7230a647c8d516316fc5a6112ea40c6c2d3d37335c85090671fde2a
+            git -C "$SRC" apply --check "$GITHUB_WORKSPACE/rotfb-ddx/patches/rotfb-ddx-clean-reimplementation.patch"
+            git -C "$SRC" apply "$GITHUB_WORKSPACE/rotfb-ddx/patches/rotfb-ddx-clean-reimplementation.patch"
+            cmp "$SRC/src/illumosfb_driver.c" "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"
+            test "$(digest -a sha256 "$SRC/src/illumosfb_driver.c")" = ee1f666598a8a1445fb91a1be78f5734764008363cc7acb7ea2fce5ed5948fc5
+
+            cd "$SRC"
+            NOCONFIGURE=1 /usr/bin/bash ./autogen.sh
+            ac_cv_prog_cc_c23=no ./configure --disable-static
+            gmake -C src illumosfb_drv.la V=1
+            SO="$SRC/src/.libs/illumosfb_drv.so"
+            test -s "$SO"
+            cp "$SO" "$ART/illumosfb_drv.so"
+
+            REPORT="$ART/elf-abi-report.txt"
+            DIAG_RC=0
+            {
+              echo "Target: $(uname -a)"
+              echo "OpenIndiana release: $(head -1 /etc/release)"
+              echo "Xorg package: $(grep -E 'Version:|Branch:|FMRI:' "$ART/xorg-package-info.txt" | tr '\n' ' ')"
+              echo "Xorg pkg-config: $(pkg-config --modversion xorg-server)"
+              echo "Compiler: $($CC --version | head -1)"
+              file "$ART/illumosfb_drv.so"
+              elfdump -e "$ART/illumosfb_drv.so"
+              elfdump -d "$ART/illumosfb_drv.so"
+              elfdump -s -N .dynsym "$ART/illumosfb_drv.so"
+              elfdump -r "$ART/illumosfb_drv.so"
+              ldd "$ART/illumosfb_drv.so"
+            } > "$REPORT" 2>&1 || DIAG_RC=$?
+            test "$DIAG_RC" -eq 0
+
+            # Acceptance gate: ELF64, AMD64, DT_NEEDED, relocations, and no
+            # missing DT_NEEDED dependencies. Diagnostic output is above;
+            # failures below are hard errors.
+            elfdump -e "$ART/illumosfb_drv.so" > "$ART/elf-header.txt"
+            grep -Eq 'Class:[[:space:]]+ELFCLASS64' "$ART/elf-header.txt"
+            grep -Eq 'Machine:[[:space:]]+EM_AMD64' "$ART/elf-header.txt"
+            elfdump -d "$ART/illumosfb_drv.so" > "$ART/dynamic-section.txt"
+            grep -q 'NEEDED' "$ART/dynamic-section.txt"
+            elfdump -r "$ART/illumosfb_drv.so" > "$ART/relocations.txt"
+            grep -Eq 'R_AMD64_' "$ART/relocations.txt"
+            ldd "$ART/illumosfb_drv.so" > "$ART/ldd.txt" 2>&1
+            if grep -Eiq 'not found|file not found' "$ART/ldd.txt"; then
+              echo 'ELF dependency resolution failed' >&2
+              exit 1
+            fi
+
+            # Locate the installed modules rather than assuming a module path.
+            find -L /usr/lib /usr/lib/amd64 -type f -name libshadow.so -print \
+              2>/dev/null | sort -u > "$ART/libshadow-paths.txt"
+            find -L /usr/lib /usr/lib/amd64 -type f -name libfb.so -print \
+              2>/dev/null | sort -u > "$ART/libfb-paths.txt"
+            test -s "$ART/libshadow-paths.txt"
+            test -s "$ART/libfb-paths.txt"
+            SHADOW_LIB=$(head -1 "$ART/libshadow-paths.txt")
+            FB_LIB=$(head -1 "$ART/libfb-paths.txt")
+            XORG_BIN=/usr/bin/Xorg
+            test -x "$XORG_BIN"
+
+            check_defined_symbol() {
+              sym=$1
+              obj=$2
+              if elfdump -s -N .dynsym "$obj" | nawk -v s="$sym" \
+                'NF >= 9 && $NF == s && $(NF-1) != "UNDEF" && \
+                 $(NF-5) == "FUNC" && \
+                 ($(NF-4) == "GLOB" || $(NF-4) == "WEAK") { found=1 }
+                 END { exit(found ? 0 : 1) }'; then
+                echo "PASS defined dynamic export: $sym in $obj" | tee -a "$ART/symbol-acceptance.txt"
+              else
+                echo "FAIL missing dynamic export: $sym in $obj" | tee -a "$ART/symbol-acceptance.txt"
+                return 1
+              fi
+            }
+            : > "$ART/symbol-acceptance.txt"
+            check_defined_symbol shadowSetup "$SHADOW_LIB"
+            check_defined_symbol shadowAdd "$SHADOW_LIB"
+            check_defined_symbol shadowUpdateRotate32_270 "$SHADOW_LIB"
+            check_defined_symbol fbScreenInit "$FB_LIB"
+            check_defined_symbol fbPictureInit "$FB_LIB"
+            check_defined_symbol DamageRegionAppend "$XORG_BIN"
+            check_defined_symbol DamageRegionProcessPending "$XORG_BIN"
+            check_defined_symbol miDCInitialize "$XORG_BIN"
+            check_defined_symbol LoaderSymbol "$XORG_BIN"
+            check_defined_symbol xf86GetPointerScreenFuncs "$XORG_BIN"
+            check_defined_symbol xf86LoadSubModule "$XORG_BIN"
+
+            # Verify the actual runtime linker can open the modules and resolve
+            # the required exports, including the symbol fetched with LoaderSymbol.
+            cat > "$ART/module-symbol-probe.c" <<'EOF'
+            #include <dlfcn.h>
+            #include <stdio.h>
+            #include <stdlib.h>
+            static int check(void *h, const char *name) {
+                dlerror();
+                void *p = dlsym(h, name);
+                const char *e = dlerror();
+                if (e != NULL || p == NULL) {
+                    fprintf(stderr, "dlsym(%s): %s\n", name,
+                        e != NULL ? e : "null symbol address");
+                    return 1;
+                }
+                printf("PASS dlsym: %s\n", name);
+                return 0;
+            }
+            int main(int argc, char **argv) {
+                void *sh, *fb;
+                int rc = 0;
+                if (argc != 3) return 2;
+                sh = dlopen(argv[1], RTLD_LAZY | RTLD_GLOBAL);
+                if (sh == NULL) { fprintf(stderr, "dlopen shadow: %s\n", dlerror()); return 3; }
+                fb = dlopen(argv[2], RTLD_LAZY | RTLD_GLOBAL);
+                if (fb == NULL) { fprintf(stderr, "dlopen fb: %s\n", dlerror()); return 4; }
+                rc |= check(sh, "shadowSetup");
+                rc |= check(sh, "shadowAdd");
+                rc |= check(sh, "shadowUpdateRotate32_270");
+                rc |= check(fb, "fbScreenInit");
+                rc |= check(fb, "fbPictureInit");
+                return rc;
+            }
+            EOF
+            $CC -m64 -o "$ART/module-symbol-probe" "$ART/module-symbol-probe.c" -ldl
+            "$ART/module-symbol-probe" "$SHADOW_LIB" "$FB_LIB" \
+              | tee "$ART/module-loader-resolution.txt"
+
+            # Resolve every strong undefined DDX symbol against the actual
+            # target Xorg executable, installed Xorg modules, and DT_NEEDED libs.
+            python3 - "$ART/illumosfb_drv.so" "$XORG_BIN" "$SHADOW_LIB" "$FB_LIB" "$ART/ldd.txt" "$ART" <<'PY'
+            import os, re, subprocess, sys
+            so, xorg, shadow, fb, ldd_file, art = sys.argv[1:]
+            def symbols(path):
+                try:
+                    out = subprocess.check_output(
+                        ["elfdump", "-s", "-N", ".dynsym", path],
+                        text=True, stderr=subprocess.DEVNULL)
+                except Exception:
+                    return [], []
+                defined, undefined = [], []
+                for line in out.splitlines():
+                    f = line.split()
+                    if len(f) < 9 or not f[0].startswith("["):
+                        continue
+                    typ, bind, shndx, name = f[-6], f[-5], f[-2], f[-1]
+                    if bind not in ("GLOB", "WEAK"):
+                        continue
+                    if shndx == "UNDEF":
+                        if bind == "GLOB": undefined.append((name, typ))
+                    elif typ != "NOTY":
+                        defined.append((name, typ))
+                return defined, undefined
+            providers = {xorg, shadow, fb}
+            with open(ldd_file, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    for token in line.split():
+                        if token.startswith("/") and os.path.isfile(token):
+                            providers.add(os.path.realpath(token))
+            module_roots = set()
+            for p in (shadow, fb):
+                cur = os.path.dirname(os.path.realpath(p))
+                while cur != "/" and not cur.endswith("/xorg/modules"):
+                    cur = os.path.dirname(cur)
+                if cur.endswith("/xorg/modules"):
+                    module_roots.add(cur)
+            for root in sorted(module_roots):
+                for base, dirs, files in os.walk(root, followlinks=True):
+                    for name in files:
+                        if name.endswith(".so"):
+                            p = os.path.join(base, name)
+                            if os.path.isfile(p): providers.add(os.path.realpath(p))
+            defined_by = {}
+            for path in sorted(providers):
+                defs, _ = symbols(path)
+                for name, typ in defs:
+                    defined_by.setdefault(name.split("@", 1)[0], (typ, path))
+            _, undefined = symbols(so)
+            unresolved = sorted({(n, typ) for n, typ in undefined
+                                 if n.split("@", 1)[0] not in defined_by or
+                                 (typ != "NOTY" and defined_by[n.split("@", 1)[0]][0] not in (typ, "NOTY"))})
+            with open(os.path.join(art, "undefined-dynamic-symbols.txt"), "w") as f:
+                f.write("\n".join(sorted({n for n, _ in undefined})) + "\n")
+            with open(os.path.join(art, "undefined-symbol-resolution.txt"), "w") as f:
+                for n, typ in sorted(set(undefined)):
+                    provider = defined_by.get(n.split("@", 1)[0], ("", "UNRESOLVED"))[1]
+                    f.write(f"{n} [{typ}] -> {provider}\n")
+            if unresolved:
+                print("Unresolved strong undefined dynamic symbols:", *unresolved, sep="\n", file=sys.stderr)
+                sys.exit(1)
+            print(f"PASS: resolved {len(set(undefined))} strong undefined dynamic symbols")
+            PY
+
+            # The DDX requests both helper modules through the Xorg module loader;
+            # the rotate routine is resolved through the exported LoaderSymbol API.
+            grep -Fq 'xf86LoadSubModule(pScrn, "fb")' "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"
+            grep -Fq 'xf86LoadSubModule(pScrn, "shadow")' "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"
+            grep -Fq 'LoaderSymbol("shadowUpdateRotate32_270")' "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"
+            grep -Fq 'ABI_CLASS_VIDEODRV' "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"
+            grep -Fq 'ABI_VIDEODRV_VERSION' "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"
+
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            ROTFB_DDX_BUILD
+
+      - name: Upload native DDX build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-ddx-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-ddx-artifacts/
+          if-no-files-found: error
+          retention-days: 30
