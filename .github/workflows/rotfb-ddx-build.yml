@@ -372,60 +372,207 @@ jobs:
             check_defined_symbol xf86GetPointerScreenFuncs dynsym-Xorg.txt
             check_defined_symbol xf86LoadSubModule dynsym-Xorg.txt
 
-            # Probe real runtime loading and dlsym independently of the static
-            # export checks. Keep both compiler and loader diagnostics in artifact.
-            cat > "$ART/module-symbol-probe.c" <<'EOF'
-            #include <dlfcn.h>
+            # Runtime acceptance must execute in the real Xorg process. A standalone
+            # dlopen() process cannot resolve symbols exported only by /usr/bin/Xorg.
+            # Build a temporary, genuine Xorg module whose SetupProc asks Xorg's own
+            # LoaderSymbol() for the server and helper exports after fb/shadow load.
+            PROBE_DIR="$ART/xorg-loader-probe"
+            mkdir -p "$PROBE_DIR"
+            cat > "$ART/xorg-loader-probe.c" <<'EOF'
             #include <stdio.h>
-            #include <stdlib.h>
-            static int check(void *h, const char *name) {
-                dlerror();
-                void *p = dlsym(h, name);
-                const char *e = dlerror();
-                if (e != NULL || p == NULL) {
-                    fprintf(stderr, "dlsym(%s): %s\n", name,
-                        e != NULL ? e : "null symbol address");
-                    return 1;
+            #include "xorg-server.h"
+            #include "xf86Module.h"
+
+            static const char *required_symbols[] = {
+                "PixmapWidthPaddingInfo",
+                "fbScreenInit",
+                "fbPictureInit",
+                "shadowSetup",
+                "shadowAdd",
+                "shadowUpdateRotate32_270",
+                NULL
+            };
+
+            static void *
+            rotfbprobe_setup(void *module, void *options, int *errmaj, int *errmin)
+            {
+                int i;
+                int failed = 0;
+                (void)options;
+                (void)errmin;
+
+                for (i = 0; required_symbols[i] != NULL; i++) {
+                    void *address = LoaderSymbol(required_symbols[i]);
+                    if (address == NULL) {
+                        fprintf(stderr,
+                            "ROTFB_XORG_LOADER_PROBE_FAIL symbol=%s\\n",
+                            required_symbols[i]);
+                        failed = 1;
+                    } else {
+                        fprintf(stderr,
+                            "ROTFB_XORG_LOADER_PROBE_PASS symbol=%s address=%p\\n",
+                            required_symbols[i], address);
+                    }
                 }
-                printf("PASS dlsym: %s\n", name);
-                return 0;
+                fflush(stderr);
+                if (failed) {
+                    if (errmaj != NULL)
+                        *errmaj = LDR_MODSPECIFIC;
+                    return NULL;
+                }
+                return module;
             }
-            int main(int argc, char **argv) {
-                void *sh, *fb;
-                int rc = 0;
-                if (argc != 3) return 2;
-                sh = dlopen(argv[1], RTLD_LAZY | RTLD_GLOBAL);
-                if (sh == NULL) { fprintf(stderr, "dlopen shadow: %s\n", dlerror()); return 3; }
-                fb = dlopen(argv[2], RTLD_LAZY | RTLD_GLOBAL);
-                if (fb == NULL) { fprintf(stderr, "dlopen fb: %s\n", dlerror()); return 4; }
-                rc |= check(sh, "shadowSetup");
-                rc |= check(sh, "shadowAdd");
-                rc |= check(sh, "shadowUpdateRotate32_270");
-                rc |= check(fb, "fbScreenInit");
-                rc |= check(fb, "fbPictureInit");
-                return rc;
-            }
+
+            static XF86ModuleVersionInfo rotfbprobe_version = {
+                "rotfbprobe",
+                MODULEVENDORSTRING,
+                MODINFOSTRING1,
+                MODINFOSTRING2,
+                XORG_VERSION_CURRENT,
+                0, 0, 0,
+                ABI_CLASS_ANSIC,
+                ABI_ANSIC_VERSION,
+                MOD_CLASS_NONE,
+                {0, 0, 0, 0}
+            };
+
+            _X_EXPORT XF86ModuleData rotfbprobeModuleData = {
+                &rotfbprobe_version,
+                rotfbprobe_setup,
+                NULL
+            };
             EOF
 
-            : > "$ART/module-symbol-probe-build.log"
-            : > "$ART/module-loader-resolution.txt"
-            if $CC -m64 -o "$ART/module-symbol-probe" "$ART/module-symbol-probe.c" -ldl > "$ART/module-symbol-probe-build.log" 2>&1; then
-              record_acceptance PASS "Compile dlopen/dlsym probe" "module-symbol-probe"
-              if [ -n "$SHADOW_LIB" ] && [ -n "$FB_LIB" ]; then
-                if "$ART/module-symbol-probe" "$SHADOW_LIB" "$FB_LIB" > "$ART/module-loader-resolution.txt" 2>&1; then
-                  record_acceptance PASS "dlopen/dlsym runtime resolution" "all requested helper-module symbols resolved"
-                else
-                  rc=$?
-                  record_acceptance FAIL "dlopen/dlsym runtime resolution" "probe exit=$rc; see module-loader-resolution.txt"
-                fi
-              else
-                printf 'SKIP: libshadow.so or libfb.so was not found; see path reports.\n' > "$ART/module-loader-resolution.txt"
-                record_acceptance FAIL "dlopen/dlsym runtime resolution" "required helper module path unavailable"
-              fi
+            : > "$ART/xorg-loader-probe-build.log"
+            : > "$ART/xorg-module-loader-resolution.txt"
+            : > "$ART/xorg-module-loader-stdout.txt"
+            : > "$ART/xorg-module-loader-stderr.txt"
+            : > "$ART/xorg-module-loader-exit-status.txt"
+            : > "$ART/xorg-module-loader.log"
+            XORG_PROBE_COMPILED=0
+            if $CC -m64 -fPIC -fvisibility=default -shared \
+              $(pkg-config --cflags xorg-server) \
+              -o "$PROBE_DIR/librotfbprobe.so" "$ART/xorg-loader-probe.c" \
+              > "$ART/xorg-loader-probe-build.log" 2>&1; then
+              XORG_PROBE_COMPILED=1
+              record_acceptance PASS "Compile Xorg-native LoaderSymbol probe module" "librotfbprobe.so"
             else
               rc=$?
-              record_acceptance FAIL "Compile dlopen/dlsym probe" "compiler exit=$rc; see module-symbol-probe-build.log"
-              printf 'NOT RUN: probe compilation failed.\n' > "$ART/module-loader-resolution.txt"
+              record_acceptance FAIL "Compile Xorg-native LoaderSymbol probe module" "compiler exit=$rc; see xorg-loader-probe-build.log"
+            fi
+
+            if [ "$XORG_PROBE_COMPILED" -eq 1 ] && [ -s "$PROBE_DIR/librotfbprobe.so" ]; then
+              cat > "$ART/xorg-module-loader-test.conf" <<EOF
+            Section "Files"
+                ModulePath "$PROBE_DIR,$MODULEDIR"
+            EndSection
+
+            Section "Module"
+                Load "fb"
+                Load "shadow"
+                Load "rotfbprobe"
+            EndSection
+
+            # Deliberately name a nonexistent video driver. Xorg loads the explicit
+            # Module section first; it then reaches the deterministic "No drivers
+            # available" terminal condition without touching a physical framebuffer.
+            Section "Device"
+                Identifier "ROTFBLoaderProbeDevice"
+                Driver "rotfb-loader-no-device"
+            EndSection
+
+            Section "Screen"
+                Identifier "ROTFBLoaderProbeScreen"
+                Device "ROTFBLoaderProbeDevice"
+            EndSection
+
+            Section "ServerLayout"
+                Identifier "ROTFBLoaderProbeLayout"
+                Screen 0 "ROTFBLoaderProbeScreen"
+            EndSection
+            EOF
+              python3 - "$XORG_BIN" "$ART/xorg-module-loader-test.conf" \
+                "$ART/xorg-module-loader.log" "$ART/xorg-module-loader-stdout.txt" \
+                "$ART/xorg-module-loader-stderr.txt" \
+                > "$ART/xorg-module-loader-exit-status.txt" 2>&1 <<'PY'
+            import subprocess, sys
+            xorg, config, logfile, stdout_path, stderr_path = sys.argv[1:]
+            command = [
+                xorg, ":97", "-config", config, "-logfile", logfile,
+                "-noreset", "-novtswitch", "-nolisten", "tcp",
+                "-verbose", "7", "-logverbose", "7"
+            ]
+            print("command=" + " ".join(command))
+            try:
+                with open(stdout_path, "w") as stdout, open(stderr_path, "w") as stderr:
+                    result = subprocess.run(command, stdout=stdout, stderr=stderr,
+                                            timeout=45, check=False)
+                print(f"exit_code={result.returncode}")
+                print("timed_out=no")
+            except subprocess.TimeoutExpired:
+                print("exit_code=timeout")
+                print("timed_out=yes")
+            except Exception as exc:
+                print("exit_code=launch-error")
+                print("timed_out=no")
+                print(f"launch_error={exc!r}")
+            PY
+              cat "$ART/xorg-module-loader.log" \
+                "$ART/xorg-module-loader-stdout.txt" \
+                "$ART/xorg-module-loader-stderr.txt" \
+                > "$ART/xorg-module-loader-combined.log"
+
+              if grep -Fq 'Module fb:' "$ART/xorg-module-loader.log" &&
+                grep -Fq "$FB_LIB" "$ART/xorg-module-loader.log"; then
+                record_acceptance PASS "Xorg native loader loaded libfb.so" "$FB_LIB; see xorg-module-loader.log"
+              else
+                record_acceptance FAIL "Xorg native loader loaded libfb.so" "module load not confirmed in Xorg log"
+              fi
+              if grep -Fq 'Module shadow:' "$ART/xorg-module-loader.log" &&
+                grep -Fq "$SHADOW_LIB" "$ART/xorg-module-loader.log"; then
+                record_acceptance PASS "Xorg native loader loaded libshadow.so" "$SHADOW_LIB; see xorg-module-loader.log"
+              else
+                record_acceptance FAIL "Xorg native loader loaded libshadow.so" "module load not confirmed in Xorg log"
+              fi
+
+              for sym in PixmapWidthPaddingInfo fbScreenInit fbPictureInit shadowSetup shadowAdd shadowUpdateRotate32_270; do
+                if grep -Fq "ROTFB_XORG_LOADER_PROBE_PASS symbol=$sym " "$ART/xorg-module-loader-combined.log"; then
+                  record_acceptance PASS "Xorg LoaderSymbol resolves $sym" "resolved inside /usr/bin/Xorg process"
+                else
+                  record_acceptance FAIL "Xorg LoaderSymbol resolves $sym" "runtime lookup not confirmed; see xorg-module-loader-combined.log"
+                fi
+              done
+
+              if grep -Eq '^timed_out=no$' "$ART/xorg-module-loader-exit-status.txt" &&
+                grep -Fq 'No drivers available.' "$ART/xorg-module-loader.log" &&
+                ! grep -Eiq 'relocation error|referenced symbol not found|ROTFB_XORG_LOADER_PROBE_FAIL' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'Module fb:' "$ART/xorg-module-loader.log" &&
+                grep -Fq 'Module shadow:' "$ART/xorg-module-loader.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=PixmapWidthPaddingInfo ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=fbScreenInit ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=fbPictureInit ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=shadowSetup ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=shadowAdd ' "$ART/xorg-module-loader-combined.log" &&
+                grep -Fq 'ROTFB_XORG_LOADER_PROBE_PASS symbol=shadowUpdateRotate32_270 ' "$ART/xorg-module-loader-combined.log"; then
+                {
+                  echo "PASS: /usr/bin/Xorg 1.19.7 loaded libfb.so and libshadow.so through its native Module loader."
+                  echo "PASS: the temporary Xorg module called LoaderSymbol() for all six real server/helper symbols."
+                  echo "PASS: no unresolved relocation was reported."
+                  echo "EXPECTED TERMINATION: the test-only nonexistent video driver leaves Xorg with no drivers; no framebuffer device is opened."
+                  cat "$ART/xorg-module-loader-exit-status.txt"
+                } > "$ART/xorg-module-loader-resolution.txt"
+                record_acceptance PASS "Xorg-native module loader runtime resolution" "both helpers loaded and all six LoaderSymbol lookups succeeded; expected no-driver termination"
+              else
+                {
+                  echo "FAIL: Xorg-native module loader test did not satisfy every runtime condition."
+                  cat "$ART/xorg-module-loader-exit-status.txt"
+                  echo "See xorg-module-loader.log, stdout, stderr and combined log."
+                } > "$ART/xorg-module-loader-resolution.txt"
+                record_acceptance FAIL "Xorg-native module loader runtime resolution" "missing module/symbol proof, unexpected loader error, or test did not reach expected terminal condition"
+              fi
+            else
+              printf 'NOT RUN: Xorg LoaderSymbol probe module did not compile.\\n' > "$ART/xorg-module-loader-resolution.txt"
+              record_acceptance FAIL "Xorg-native module loader runtime resolution" "probe module unavailable; see xorg-loader-probe-build.log"
             fi
 
             # Resolve every strong undefined DDX symbol against the target
