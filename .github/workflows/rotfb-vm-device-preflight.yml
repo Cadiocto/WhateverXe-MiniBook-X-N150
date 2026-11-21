@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout exact preflight revision
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Retrieve immutable Run 8 production DDX artifact
         env:
@@ -25,8 +27,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "86223a0a37b0904c2007eb18301d35cdf9fce0cd"
           mkdir -p rotfb-preflight-artifacts
+          printf 'artifact_download=NOT_STARTED\n' > rotfb-preflight-artifacts/early-failure.txt
+          test "$(git rev-parse HEAD^)" = "86223a0a37b0904c2007eb18301d35cdf9fce0cd"
+          rm -f rotfb-preflight-artifacts/early-failure.txt
           curl --fail --silent --show-error --location \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
