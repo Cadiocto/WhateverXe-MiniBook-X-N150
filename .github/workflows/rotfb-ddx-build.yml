@@ -268,7 +268,7 @@ jobs:
               echo "installed xorg package inventory:"
               cat "$ART/xorg-installed-inventory.txt"
               echo "installed xorg package manifest helper entries:"
-              grep -E '(^|/)lib(shadow|fb)\\.so$' "$ART/xorg-installed-file-manifest.txt" || true
+              grep -E '(^|/)lib(shadow|fb)\.so$' "$ART/xorg-installed-file-manifest.txt" || true
               echo "installed IPS helper search:"
               cat "$ART/ips-helper-search.txt"
             } > "$ART/module-directory-and-ips-evidence.txt"
@@ -278,7 +278,7 @@ jobs:
             : > "$ART/module-discovery-errors.txt"
             for root in "$MODULEDIR" "$MODULE_PARENT" /usr/lib/xorg/modules /usr/lib/amd64/xorg/modules; do
               [ -d "$root" ] || continue
-              printf '%s\\n' "$root" >> "$ART/module-search-roots.txt"
+              printf '%s\n' "$root" >> "$ART/module-search-roots.txt"
               find -L "$root" -type f -name libshadow.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libshadow-paths.txt" || true
               find -L "$root" -type f -name libfb.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libfb-paths.txt" || true
             done
@@ -295,14 +295,14 @@ jobs:
               echo "find diagnostics:"
               cat "$ART/module-discovery-errors.txt"
             } > "$ART/helper-module-paths.txt"
-            if grep -Eq '(^|/)libshadow\\.so$' "$ART/xorg-installed-file-manifest.txt" &&
-              grep -Eq '(^|/)libfb\\.so$' "$ART/xorg-installed-file-manifest.txt"; then
+            if grep -Eq '(^|/)libshadow\.so$' "$ART/xorg-installed-file-manifest.txt" &&
+              grep -Eq '(^|/)libfb\.so$' "$ART/xorg-installed-file-manifest.txt"; then
               record_acceptance PASS "Installed xorg IPS manifest declares helper modules" "x11/server/xorg owns libshadow.so and libfb.so"
             else
               record_acceptance FAIL "Installed xorg IPS manifest declares helper modules" "helper paths missing from pkg contents; see xorg-installed-file-manifest.txt"
             fi
 
-            SHADOW_LIB=            SHADOW_LIB=
+            SHADOW_LIB=
             FB_LIB=
             XORG_BIN=/usr/bin/Xorg
             if [ -s "$ART/libshadow-paths.txt" ]; then
