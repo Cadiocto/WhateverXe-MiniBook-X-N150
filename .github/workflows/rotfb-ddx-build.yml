@@ -73,6 +73,15 @@ jobs:
               x11/header/x11-protocols x11/font-util system/library
 
             pkg info x11/server/xorg | tee "$ART/xorg-package-info.txt"
+            # Capture installed IPS inventory and package file ownership evidence.
+            pkg list -Hv x11/server/xorg > "$ART/xorg-installed-inventory.txt" 2>&1 || true
+            pkg contents -t file -o path x11/server/xorg > "$ART/xorg-installed-file-manifest.txt" 2>&1 || true
+            {
+              echo "### installed IPS search: libshadow.so"
+              pkg search -l -o pkg.name,path libshadow.so
+              echo "### installed IPS search: libfb.so"
+              pkg search -l -o pkg.name,path libfb.so
+            } > "$ART/ips-helper-search.txt" 2>&1 || true
             awk -F: '
               /^[[:space:]]*Version:/ {
                 v=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
@@ -97,6 +106,7 @@ jobs:
               echo "pkg-config file=$PC_FILE"
               echo "pkg-config cflags=$(pkg-config --cflags xorg-server)"
               echo "pkg-config libs=$(pkg-config --libs xorg-server)"
+              echo "pkg-config moduledir=$(pkg-config --variable=moduledir xorg-server)"
               cat "$PC_FILE"
             } > "$ART/xorg-pkg-config.txt"
             pkg-config --exists xorg-server xproto fontsproto pixman-1
@@ -248,17 +258,1384 @@ jobs:
               record_acceptance FAIL "DT_NEEDED dependencies resolve" "ldd failed or reported a missing dependency"
             fi
 
-            # Locate the installed modules without assuming a module path.
-            if find -L /usr/lib /usr/lib/amd64 -type f -name libshadow.so -print 2>/dev/null | sort -u > "$ART/libshadow-paths.txt"; then
-              :
+            # Discover helpers from pkg-config's module directory, then scan
+            # the parent module tree and known illumos architecture layouts.
+            MODULEDIR=$(pkg-config --variable=moduledir xorg-server)
+            MODULE_PARENT=$(dirname "$MODULEDIR")
+            {
+              echo "pkg-config moduledir=$MODULEDIR"
+              echo "module parent=$MODULE_PARENT"
+              echo "installed xorg package inventory:"
+              cat "$ART/xorg-installed-inventory.txt"
+              echo "installed xorg package manifest helper entries:"
+              grep -E '(^|/)lib(shadow|fb)\\.so
+
+            SHADOW_LIB=
+            FB_LIB=
+            XORG_BIN=/usr/bin/Xorg
+            if grep -Eq '(^|/)libshadow\\.so
+              record_acceptance PASS "Locate libshadow.so" "$SHADOW_LIB"
             else
-              : > "$ART/libshadow-paths.txt"
+              record_acceptance FAIL "Locate libshadow.so" "not found under pkg-config moduledir=$MODULEDIR or fallback module roots; see helper-module-paths.txt and IPS evidence"
             fi
-            if find -L /usr/lib /usr/lib/amd64 -type f -name libfb.so -print 2>/dev/null | sort -u > "$ART/libfb-paths.txt"; then
-              :
+            if [ -s "$ART/libfb-paths.txt" ]; then
+              FB_LIB=$(head -1 "$ART/libfb-paths.txt")
+              record_acceptance PASS "Locate libfb.so" "$FB_LIB"
             else
-              : > "$ART/libfb-paths.txt"
+              record_acceptance FAIL "Locate libfb.so" "not found under pkg-config moduledir=$MODULEDIR or fallback module roots; see helper-module-paths.txt and IPS evidence"
             fi
+            if [ -x "$XORG_BIN" ]; then
+              record_acceptance PASS "Locate Xorg executable" "$XORG_BIN"
+            else
+              record_acceptance FAIL "Locate Xorg executable" "$XORG_BIN is missing or not executable"
+            fi
+
+            # Preserve the actual target dynsym tables for diagnosis. Symbol
+            # checks below are independent: one missing export never skips the rest.
+            capture_symbol_table() {
+              label=$1
+              object=$2
+              output=$3
+              if [ -n "$object" ] && [ -r "$object" ] &&
+                elfdump -s -N .dynsym "$object" > "$ART/$output" 2>&1; then
+                record_acceptance PASS "$label dynamic symbol table" "$output"
+              else
+                rc=$?
+                : > "$ART/$output"
+                record_acceptance FAIL "$label dynamic symbol table" "unavailable or elfdump failed; see $output (exit=$rc)"
+              fi
+              return 0
+            }
+
+            capture_symbol_table "libshadow" "$SHADOW_LIB" dynsym-libshadow.txt
+            capture_symbol_table "libfb" "$FB_LIB" dynsym-libfb.txt
+            capture_symbol_table "Xorg" "$XORG_BIN" dynsym-Xorg.txt
+
+            check_defined_symbol() {
+              sym=$1
+              table=$2
+              if [ -s "$ART/$table" ] &&
+                nawk -v s="$sym" \
+                  'NF >= 9 && $NF == s && $(NF-1) != "UNDEF" && \
+                   $(NF-5) == "FUNC" && \
+                   ($(NF-4) == "GLOB" || $(NF-4) == "WEAK") { found=1 }
+                   END { exit(found ? 0 : 1) }' "$ART/$table"; then
+                record_acceptance PASS "Export $sym" "$table contains a defined global/weak FUNC"
+              else
+                record_acceptance FAIL "Export $sym" "defined global/weak FUNC not found in $table"
+              fi
+              return 0
+            }
+
+            check_defined_symbol shadowSetup dynsym-libshadow.txt
+            check_defined_symbol shadowAdd dynsym-libshadow.txt
+            check_defined_symbol shadowUpdateRotate32_270 dynsym-libshadow.txt
+            check_defined_symbol fbScreenInit dynsym-libfb.txt
+            check_defined_symbol fbPictureInit dynsym-libfb.txt
+            check_defined_symbol DamageRegionAppend dynsym-Xorg.txt
+            check_defined_symbol DamageRegionProcessPending dynsym-Xorg.txt
+            check_defined_symbol miDCInitialize dynsym-Xorg.txt
+            check_defined_symbol LoaderSymbol dynsym-Xorg.txt
+            check_defined_symbol xf86GetPointerScreenFuncs dynsym-Xorg.txt
+            check_defined_symbol xf86LoadSubModule dynsym-Xorg.txt
+
+            # Probe real runtime loading and dlsym independently of the static
+            # export checks. Keep both compiler and loader diagnostics in artifact.
+            cat > "$ART/module-symbol-probe.c" <<'EOF'
+            #include <dlfcn.h>
+            #include <stdio.h>
+            #include <stdlib.h>
+            static int check(void *h, const char *name) {
+                dlerror();
+                void *p = dlsym(h, name);
+                const char *e = dlerror();
+                if (e != NULL || p == NULL) {
+                    fprintf(stderr, "dlsym(%s): %s\n", name,
+                        e != NULL ? e : "null symbol address");
+                    return 1;
+                }
+                printf("PASS dlsym: %s\n", name);
+                return 0;
+            }
+            int main(int argc, char **argv) {
+                void *sh, *fb;
+                int rc = 0;
+                if (argc != 3) return 2;
+                sh = dlopen(argv[1], RTLD_LAZY | RTLD_GLOBAL);
+                if (sh == NULL) { fprintf(stderr, "dlopen shadow: %s\n", dlerror()); return 3; }
+                fb = dlopen(argv[2], RTLD_LAZY | RTLD_GLOBAL);
+                if (fb == NULL) { fprintf(stderr, "dlopen fb: %s\n", dlerror()); return 4; }
+                rc |= check(sh, "shadowSetup");
+                rc |= check(sh, "shadowAdd");
+                rc |= check(sh, "shadowUpdateRotate32_270");
+                rc |= check(fb, "fbScreenInit");
+                rc |= check(fb, "fbPictureInit");
+                return rc;
+            }
+            EOF
+
+            : > "$ART/module-symbol-probe-build.log"
+            : > "$ART/module-loader-resolution.txt"
+            if $CC -m64 -o "$ART/module-symbol-probe" "$ART/module-symbol-probe.c" -ldl > "$ART/module-symbol-probe-build.log" 2>&1; then
+              record_acceptance PASS "Compile dlopen/dlsym probe" "module-symbol-probe"
+              if [ -n "$SHADOW_LIB" ] && [ -n "$FB_LIB" ]; then
+                if "$ART/module-symbol-probe" "$SHADOW_LIB" "$FB_LIB" > "$ART/module-loader-resolution.txt" 2>&1; then
+                  record_acceptance PASS "dlopen/dlsym runtime resolution" "all requested helper-module symbols resolved"
+                else
+                  rc=$?
+                  record_acceptance FAIL "dlopen/dlsym runtime resolution" "probe exit=$rc; see module-loader-resolution.txt"
+                fi
+              else
+                printf 'SKIP: libshadow.so or libfb.so was not found; see path reports.\n' > "$ART/module-loader-resolution.txt"
+                record_acceptance FAIL "dlopen/dlsym runtime resolution" "required helper module path unavailable"
+              fi
+            else
+              rc=$?
+              record_acceptance FAIL "Compile dlopen/dlsym probe" "compiler exit=$rc; see module-symbol-probe-build.log"
+              printf 'NOT RUN: probe compilation failed.\n' > "$ART/module-loader-resolution.txt"
+            fi
+
+            # Resolve every strong undefined DDX symbol against the target
+            # Xorg executable, installed Xorg modules and DT_NEEDED libraries.
+            # Pre-create reports so they are present even if the parser fails.
+            : > "$ART/undefined-dynamic-symbols.txt"
+            : > "$ART/undefined-symbol-resolution.txt"
+            : > "$ART/undefined-symbol-check.log"
+            if python3 - "$ART/illumosfb_drv.so" "$XORG_BIN" "$SHADOW_LIB" "$FB_LIB" "$ART/ldd.txt" "$ART" <<'PY' > "$ART/undefined-symbol-check.log" 2>&1
+            import os, subprocess, sys
+            so, xorg, shadow, fb, ldd_file, art = sys.argv[1:]
+
+            def symbols(path, required=False):
+                try:
+                    out = subprocess.check_output(
+                        ["elfdump", "-s", "-N", ".dynsym", path],
+                        text=True, stderr=subprocess.STDOUT)
+                except Exception as exc:
+                    if required:
+                        raise RuntimeError(f"elfdump failed for required provider {path}: {exc}")
+                    print(f"WARNING: cannot inspect optional provider {path}: {exc}")
+                    return [], []
+                defined, undefined = [], []
+                parsed = 0
+                for line in out.splitlines():
+                    fields = line.split()
+                    if len(fields) < 9 or not fields[0].startswith("["):
+                        continue
+                    parsed += 1
+                    typ, bind, shndx, name = fields[-6], fields[-5], fields[-2], fields[-1]
+                    if bind not in ("GLOB", "WEAK"):
+                        continue
+                    if shndx == "UNDEF":
+                        if bind == "GLOB":
+                            undefined.append((name, typ))
+                    elif typ != "NOTY":
+                        defined.append((name, typ))
+                if required and parsed == 0:
+                    raise RuntimeError(f"no parseable .dynsym entries in required provider {path}")
+                return defined, undefined
+
+            required_providers = [xorg, shadow, fb]
+            if not all(required_providers):
+                raise RuntimeError("Xorg, libshadow.so or libfb.so path is unavailable")
+
+            providers = set(required_providers)
+            with open(ldd_file, encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    for token in line.split():
+                        if token.startswith("/") and os.path.isfile(token):
+                            providers.add(os.path.realpath(token))
+
+            module_roots = set()
+            for provider in (shadow, fb):
+                current = os.path.dirname(os.path.realpath(provider))
+                while current != "/" and not current.endswith("/xorg/modules"):
+                    current = os.path.dirname(current)
+                if current.endswith("/xorg/modules"):
+                    module_roots.add(current)
+            for root in sorted(module_roots):
+                for base, dirs, files in os.walk(root, followlinks=True):
+                    for filename in files:
+                        if filename.endswith(".so"):
+                            candidate = os.path.join(base, filename)
+                            if os.path.isfile(candidate):
+                                providers.add(os.path.realpath(candidate))
+
+            defined_by = {}
+            for provider in sorted(providers):
+                definitions, _ = symbols(provider, required=(provider in required_providers))
+                for name, typ in definitions:
+                    defined_by.setdefault(name.split("@", 1)[0], (typ, provider))
+
+            _, undefined = symbols(so, required=True)
+            with open(os.path.join(art, "undefined-dynamic-symbols.txt"), "w") as stream:
+                stream.write("\n".join(sorted({name for name, _ in undefined})) + "\n")
+            with open(os.path.join(art, "undefined-symbol-resolution.txt"), "w") as stream:
+                for name, typ in sorted(set(undefined)):
+                    provider = defined_by.get(name.split("@", 1)[0], ("", "UNRESOLVED"))[1]
+                    stream.write(f"{name} [{typ}] -> {provider}\n")
+
+            unresolved = sorted({
+                (name, typ) for name, typ in undefined
+                if name.split("@", 1)[0] not in defined_by or
+                (typ != "NOTY" and defined_by[name.split("@", 1)[0]][0] not in (typ, "NOTY"))
+            })
+            if unresolved:
+                print("Unresolved strong undefined dynamic symbols:", *unresolved, sep="\n", file=sys.stderr)
+                sys.exit(1)
+            print(f"PASS: resolved {len(set(undefined))} strong undefined dynamic symbols")
+            PY
+            then
+              record_acceptance PASS "Resolve strong undefined dynamic symbols" "see undefined-symbol-resolution.txt"
+            else
+              rc=$?
+              record_acceptance FAIL "Resolve strong undefined dynamic symbols" "parser/resolution exit=$rc; see undefined-symbol-check.log and resolution reports"
+            fi
+
+            # Source/API contract checks are independent and remain visible even
+            # when an earlier ELF, export or runtime-loader acceptance check fails.
+            check_source_text() {
+              label=$1
+              text=$2
+              if grep -Fq "$text" "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"; then
+                record_acceptance PASS "$label" "source contract present"
+              else
+                record_acceptance FAIL "$label" "source contract missing"
+              fi
+              return 0
+            }
+            check_source_text "Load fb helper through Xorg loader" 'xf86LoadSubModule(pScrn, "fb")'
+            check_source_text "Load shadow helper through Xorg loader" 'xf86LoadSubModule(pScrn, "shadow")'
+            check_source_text "Resolve shadow rotation through LoaderSymbol" 'LoaderSymbol("shadowUpdateRotate32_270")'
+            check_source_text "Declare video driver ABI class" 'ABI_CLASS_VIDEODRV'
+            check_source_text "Declare video driver ABI version" 'ABI_VIDEODRV_VERSION'
+
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            echo "acceptance_failures=$ACCEPTANCE_FAILURES"
+            if [ "$ACCEPTANCE_FAILURES" -ne 0 ]; then
+              echo "ROTFB DDX acceptance failed: $ACCEPTANCE_FAILURES check(s) failed." >&2
+              exit 1
+            fi
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            ROTFB_DDX_BUILD
+
+      - name: Upload native DDX build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-ddx-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-ddx-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+ "$ART/xorg-installed-file-manifest.txt" || true
+              echo "installed IPS helper search:"
+              cat "$ART/ips-helper-search.txt"
+            } > "$ART/module-directory-and-ips-evidence.txt"
+            : > "$ART/module-search-roots.txt"
+            : > "$ART/libshadow-paths.txt"
+            : > "$ART/libfb-paths.txt"
+            : > "$ART/module-discovery-errors.txt"
+            for root in "$MODULEDIR" "$MODULE_PARENT" /usr/lib/xorg/modules /usr/lib/amd64/xorg/modules; do
+              [ -d "$root" ] || continue
+              printf '%s\\n' "$root" >> "$ART/module-search-roots.txt"
+              find -L "$root" -type f -name libshadow.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libshadow-paths.txt" || true
+              find -L "$root" -type f -name libfb.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libfb-paths.txt" || true
+            done
+            sort -u "$ART/libshadow-paths.txt" -o "$ART/libshadow-paths.txt"
+            sort -u "$ART/libfb-paths.txt" -o "$ART/libfb-paths.txt"
+            {
+              echo "MODULEDIR=$MODULEDIR"
+              echo "search roots:"
+              cat "$ART/module-search-roots.txt"
+              echo "libshadow.so paths:"
+              cat "$ART/libshadow-paths.txt"
+              echo "libfb.so paths:"
+              cat "$ART/libfb-paths.txt"
+              echo "find diagnostics:"
+              cat "$ART/module-discovery-errors.txt"
+            } > "$ART/helper-module-paths.txt"
+
+            SHADOW_LIB=
+            FB_LIB=
+            XORG_BIN=/usr/bin/Xorg
+            if [ -s "$ART/libshadow-paths.txt" ]; then
+              SHADOW_LIB=$(head -1 "$ART/libshadow-paths.txt")
+              record_acceptance PASS "Locate libshadow.so" "$SHADOW_LIB"
+            else
+              record_acceptance FAIL "Locate libshadow.so" "no libshadow.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -s "$ART/libfb-paths.txt" ]; then
+              FB_LIB=$(head -1 "$ART/libfb-paths.txt")
+              record_acceptance PASS "Locate libfb.so" "$FB_LIB"
+            else
+              record_acceptance FAIL "Locate libfb.so" "no libfb.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -x "$XORG_BIN" ]; then
+              record_acceptance PASS "Locate Xorg executable" "$XORG_BIN"
+            else
+              record_acceptance FAIL "Locate Xorg executable" "$XORG_BIN is missing or not executable"
+            fi
+
+            # Preserve the actual target dynsym tables for diagnosis. Symbol
+            # checks below are independent: one missing export never skips the rest.
+            capture_symbol_table() {
+              label=$1
+              object=$2
+              output=$3
+              if [ -n "$object" ] && [ -r "$object" ] &&
+                elfdump -s -N .dynsym "$object" > "$ART/$output" 2>&1; then
+                record_acceptance PASS "$label dynamic symbol table" "$output"
+              else
+                rc=$?
+                : > "$ART/$output"
+                record_acceptance FAIL "$label dynamic symbol table" "unavailable or elfdump failed; see $output (exit=$rc)"
+              fi
+              return 0
+            }
+
+            capture_symbol_table "libshadow" "$SHADOW_LIB" dynsym-libshadow.txt
+            capture_symbol_table "libfb" "$FB_LIB" dynsym-libfb.txt
+            capture_symbol_table "Xorg" "$XORG_BIN" dynsym-Xorg.txt
+
+            check_defined_symbol() {
+              sym=$1
+              table=$2
+              if [ -s "$ART/$table" ] &&
+                nawk -v s="$sym" \
+                  'NF >= 9 && $NF == s && $(NF-1) != "UNDEF" && \
+                   $(NF-5) == "FUNC" && \
+                   ($(NF-4) == "GLOB" || $(NF-4) == "WEAK") { found=1 }
+                   END { exit(found ? 0 : 1) }' "$ART/$table"; then
+                record_acceptance PASS "Export $sym" "$table contains a defined global/weak FUNC"
+              else
+                record_acceptance FAIL "Export $sym" "defined global/weak FUNC not found in $table"
+              fi
+              return 0
+            }
+
+            check_defined_symbol shadowSetup dynsym-libshadow.txt
+            check_defined_symbol shadowAdd dynsym-libshadow.txt
+            check_defined_symbol shadowUpdateRotate32_270 dynsym-libshadow.txt
+            check_defined_symbol fbScreenInit dynsym-libfb.txt
+            check_defined_symbol fbPictureInit dynsym-libfb.txt
+            check_defined_symbol DamageRegionAppend dynsym-Xorg.txt
+            check_defined_symbol DamageRegionProcessPending dynsym-Xorg.txt
+            check_defined_symbol miDCInitialize dynsym-Xorg.txt
+            check_defined_symbol LoaderSymbol dynsym-Xorg.txt
+            check_defined_symbol xf86GetPointerScreenFuncs dynsym-Xorg.txt
+            check_defined_symbol xf86LoadSubModule dynsym-Xorg.txt
+
+            # Probe real runtime loading and dlsym independently of the static
+            # export checks. Keep both compiler and loader diagnostics in artifact.
+            cat > "$ART/module-symbol-probe.c" <<'EOF'
+            #include <dlfcn.h>
+            #include <stdio.h>
+            #include <stdlib.h>
+            static int check(void *h, const char *name) {
+                dlerror();
+                void *p = dlsym(h, name);
+                const char *e = dlerror();
+                if (e != NULL || p == NULL) {
+                    fprintf(stderr, "dlsym(%s): %s\n", name,
+                        e != NULL ? e : "null symbol address");
+                    return 1;
+                }
+                printf("PASS dlsym: %s\n", name);
+                return 0;
+            }
+            int main(int argc, char **argv) {
+                void *sh, *fb;
+                int rc = 0;
+                if (argc != 3) return 2;
+                sh = dlopen(argv[1], RTLD_LAZY | RTLD_GLOBAL);
+                if (sh == NULL) { fprintf(stderr, "dlopen shadow: %s\n", dlerror()); return 3; }
+                fb = dlopen(argv[2], RTLD_LAZY | RTLD_GLOBAL);
+                if (fb == NULL) { fprintf(stderr, "dlopen fb: %s\n", dlerror()); return 4; }
+                rc |= check(sh, "shadowSetup");
+                rc |= check(sh, "shadowAdd");
+                rc |= check(sh, "shadowUpdateRotate32_270");
+                rc |= check(fb, "fbScreenInit");
+                rc |= check(fb, "fbPictureInit");
+                return rc;
+            }
+            EOF
+
+            : > "$ART/module-symbol-probe-build.log"
+            : > "$ART/module-loader-resolution.txt"
+            if $CC -m64 -o "$ART/module-symbol-probe" "$ART/module-symbol-probe.c" -ldl > "$ART/module-symbol-probe-build.log" 2>&1; then
+              record_acceptance PASS "Compile dlopen/dlsym probe" "module-symbol-probe"
+              if [ -n "$SHADOW_LIB" ] && [ -n "$FB_LIB" ]; then
+                if "$ART/module-symbol-probe" "$SHADOW_LIB" "$FB_LIB" > "$ART/module-loader-resolution.txt" 2>&1; then
+                  record_acceptance PASS "dlopen/dlsym runtime resolution" "all requested helper-module symbols resolved"
+                else
+                  rc=$?
+                  record_acceptance FAIL "dlopen/dlsym runtime resolution" "probe exit=$rc; see module-loader-resolution.txt"
+                fi
+              else
+                printf 'SKIP: libshadow.so or libfb.so was not found; see path reports.\n' > "$ART/module-loader-resolution.txt"
+                record_acceptance FAIL "dlopen/dlsym runtime resolution" "required helper module path unavailable"
+              fi
+            else
+              rc=$?
+              record_acceptance FAIL "Compile dlopen/dlsym probe" "compiler exit=$rc; see module-symbol-probe-build.log"
+              printf 'NOT RUN: probe compilation failed.\n' > "$ART/module-loader-resolution.txt"
+            fi
+
+            # Resolve every strong undefined DDX symbol against the target
+            # Xorg executable, installed Xorg modules and DT_NEEDED libraries.
+            # Pre-create reports so they are present even if the parser fails.
+            : > "$ART/undefined-dynamic-symbols.txt"
+            : > "$ART/undefined-symbol-resolution.txt"
+            : > "$ART/undefined-symbol-check.log"
+            if python3 - "$ART/illumosfb_drv.so" "$XORG_BIN" "$SHADOW_LIB" "$FB_LIB" "$ART/ldd.txt" "$ART" <<'PY' > "$ART/undefined-symbol-check.log" 2>&1
+            import os, subprocess, sys
+            so, xorg, shadow, fb, ldd_file, art = sys.argv[1:]
+
+            def symbols(path, required=False):
+                try:
+                    out = subprocess.check_output(
+                        ["elfdump", "-s", "-N", ".dynsym", path],
+                        text=True, stderr=subprocess.STDOUT)
+                except Exception as exc:
+                    if required:
+                        raise RuntimeError(f"elfdump failed for required provider {path}: {exc}")
+                    print(f"WARNING: cannot inspect optional provider {path}: {exc}")
+                    return [], []
+                defined, undefined = [], []
+                parsed = 0
+                for line in out.splitlines():
+                    fields = line.split()
+                    if len(fields) < 9 or not fields[0].startswith("["):
+                        continue
+                    parsed += 1
+                    typ, bind, shndx, name = fields[-6], fields[-5], fields[-2], fields[-1]
+                    if bind not in ("GLOB", "WEAK"):
+                        continue
+                    if shndx == "UNDEF":
+                        if bind == "GLOB":
+                            undefined.append((name, typ))
+                    elif typ != "NOTY":
+                        defined.append((name, typ))
+                if required and parsed == 0:
+                    raise RuntimeError(f"no parseable .dynsym entries in required provider {path}")
+                return defined, undefined
+
+            required_providers = [xorg, shadow, fb]
+            if not all(required_providers):
+                raise RuntimeError("Xorg, libshadow.so or libfb.so path is unavailable")
+
+            providers = set(required_providers)
+            with open(ldd_file, encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    for token in line.split():
+                        if token.startswith("/") and os.path.isfile(token):
+                            providers.add(os.path.realpath(token))
+
+            module_roots = set()
+            for provider in (shadow, fb):
+                current = os.path.dirname(os.path.realpath(provider))
+                while current != "/" and not current.endswith("/xorg/modules"):
+                    current = os.path.dirname(current)
+                if current.endswith("/xorg/modules"):
+                    module_roots.add(current)
+            for root in sorted(module_roots):
+                for base, dirs, files in os.walk(root, followlinks=True):
+                    for filename in files:
+                        if filename.endswith(".so"):
+                            candidate = os.path.join(base, filename)
+                            if os.path.isfile(candidate):
+                                providers.add(os.path.realpath(candidate))
+
+            defined_by = {}
+            for provider in sorted(providers):
+                definitions, _ = symbols(provider, required=(provider in required_providers))
+                for name, typ in definitions:
+                    defined_by.setdefault(name.split("@", 1)[0], (typ, provider))
+
+            _, undefined = symbols(so, required=True)
+            with open(os.path.join(art, "undefined-dynamic-symbols.txt"), "w") as stream:
+                stream.write("\n".join(sorted({name for name, _ in undefined})) + "\n")
+            with open(os.path.join(art, "undefined-symbol-resolution.txt"), "w") as stream:
+                for name, typ in sorted(set(undefined)):
+                    provider = defined_by.get(name.split("@", 1)[0], ("", "UNRESOLVED"))[1]
+                    stream.write(f"{name} [{typ}] -> {provider}\n")
+
+            unresolved = sorted({
+                (name, typ) for name, typ in undefined
+                if name.split("@", 1)[0] not in defined_by or
+                (typ != "NOTY" and defined_by[name.split("@", 1)[0]][0] not in (typ, "NOTY"))
+            })
+            if unresolved:
+                print("Unresolved strong undefined dynamic symbols:", *unresolved, sep="\n", file=sys.stderr)
+                sys.exit(1)
+            print(f"PASS: resolved {len(set(undefined))} strong undefined dynamic symbols")
+            PY
+            then
+              record_acceptance PASS "Resolve strong undefined dynamic symbols" "see undefined-symbol-resolution.txt"
+            else
+              rc=$?
+              record_acceptance FAIL "Resolve strong undefined dynamic symbols" "parser/resolution exit=$rc; see undefined-symbol-check.log and resolution reports"
+            fi
+
+            # Source/API contract checks are independent and remain visible even
+            # when an earlier ELF, export or runtime-loader acceptance check fails.
+            check_source_text() {
+              label=$1
+              text=$2
+              if grep -Fq "$text" "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"; then
+                record_acceptance PASS "$label" "source contract present"
+              else
+                record_acceptance FAIL "$label" "source contract missing"
+              fi
+              return 0
+            }
+            check_source_text "Load fb helper through Xorg loader" 'xf86LoadSubModule(pScrn, "fb")'
+            check_source_text "Load shadow helper through Xorg loader" 'xf86LoadSubModule(pScrn, "shadow")'
+            check_source_text "Resolve shadow rotation through LoaderSymbol" 'LoaderSymbol("shadowUpdateRotate32_270")'
+            check_source_text "Declare video driver ABI class" 'ABI_CLASS_VIDEODRV'
+            check_source_text "Declare video driver ABI version" 'ABI_VIDEODRV_VERSION'
+
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            echo "acceptance_failures=$ACCEPTANCE_FAILURES"
+            if [ "$ACCEPTANCE_FAILURES" -ne 0 ]; then
+              echo "ROTFB DDX acceptance failed: $ACCEPTANCE_FAILURES check(s) failed." >&2
+              exit 1
+            fi
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            ROTFB_DDX_BUILD
+
+      - name: Upload native DDX build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-ddx-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-ddx-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+ "$ART/xorg-installed-file-manifest.txt" &&
+              grep -Eq '(^|/)libfb\\.so
+              record_acceptance PASS "Locate libshadow.so" "$SHADOW_LIB"
+            else
+              record_acceptance FAIL "Locate libshadow.so" "no libshadow.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -s "$ART/libfb-paths.txt" ]; then
+              FB_LIB=$(head -1 "$ART/libfb-paths.txt")
+              record_acceptance PASS "Locate libfb.so" "$FB_LIB"
+            else
+              record_acceptance FAIL "Locate libfb.so" "no libfb.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -x "$XORG_BIN" ]; then
+              record_acceptance PASS "Locate Xorg executable" "$XORG_BIN"
+            else
+              record_acceptance FAIL "Locate Xorg executable" "$XORG_BIN is missing or not executable"
+            fi
+
+            # Preserve the actual target dynsym tables for diagnosis. Symbol
+            # checks below are independent: one missing export never skips the rest.
+            capture_symbol_table() {
+              label=$1
+              object=$2
+              output=$3
+              if [ -n "$object" ] && [ -r "$object" ] &&
+                elfdump -s -N .dynsym "$object" > "$ART/$output" 2>&1; then
+                record_acceptance PASS "$label dynamic symbol table" "$output"
+              else
+                rc=$?
+                : > "$ART/$output"
+                record_acceptance FAIL "$label dynamic symbol table" "unavailable or elfdump failed; see $output (exit=$rc)"
+              fi
+              return 0
+            }
+
+            capture_symbol_table "libshadow" "$SHADOW_LIB" dynsym-libshadow.txt
+            capture_symbol_table "libfb" "$FB_LIB" dynsym-libfb.txt
+            capture_symbol_table "Xorg" "$XORG_BIN" dynsym-Xorg.txt
+
+            check_defined_symbol() {
+              sym=$1
+              table=$2
+              if [ -s "$ART/$table" ] &&
+                nawk -v s="$sym" \
+                  'NF >= 9 && $NF == s && $(NF-1) != "UNDEF" && \
+                   $(NF-5) == "FUNC" && \
+                   ($(NF-4) == "GLOB" || $(NF-4) == "WEAK") { found=1 }
+                   END { exit(found ? 0 : 1) }' "$ART/$table"; then
+                record_acceptance PASS "Export $sym" "$table contains a defined global/weak FUNC"
+              else
+                record_acceptance FAIL "Export $sym" "defined global/weak FUNC not found in $table"
+              fi
+              return 0
+            }
+
+            check_defined_symbol shadowSetup dynsym-libshadow.txt
+            check_defined_symbol shadowAdd dynsym-libshadow.txt
+            check_defined_symbol shadowUpdateRotate32_270 dynsym-libshadow.txt
+            check_defined_symbol fbScreenInit dynsym-libfb.txt
+            check_defined_symbol fbPictureInit dynsym-libfb.txt
+            check_defined_symbol DamageRegionAppend dynsym-Xorg.txt
+            check_defined_symbol DamageRegionProcessPending dynsym-Xorg.txt
+            check_defined_symbol miDCInitialize dynsym-Xorg.txt
+            check_defined_symbol LoaderSymbol dynsym-Xorg.txt
+            check_defined_symbol xf86GetPointerScreenFuncs dynsym-Xorg.txt
+            check_defined_symbol xf86LoadSubModule dynsym-Xorg.txt
+
+            # Probe real runtime loading and dlsym independently of the static
+            # export checks. Keep both compiler and loader diagnostics in artifact.
+            cat > "$ART/module-symbol-probe.c" <<'EOF'
+            #include <dlfcn.h>
+            #include <stdio.h>
+            #include <stdlib.h>
+            static int check(void *h, const char *name) {
+                dlerror();
+                void *p = dlsym(h, name);
+                const char *e = dlerror();
+                if (e != NULL || p == NULL) {
+                    fprintf(stderr, "dlsym(%s): %s\n", name,
+                        e != NULL ? e : "null symbol address");
+                    return 1;
+                }
+                printf("PASS dlsym: %s\n", name);
+                return 0;
+            }
+            int main(int argc, char **argv) {
+                void *sh, *fb;
+                int rc = 0;
+                if (argc != 3) return 2;
+                sh = dlopen(argv[1], RTLD_LAZY | RTLD_GLOBAL);
+                if (sh == NULL) { fprintf(stderr, "dlopen shadow: %s\n", dlerror()); return 3; }
+                fb = dlopen(argv[2], RTLD_LAZY | RTLD_GLOBAL);
+                if (fb == NULL) { fprintf(stderr, "dlopen fb: %s\n", dlerror()); return 4; }
+                rc |= check(sh, "shadowSetup");
+                rc |= check(sh, "shadowAdd");
+                rc |= check(sh, "shadowUpdateRotate32_270");
+                rc |= check(fb, "fbScreenInit");
+                rc |= check(fb, "fbPictureInit");
+                return rc;
+            }
+            EOF
+
+            : > "$ART/module-symbol-probe-build.log"
+            : > "$ART/module-loader-resolution.txt"
+            if $CC -m64 -o "$ART/module-symbol-probe" "$ART/module-symbol-probe.c" -ldl > "$ART/module-symbol-probe-build.log" 2>&1; then
+              record_acceptance PASS "Compile dlopen/dlsym probe" "module-symbol-probe"
+              if [ -n "$SHADOW_LIB" ] && [ -n "$FB_LIB" ]; then
+                if "$ART/module-symbol-probe" "$SHADOW_LIB" "$FB_LIB" > "$ART/module-loader-resolution.txt" 2>&1; then
+                  record_acceptance PASS "dlopen/dlsym runtime resolution" "all requested helper-module symbols resolved"
+                else
+                  rc=$?
+                  record_acceptance FAIL "dlopen/dlsym runtime resolution" "probe exit=$rc; see module-loader-resolution.txt"
+                fi
+              else
+                printf 'SKIP: libshadow.so or libfb.so was not found; see path reports.\n' > "$ART/module-loader-resolution.txt"
+                record_acceptance FAIL "dlopen/dlsym runtime resolution" "required helper module path unavailable"
+              fi
+            else
+              rc=$?
+              record_acceptance FAIL "Compile dlopen/dlsym probe" "compiler exit=$rc; see module-symbol-probe-build.log"
+              printf 'NOT RUN: probe compilation failed.\n' > "$ART/module-loader-resolution.txt"
+            fi
+
+            # Resolve every strong undefined DDX symbol against the target
+            # Xorg executable, installed Xorg modules and DT_NEEDED libraries.
+            # Pre-create reports so they are present even if the parser fails.
+            : > "$ART/undefined-dynamic-symbols.txt"
+            : > "$ART/undefined-symbol-resolution.txt"
+            : > "$ART/undefined-symbol-check.log"
+            if python3 - "$ART/illumosfb_drv.so" "$XORG_BIN" "$SHADOW_LIB" "$FB_LIB" "$ART/ldd.txt" "$ART" <<'PY' > "$ART/undefined-symbol-check.log" 2>&1
+            import os, subprocess, sys
+            so, xorg, shadow, fb, ldd_file, art = sys.argv[1:]
+
+            def symbols(path, required=False):
+                try:
+                    out = subprocess.check_output(
+                        ["elfdump", "-s", "-N", ".dynsym", path],
+                        text=True, stderr=subprocess.STDOUT)
+                except Exception as exc:
+                    if required:
+                        raise RuntimeError(f"elfdump failed for required provider {path}: {exc}")
+                    print(f"WARNING: cannot inspect optional provider {path}: {exc}")
+                    return [], []
+                defined, undefined = [], []
+                parsed = 0
+                for line in out.splitlines():
+                    fields = line.split()
+                    if len(fields) < 9 or not fields[0].startswith("["):
+                        continue
+                    parsed += 1
+                    typ, bind, shndx, name = fields[-6], fields[-5], fields[-2], fields[-1]
+                    if bind not in ("GLOB", "WEAK"):
+                        continue
+                    if shndx == "UNDEF":
+                        if bind == "GLOB":
+                            undefined.append((name, typ))
+                    elif typ != "NOTY":
+                        defined.append((name, typ))
+                if required and parsed == 0:
+                    raise RuntimeError(f"no parseable .dynsym entries in required provider {path}")
+                return defined, undefined
+
+            required_providers = [xorg, shadow, fb]
+            if not all(required_providers):
+                raise RuntimeError("Xorg, libshadow.so or libfb.so path is unavailable")
+
+            providers = set(required_providers)
+            with open(ldd_file, encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    for token in line.split():
+                        if token.startswith("/") and os.path.isfile(token):
+                            providers.add(os.path.realpath(token))
+
+            module_roots = set()
+            for provider in (shadow, fb):
+                current = os.path.dirname(os.path.realpath(provider))
+                while current != "/" and not current.endswith("/xorg/modules"):
+                    current = os.path.dirname(current)
+                if current.endswith("/xorg/modules"):
+                    module_roots.add(current)
+            for root in sorted(module_roots):
+                for base, dirs, files in os.walk(root, followlinks=True):
+                    for filename in files:
+                        if filename.endswith(".so"):
+                            candidate = os.path.join(base, filename)
+                            if os.path.isfile(candidate):
+                                providers.add(os.path.realpath(candidate))
+
+            defined_by = {}
+            for provider in sorted(providers):
+                definitions, _ = symbols(provider, required=(provider in required_providers))
+                for name, typ in definitions:
+                    defined_by.setdefault(name.split("@", 1)[0], (typ, provider))
+
+            _, undefined = symbols(so, required=True)
+            with open(os.path.join(art, "undefined-dynamic-symbols.txt"), "w") as stream:
+                stream.write("\n".join(sorted({name for name, _ in undefined})) + "\n")
+            with open(os.path.join(art, "undefined-symbol-resolution.txt"), "w") as stream:
+                for name, typ in sorted(set(undefined)):
+                    provider = defined_by.get(name.split("@", 1)[0], ("", "UNRESOLVED"))[1]
+                    stream.write(f"{name} [{typ}] -> {provider}\n")
+
+            unresolved = sorted({
+                (name, typ) for name, typ in undefined
+                if name.split("@", 1)[0] not in defined_by or
+                (typ != "NOTY" and defined_by[name.split("@", 1)[0]][0] not in (typ, "NOTY"))
+            })
+            if unresolved:
+                print("Unresolved strong undefined dynamic symbols:", *unresolved, sep="\n", file=sys.stderr)
+                sys.exit(1)
+            print(f"PASS: resolved {len(set(undefined))} strong undefined dynamic symbols")
+            PY
+            then
+              record_acceptance PASS "Resolve strong undefined dynamic symbols" "see undefined-symbol-resolution.txt"
+            else
+              rc=$?
+              record_acceptance FAIL "Resolve strong undefined dynamic symbols" "parser/resolution exit=$rc; see undefined-symbol-check.log and resolution reports"
+            fi
+
+            # Source/API contract checks are independent and remain visible even
+            # when an earlier ELF, export or runtime-loader acceptance check fails.
+            check_source_text() {
+              label=$1
+              text=$2
+              if grep -Fq "$text" "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"; then
+                record_acceptance PASS "$label" "source contract present"
+              else
+                record_acceptance FAIL "$label" "source contract missing"
+              fi
+              return 0
+            }
+            check_source_text "Load fb helper through Xorg loader" 'xf86LoadSubModule(pScrn, "fb")'
+            check_source_text "Load shadow helper through Xorg loader" 'xf86LoadSubModule(pScrn, "shadow")'
+            check_source_text "Resolve shadow rotation through LoaderSymbol" 'LoaderSymbol("shadowUpdateRotate32_270")'
+            check_source_text "Declare video driver ABI class" 'ABI_CLASS_VIDEODRV'
+            check_source_text "Declare video driver ABI version" 'ABI_VIDEODRV_VERSION'
+
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            echo "acceptance_failures=$ACCEPTANCE_FAILURES"
+            if [ "$ACCEPTANCE_FAILURES" -ne 0 ]; then
+              echo "ROTFB DDX acceptance failed: $ACCEPTANCE_FAILURES check(s) failed." >&2
+              exit 1
+            fi
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            ROTFB_DDX_BUILD
+
+      - name: Upload native DDX build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-ddx-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-ddx-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+ "$ART/xorg-installed-file-manifest.txt" || true
+              echo "installed IPS helper search:"
+              cat "$ART/ips-helper-search.txt"
+            } > "$ART/module-directory-and-ips-evidence.txt"
+            : > "$ART/module-search-roots.txt"
+            : > "$ART/libshadow-paths.txt"
+            : > "$ART/libfb-paths.txt"
+            : > "$ART/module-discovery-errors.txt"
+            for root in "$MODULEDIR" "$MODULE_PARENT" /usr/lib/xorg/modules /usr/lib/amd64/xorg/modules; do
+              [ -d "$root" ] || continue
+              printf '%s\\n' "$root" >> "$ART/module-search-roots.txt"
+              find -L "$root" -type f -name libshadow.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libshadow-paths.txt" || true
+              find -L "$root" -type f -name libfb.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libfb-paths.txt" || true
+            done
+            sort -u "$ART/libshadow-paths.txt" -o "$ART/libshadow-paths.txt"
+            sort -u "$ART/libfb-paths.txt" -o "$ART/libfb-paths.txt"
+            {
+              echo "MODULEDIR=$MODULEDIR"
+              echo "search roots:"
+              cat "$ART/module-search-roots.txt"
+              echo "libshadow.so paths:"
+              cat "$ART/libshadow-paths.txt"
+              echo "libfb.so paths:"
+              cat "$ART/libfb-paths.txt"
+              echo "find diagnostics:"
+              cat "$ART/module-discovery-errors.txt"
+            } > "$ART/helper-module-paths.txt"
+
+            SHADOW_LIB=
+            FB_LIB=
+            XORG_BIN=/usr/bin/Xorg
+            if [ -s "$ART/libshadow-paths.txt" ]; then
+              SHADOW_LIB=$(head -1 "$ART/libshadow-paths.txt")
+              record_acceptance PASS "Locate libshadow.so" "$SHADOW_LIB"
+            else
+              record_acceptance FAIL "Locate libshadow.so" "no libshadow.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -s "$ART/libfb-paths.txt" ]; then
+              FB_LIB=$(head -1 "$ART/libfb-paths.txt")
+              record_acceptance PASS "Locate libfb.so" "$FB_LIB"
+            else
+              record_acceptance FAIL "Locate libfb.so" "no libfb.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -x "$XORG_BIN" ]; then
+              record_acceptance PASS "Locate Xorg executable" "$XORG_BIN"
+            else
+              record_acceptance FAIL "Locate Xorg executable" "$XORG_BIN is missing or not executable"
+            fi
+
+            # Preserve the actual target dynsym tables for diagnosis. Symbol
+            # checks below are independent: one missing export never skips the rest.
+            capture_symbol_table() {
+              label=$1
+              object=$2
+              output=$3
+              if [ -n "$object" ] && [ -r "$object" ] &&
+                elfdump -s -N .dynsym "$object" > "$ART/$output" 2>&1; then
+                record_acceptance PASS "$label dynamic symbol table" "$output"
+              else
+                rc=$?
+                : > "$ART/$output"
+                record_acceptance FAIL "$label dynamic symbol table" "unavailable or elfdump failed; see $output (exit=$rc)"
+              fi
+              return 0
+            }
+
+            capture_symbol_table "libshadow" "$SHADOW_LIB" dynsym-libshadow.txt
+            capture_symbol_table "libfb" "$FB_LIB" dynsym-libfb.txt
+            capture_symbol_table "Xorg" "$XORG_BIN" dynsym-Xorg.txt
+
+            check_defined_symbol() {
+              sym=$1
+              table=$2
+              if [ -s "$ART/$table" ] &&
+                nawk -v s="$sym" \
+                  'NF >= 9 && $NF == s && $(NF-1) != "UNDEF" && \
+                   $(NF-5) == "FUNC" && \
+                   ($(NF-4) == "GLOB" || $(NF-4) == "WEAK") { found=1 }
+                   END { exit(found ? 0 : 1) }' "$ART/$table"; then
+                record_acceptance PASS "Export $sym" "$table contains a defined global/weak FUNC"
+              else
+                record_acceptance FAIL "Export $sym" "defined global/weak FUNC not found in $table"
+              fi
+              return 0
+            }
+
+            check_defined_symbol shadowSetup dynsym-libshadow.txt
+            check_defined_symbol shadowAdd dynsym-libshadow.txt
+            check_defined_symbol shadowUpdateRotate32_270 dynsym-libshadow.txt
+            check_defined_symbol fbScreenInit dynsym-libfb.txt
+            check_defined_symbol fbPictureInit dynsym-libfb.txt
+            check_defined_symbol DamageRegionAppend dynsym-Xorg.txt
+            check_defined_symbol DamageRegionProcessPending dynsym-Xorg.txt
+            check_defined_symbol miDCInitialize dynsym-Xorg.txt
+            check_defined_symbol LoaderSymbol dynsym-Xorg.txt
+            check_defined_symbol xf86GetPointerScreenFuncs dynsym-Xorg.txt
+            check_defined_symbol xf86LoadSubModule dynsym-Xorg.txt
+
+            # Probe real runtime loading and dlsym independently of the static
+            # export checks. Keep both compiler and loader diagnostics in artifact.
+            cat > "$ART/module-symbol-probe.c" <<'EOF'
+            #include <dlfcn.h>
+            #include <stdio.h>
+            #include <stdlib.h>
+            static int check(void *h, const char *name) {
+                dlerror();
+                void *p = dlsym(h, name);
+                const char *e = dlerror();
+                if (e != NULL || p == NULL) {
+                    fprintf(stderr, "dlsym(%s): %s\n", name,
+                        e != NULL ? e : "null symbol address");
+                    return 1;
+                }
+                printf("PASS dlsym: %s\n", name);
+                return 0;
+            }
+            int main(int argc, char **argv) {
+                void *sh, *fb;
+                int rc = 0;
+                if (argc != 3) return 2;
+                sh = dlopen(argv[1], RTLD_LAZY | RTLD_GLOBAL);
+                if (sh == NULL) { fprintf(stderr, "dlopen shadow: %s\n", dlerror()); return 3; }
+                fb = dlopen(argv[2], RTLD_LAZY | RTLD_GLOBAL);
+                if (fb == NULL) { fprintf(stderr, "dlopen fb: %s\n", dlerror()); return 4; }
+                rc |= check(sh, "shadowSetup");
+                rc |= check(sh, "shadowAdd");
+                rc |= check(sh, "shadowUpdateRotate32_270");
+                rc |= check(fb, "fbScreenInit");
+                rc |= check(fb, "fbPictureInit");
+                return rc;
+            }
+            EOF
+
+            : > "$ART/module-symbol-probe-build.log"
+            : > "$ART/module-loader-resolution.txt"
+            if $CC -m64 -o "$ART/module-symbol-probe" "$ART/module-symbol-probe.c" -ldl > "$ART/module-symbol-probe-build.log" 2>&1; then
+              record_acceptance PASS "Compile dlopen/dlsym probe" "module-symbol-probe"
+              if [ -n "$SHADOW_LIB" ] && [ -n "$FB_LIB" ]; then
+                if "$ART/module-symbol-probe" "$SHADOW_LIB" "$FB_LIB" > "$ART/module-loader-resolution.txt" 2>&1; then
+                  record_acceptance PASS "dlopen/dlsym runtime resolution" "all requested helper-module symbols resolved"
+                else
+                  rc=$?
+                  record_acceptance FAIL "dlopen/dlsym runtime resolution" "probe exit=$rc; see module-loader-resolution.txt"
+                fi
+              else
+                printf 'SKIP: libshadow.so or libfb.so was not found; see path reports.\n' > "$ART/module-loader-resolution.txt"
+                record_acceptance FAIL "dlopen/dlsym runtime resolution" "required helper module path unavailable"
+              fi
+            else
+              rc=$?
+              record_acceptance FAIL "Compile dlopen/dlsym probe" "compiler exit=$rc; see module-symbol-probe-build.log"
+              printf 'NOT RUN: probe compilation failed.\n' > "$ART/module-loader-resolution.txt"
+            fi
+
+            # Resolve every strong undefined DDX symbol against the target
+            # Xorg executable, installed Xorg modules and DT_NEEDED libraries.
+            # Pre-create reports so they are present even if the parser fails.
+            : > "$ART/undefined-dynamic-symbols.txt"
+            : > "$ART/undefined-symbol-resolution.txt"
+            : > "$ART/undefined-symbol-check.log"
+            if python3 - "$ART/illumosfb_drv.so" "$XORG_BIN" "$SHADOW_LIB" "$FB_LIB" "$ART/ldd.txt" "$ART" <<'PY' > "$ART/undefined-symbol-check.log" 2>&1
+            import os, subprocess, sys
+            so, xorg, shadow, fb, ldd_file, art = sys.argv[1:]
+
+            def symbols(path, required=False):
+                try:
+                    out = subprocess.check_output(
+                        ["elfdump", "-s", "-N", ".dynsym", path],
+                        text=True, stderr=subprocess.STDOUT)
+                except Exception as exc:
+                    if required:
+                        raise RuntimeError(f"elfdump failed for required provider {path}: {exc}")
+                    print(f"WARNING: cannot inspect optional provider {path}: {exc}")
+                    return [], []
+                defined, undefined = [], []
+                parsed = 0
+                for line in out.splitlines():
+                    fields = line.split()
+                    if len(fields) < 9 or not fields[0].startswith("["):
+                        continue
+                    parsed += 1
+                    typ, bind, shndx, name = fields[-6], fields[-5], fields[-2], fields[-1]
+                    if bind not in ("GLOB", "WEAK"):
+                        continue
+                    if shndx == "UNDEF":
+                        if bind == "GLOB":
+                            undefined.append((name, typ))
+                    elif typ != "NOTY":
+                        defined.append((name, typ))
+                if required and parsed == 0:
+                    raise RuntimeError(f"no parseable .dynsym entries in required provider {path}")
+                return defined, undefined
+
+            required_providers = [xorg, shadow, fb]
+            if not all(required_providers):
+                raise RuntimeError("Xorg, libshadow.so or libfb.so path is unavailable")
+
+            providers = set(required_providers)
+            with open(ldd_file, encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    for token in line.split():
+                        if token.startswith("/") and os.path.isfile(token):
+                            providers.add(os.path.realpath(token))
+
+            module_roots = set()
+            for provider in (shadow, fb):
+                current = os.path.dirname(os.path.realpath(provider))
+                while current != "/" and not current.endswith("/xorg/modules"):
+                    current = os.path.dirname(current)
+                if current.endswith("/xorg/modules"):
+                    module_roots.add(current)
+            for root in sorted(module_roots):
+                for base, dirs, files in os.walk(root, followlinks=True):
+                    for filename in files:
+                        if filename.endswith(".so"):
+                            candidate = os.path.join(base, filename)
+                            if os.path.isfile(candidate):
+                                providers.add(os.path.realpath(candidate))
+
+            defined_by = {}
+            for provider in sorted(providers):
+                definitions, _ = symbols(provider, required=(provider in required_providers))
+                for name, typ in definitions:
+                    defined_by.setdefault(name.split("@", 1)[0], (typ, provider))
+
+            _, undefined = symbols(so, required=True)
+            with open(os.path.join(art, "undefined-dynamic-symbols.txt"), "w") as stream:
+                stream.write("\n".join(sorted({name for name, _ in undefined})) + "\n")
+            with open(os.path.join(art, "undefined-symbol-resolution.txt"), "w") as stream:
+                for name, typ in sorted(set(undefined)):
+                    provider = defined_by.get(name.split("@", 1)[0], ("", "UNRESOLVED"))[1]
+                    stream.write(f"{name} [{typ}] -> {provider}\n")
+
+            unresolved = sorted({
+                (name, typ) for name, typ in undefined
+                if name.split("@", 1)[0] not in defined_by or
+                (typ != "NOTY" and defined_by[name.split("@", 1)[0]][0] not in (typ, "NOTY"))
+            })
+            if unresolved:
+                print("Unresolved strong undefined dynamic symbols:", *unresolved, sep="\n", file=sys.stderr)
+                sys.exit(1)
+            print(f"PASS: resolved {len(set(undefined))} strong undefined dynamic symbols")
+            PY
+            then
+              record_acceptance PASS "Resolve strong undefined dynamic symbols" "see undefined-symbol-resolution.txt"
+            else
+              rc=$?
+              record_acceptance FAIL "Resolve strong undefined dynamic symbols" "parser/resolution exit=$rc; see undefined-symbol-check.log and resolution reports"
+            fi
+
+            # Source/API contract checks are independent and remain visible even
+            # when an earlier ELF, export or runtime-loader acceptance check fails.
+            check_source_text() {
+              label=$1
+              text=$2
+              if grep -Fq "$text" "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"; then
+                record_acceptance PASS "$label" "source contract present"
+              else
+                record_acceptance FAIL "$label" "source contract missing"
+              fi
+              return 0
+            }
+            check_source_text "Load fb helper through Xorg loader" 'xf86LoadSubModule(pScrn, "fb")'
+            check_source_text "Load shadow helper through Xorg loader" 'xf86LoadSubModule(pScrn, "shadow")'
+            check_source_text "Resolve shadow rotation through LoaderSymbol" 'LoaderSymbol("shadowUpdateRotate32_270")'
+            check_source_text "Declare video driver ABI class" 'ABI_CLASS_VIDEODRV'
+            check_source_text "Declare video driver ABI version" 'ABI_VIDEODRV_VERSION'
+
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            echo "acceptance_failures=$ACCEPTANCE_FAILURES"
+            if [ "$ACCEPTANCE_FAILURES" -ne 0 ]; then
+              echo "ROTFB DDX acceptance failed: $ACCEPTANCE_FAILURES check(s) failed." >&2
+              exit 1
+            fi
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            ROTFB_DDX_BUILD
+
+      - name: Upload native DDX build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-ddx-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-ddx-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+ "$ART/xorg-installed-file-manifest.txt"; then
+              record_acceptance PASS "Installed xorg IPS manifest declares helper modules" "x11/server/xorg owns libshadow.so and libfb.so"
+            else
+              record_acceptance FAIL "Installed xorg IPS manifest declares helper modules" "helper paths missing from pkg contents; see xorg-installed-file-manifest.txt"
+            fi
+            if [ -s "$ART/libshadow-paths.txt" ]; then
+              SHADOW_LIB=$(head -1 "$ART/libshadow-paths.txt")
+              record_acceptance PASS "Locate libshadow.so" "$SHADOW_LIB"
+            else
+              record_acceptance FAIL "Locate libshadow.so" "no libshadow.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -s "$ART/libfb-paths.txt" ]; then
+              FB_LIB=$(head -1 "$ART/libfb-paths.txt")
+              record_acceptance PASS "Locate libfb.so" "$FB_LIB"
+            else
+              record_acceptance FAIL "Locate libfb.so" "no libfb.so found under /usr/lib or /usr/lib/amd64"
+            fi
+            if [ -x "$XORG_BIN" ]; then
+              record_acceptance PASS "Locate Xorg executable" "$XORG_BIN"
+            else
+              record_acceptance FAIL "Locate Xorg executable" "$XORG_BIN is missing or not executable"
+            fi
+
+            # Preserve the actual target dynsym tables for diagnosis. Symbol
+            # checks below are independent: one missing export never skips the rest.
+            capture_symbol_table() {
+              label=$1
+              object=$2
+              output=$3
+              if [ -n "$object" ] && [ -r "$object" ] &&
+                elfdump -s -N .dynsym "$object" > "$ART/$output" 2>&1; then
+                record_acceptance PASS "$label dynamic symbol table" "$output"
+              else
+                rc=$?
+                : > "$ART/$output"
+                record_acceptance FAIL "$label dynamic symbol table" "unavailable or elfdump failed; see $output (exit=$rc)"
+              fi
+              return 0
+            }
+
+            capture_symbol_table "libshadow" "$SHADOW_LIB" dynsym-libshadow.txt
+            capture_symbol_table "libfb" "$FB_LIB" dynsym-libfb.txt
+            capture_symbol_table "Xorg" "$XORG_BIN" dynsym-Xorg.txt
+
+            check_defined_symbol() {
+              sym=$1
+              table=$2
+              if [ -s "$ART/$table" ] &&
+                nawk -v s="$sym" \
+                  'NF >= 9 && $NF == s && $(NF-1) != "UNDEF" && \
+                   $(NF-5) == "FUNC" && \
+                   ($(NF-4) == "GLOB" || $(NF-4) == "WEAK") { found=1 }
+                   END { exit(found ? 0 : 1) }' "$ART/$table"; then
+                record_acceptance PASS "Export $sym" "$table contains a defined global/weak FUNC"
+              else
+                record_acceptance FAIL "Export $sym" "defined global/weak FUNC not found in $table"
+              fi
+              return 0
+            }
+
+            check_defined_symbol shadowSetup dynsym-libshadow.txt
+            check_defined_symbol shadowAdd dynsym-libshadow.txt
+            check_defined_symbol shadowUpdateRotate32_270 dynsym-libshadow.txt
+            check_defined_symbol fbScreenInit dynsym-libfb.txt
+            check_defined_symbol fbPictureInit dynsym-libfb.txt
+            check_defined_symbol DamageRegionAppend dynsym-Xorg.txt
+            check_defined_symbol DamageRegionProcessPending dynsym-Xorg.txt
+            check_defined_symbol miDCInitialize dynsym-Xorg.txt
+            check_defined_symbol LoaderSymbol dynsym-Xorg.txt
+            check_defined_symbol xf86GetPointerScreenFuncs dynsym-Xorg.txt
+            check_defined_symbol xf86LoadSubModule dynsym-Xorg.txt
+
+            # Probe real runtime loading and dlsym independently of the static
+            # export checks. Keep both compiler and loader diagnostics in artifact.
+            cat > "$ART/module-symbol-probe.c" <<'EOF'
+            #include <dlfcn.h>
+            #include <stdio.h>
+            #include <stdlib.h>
+            static int check(void *h, const char *name) {
+                dlerror();
+                void *p = dlsym(h, name);
+                const char *e = dlerror();
+                if (e != NULL || p == NULL) {
+                    fprintf(stderr, "dlsym(%s): %s\n", name,
+                        e != NULL ? e : "null symbol address");
+                    return 1;
+                }
+                printf("PASS dlsym: %s\n", name);
+                return 0;
+            }
+            int main(int argc, char **argv) {
+                void *sh, *fb;
+                int rc = 0;
+                if (argc != 3) return 2;
+                sh = dlopen(argv[1], RTLD_LAZY | RTLD_GLOBAL);
+                if (sh == NULL) { fprintf(stderr, "dlopen shadow: %s\n", dlerror()); return 3; }
+                fb = dlopen(argv[2], RTLD_LAZY | RTLD_GLOBAL);
+                if (fb == NULL) { fprintf(stderr, "dlopen fb: %s\n", dlerror()); return 4; }
+                rc |= check(sh, "shadowSetup");
+                rc |= check(sh, "shadowAdd");
+                rc |= check(sh, "shadowUpdateRotate32_270");
+                rc |= check(fb, "fbScreenInit");
+                rc |= check(fb, "fbPictureInit");
+                return rc;
+            }
+            EOF
+
+            : > "$ART/module-symbol-probe-build.log"
+            : > "$ART/module-loader-resolution.txt"
+            if $CC -m64 -o "$ART/module-symbol-probe" "$ART/module-symbol-probe.c" -ldl > "$ART/module-symbol-probe-build.log" 2>&1; then
+              record_acceptance PASS "Compile dlopen/dlsym probe" "module-symbol-probe"
+              if [ -n "$SHADOW_LIB" ] && [ -n "$FB_LIB" ]; then
+                if "$ART/module-symbol-probe" "$SHADOW_LIB" "$FB_LIB" > "$ART/module-loader-resolution.txt" 2>&1; then
+                  record_acceptance PASS "dlopen/dlsym runtime resolution" "all requested helper-module symbols resolved"
+                else
+                  rc=$?
+                  record_acceptance FAIL "dlopen/dlsym runtime resolution" "probe exit=$rc; see module-loader-resolution.txt"
+                fi
+              else
+                printf 'SKIP: libshadow.so or libfb.so was not found; see path reports.\n' > "$ART/module-loader-resolution.txt"
+                record_acceptance FAIL "dlopen/dlsym runtime resolution" "required helper module path unavailable"
+              fi
+            else
+              rc=$?
+              record_acceptance FAIL "Compile dlopen/dlsym probe" "compiler exit=$rc; see module-symbol-probe-build.log"
+              printf 'NOT RUN: probe compilation failed.\n' > "$ART/module-loader-resolution.txt"
+            fi
+
+            # Resolve every strong undefined DDX symbol against the target
+            # Xorg executable, installed Xorg modules and DT_NEEDED libraries.
+            # Pre-create reports so they are present even if the parser fails.
+            : > "$ART/undefined-dynamic-symbols.txt"
+            : > "$ART/undefined-symbol-resolution.txt"
+            : > "$ART/undefined-symbol-check.log"
+            if python3 - "$ART/illumosfb_drv.so" "$XORG_BIN" "$SHADOW_LIB" "$FB_LIB" "$ART/ldd.txt" "$ART" <<'PY' > "$ART/undefined-symbol-check.log" 2>&1
+            import os, subprocess, sys
+            so, xorg, shadow, fb, ldd_file, art = sys.argv[1:]
+
+            def symbols(path, required=False):
+                try:
+                    out = subprocess.check_output(
+                        ["elfdump", "-s", "-N", ".dynsym", path],
+                        text=True, stderr=subprocess.STDOUT)
+                except Exception as exc:
+                    if required:
+                        raise RuntimeError(f"elfdump failed for required provider {path}: {exc}")
+                    print(f"WARNING: cannot inspect optional provider {path}: {exc}")
+                    return [], []
+                defined, undefined = [], []
+                parsed = 0
+                for line in out.splitlines():
+                    fields = line.split()
+                    if len(fields) < 9 or not fields[0].startswith("["):
+                        continue
+                    parsed += 1
+                    typ, bind, shndx, name = fields[-6], fields[-5], fields[-2], fields[-1]
+                    if bind not in ("GLOB", "WEAK"):
+                        continue
+                    if shndx == "UNDEF":
+                        if bind == "GLOB":
+                            undefined.append((name, typ))
+                    elif typ != "NOTY":
+                        defined.append((name, typ))
+                if required and parsed == 0:
+                    raise RuntimeError(f"no parseable .dynsym entries in required provider {path}")
+                return defined, undefined
+
+            required_providers = [xorg, shadow, fb]
+            if not all(required_providers):
+                raise RuntimeError("Xorg, libshadow.so or libfb.so path is unavailable")
+
+            providers = set(required_providers)
+            with open(ldd_file, encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    for token in line.split():
+                        if token.startswith("/") and os.path.isfile(token):
+                            providers.add(os.path.realpath(token))
+
+            module_roots = set()
+            for provider in (shadow, fb):
+                current = os.path.dirname(os.path.realpath(provider))
+                while current != "/" and not current.endswith("/xorg/modules"):
+                    current = os.path.dirname(current)
+                if current.endswith("/xorg/modules"):
+                    module_roots.add(current)
+            for root in sorted(module_roots):
+                for base, dirs, files in os.walk(root, followlinks=True):
+                    for filename in files:
+                        if filename.endswith(".so"):
+                            candidate = os.path.join(base, filename)
+                            if os.path.isfile(candidate):
+                                providers.add(os.path.realpath(candidate))
+
+            defined_by = {}
+            for provider in sorted(providers):
+                definitions, _ = symbols(provider, required=(provider in required_providers))
+                for name, typ in definitions:
+                    defined_by.setdefault(name.split("@", 1)[0], (typ, provider))
+
+            _, undefined = symbols(so, required=True)
+            with open(os.path.join(art, "undefined-dynamic-symbols.txt"), "w") as stream:
+                stream.write("\n".join(sorted({name for name, _ in undefined})) + "\n")
+            with open(os.path.join(art, "undefined-symbol-resolution.txt"), "w") as stream:
+                for name, typ in sorted(set(undefined)):
+                    provider = defined_by.get(name.split("@", 1)[0], ("", "UNRESOLVED"))[1]
+                    stream.write(f"{name} [{typ}] -> {provider}\n")
+
+            unresolved = sorted({
+                (name, typ) for name, typ in undefined
+                if name.split("@", 1)[0] not in defined_by or
+                (typ != "NOTY" and defined_by[name.split("@", 1)[0]][0] not in (typ, "NOTY"))
+            })
+            if unresolved:
+                print("Unresolved strong undefined dynamic symbols:", *unresolved, sep="\n", file=sys.stderr)
+                sys.exit(1)
+            print(f"PASS: resolved {len(set(undefined))} strong undefined dynamic symbols")
+            PY
+            then
+              record_acceptance PASS "Resolve strong undefined dynamic symbols" "see undefined-symbol-resolution.txt"
+            else
+              rc=$?
+              record_acceptance FAIL "Resolve strong undefined dynamic symbols" "parser/resolution exit=$rc; see undefined-symbol-check.log and resolution reports"
+            fi
+
+            # Source/API contract checks are independent and remain visible even
+            # when an earlier ELF, export or runtime-loader acceptance check fails.
+            check_source_text() {
+              label=$1
+              text=$2
+              if grep -Fq "$text" "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"; then
+                record_acceptance PASS "$label" "source contract present"
+              else
+                record_acceptance FAIL "$label" "source contract missing"
+              fi
+              return 0
+            }
+            check_source_text "Load fb helper through Xorg loader" 'xf86LoadSubModule(pScrn, "fb")'
+            check_source_text "Load shadow helper through Xorg loader" 'xf86LoadSubModule(pScrn, "shadow")'
+            check_source_text "Resolve shadow rotation through LoaderSymbol" 'LoaderSymbol("shadowUpdateRotate32_270")'
+            check_source_text "Declare video driver ABI class" 'ABI_CLASS_VIDEODRV'
+            check_source_text "Declare video driver ABI version" 'ABI_VIDEODRV_VERSION'
+
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            echo "acceptance_failures=$ACCEPTANCE_FAILURES"
+            if [ "$ACCEPTANCE_FAILURES" -ne 0 ]; then
+              echo "ROTFB DDX acceptance failed: $ACCEPTANCE_FAILURES check(s) failed." >&2
+              exit 1
+            fi
+            echo "binary_sha256=$(digest -a sha256 "$ART/illumosfb_drv.so")"
+            ROTFB_DDX_BUILD
+
+      - name: Upload native DDX build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-ddx-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: rotfb-ddx-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+ "$ART/xorg-installed-file-manifest.txt" || true
+              echo "installed IPS helper search:"
+              cat "$ART/ips-helper-search.txt"
+            } > "$ART/module-directory-and-ips-evidence.txt"
+            : > "$ART/module-search-roots.txt"
+            : > "$ART/libshadow-paths.txt"
+            : > "$ART/libfb-paths.txt"
+            : > "$ART/module-discovery-errors.txt"
+            for root in "$MODULEDIR" "$MODULE_PARENT" /usr/lib/xorg/modules /usr/lib/amd64/xorg/modules; do
+              [ -d "$root" ] || continue
+              printf '%s\\n' "$root" >> "$ART/module-search-roots.txt"
+              find -L "$root" -type f -name libshadow.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libshadow-paths.txt" || true
+              find -L "$root" -type f -name libfb.so -print 2>> "$ART/module-discovery-errors.txt" >> "$ART/libfb-paths.txt" || true
+            done
+            sort -u "$ART/libshadow-paths.txt" -o "$ART/libshadow-paths.txt"
+            sort -u "$ART/libfb-paths.txt" -o "$ART/libfb-paths.txt"
+            {
+              echo "MODULEDIR=$MODULEDIR"
+              echo "search roots:"
+              cat "$ART/module-search-roots.txt"
+              echo "libshadow.so paths:"
+              cat "$ART/libshadow-paths.txt"
+              echo "libfb.so paths:"
+              cat "$ART/libfb-paths.txt"
+              echo "find diagnostics:"
+              cat "$ART/module-discovery-errors.txt"
+            } > "$ART/helper-module-paths.txt"
 
             SHADOW_LIB=
             FB_LIB=
