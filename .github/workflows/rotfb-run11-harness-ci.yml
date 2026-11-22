@@ -1,0 +1,110 @@
+name: ROTFB Run 11 Physical Harness CI
+
+on:
+  push:
+    branches:
+      - gop-rotation-hook
+    paths:
+      - "rotfb-physical-test-final.zip"
+      - ".github/workflows/rotfb-run11-harness-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rotfb-run11-harness-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-harness:
+    name: Validate immutable Run 11 physical harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify uploaded archive identity and ZIP integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f rotfb-physical-test-final.zip
+          actual="$(sha256sum rotfb-physical-test-final.zip | awk '{print $1}')"
+          expected="b3be175be72ab4ac7e2655a5c1007ea320e34e7f9f3b5e9506b3da4ecd822c57"
+          echo "ARCHIVE_SHA256=$actual"
+          test "$actual" = "$expected"
+          python3 - <<'PY'
+          import zipfile
+          p = "rotfb-physical-test-final.zip"
+          with zipfile.ZipFile(p) as z:
+              bad = z.testzip()
+              if bad:
+                  raise SystemExit(f"ZIP_CRC_FAIL={bad}")
+              names = [n for n in z.namelist() if not n.endswith("/")]
+              if len(names) != 15:
+                  raise SystemExit(f"FILE_COUNT_FAIL={len(names)} expected=15")
+              required = {
+                  "rotfb-run11/README.txt",
+                  "rotfb-run11/VERIFICATION.txt",
+                  "rotfb-run11/preflight.sh",
+                  "rotfb-run11/launch.sh",
+                  "rotfb-run11/cleanup.sh",
+                  "rotfb-run11/common.sh",
+                  "rotfb-run11/dtrace.d",
+                  "rotfb-run11/SHA256SUMS",
+                  "rotfb-run11/modules/drivers/amd64/illumosfb_drv.so",
+                  "rotfb-run11/tests/run-all.sh",
+                  "rotfb-run11/tests/test-parsers.sh",
+              }
+              missing = sorted(required - set(names))
+              if missing:
+                  raise SystemExit("REQUIRED_FILES_MISSING=" + ",".join(missing))
+              print(f"ZIP_INTEGRITY=PASS files={len(names)}")
+          PY
+
+      - name: Extract harness preserving archived Unix modes
+        run: |
+          set -euo pipefail
+          python3 -m zipfile -e rotfb-physical-test-final.zip "$RUNNER_TEMP/rotfb-extract"
+          test -x "$RUNNER_TEMP/rotfb-extract/rotfb-run11/preflight.sh"
+          test -x "$RUNNER_TEMP/rotfb-extract/rotfb-run11/launch.sh"
+          test -x "$RUNNER_TEMP/rotfb-extract/rotfb-run11/tests/run-all.sh"
+
+      - name: Verify every harness file against its internal manifest
+        working-directory: ${{ runner.temp }}/rotfb-extract/rotfb-run11
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+
+      - name: Run portable parser, shell, Perl ABI and DDX checks
+        working-directory: ${{ runner.temp }}/rotfb-extract/rotfb-run11
+        run: |
+          set -euo pipefail
+          bash tests/run-all.sh
+
+      - name: Record CI scope and physical-test boundary
+        if: always()
+        run: |
+          {
+            echo "ROTFB Run 11 harness CI"
+            echo "Commit: ${GITHUB_SHA}"
+            echo "Archive SHA256: b3be175be72ab4ac7e2655a5c1007ea320e34e7f9f3b5e9506b3da4ecd822c57"
+            echo "This runner validates archive integrity and portable checks only."
+            echo "It does not run OpenIndiana DTrace/device preflight or physical panel rotation."
+            echo "Physical Chuwi test remains a separate operator-gated procedure."
+          } | tee "$RUNNER_TEMP/ROTFB-CI-SCOPE.txt"
+
+      - name: Upload verified physical-test harness artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotfb-run11-physical-harness-verified
+          path: |
+            rotfb-physical-test-final.zip
+            ${{ runner.temp }}/rotfb-extract/rotfb-run11/
+            ${{ runner.temp }}/ROTFB-CI-SCOPE.txt
+          if-no-files-found: error
+          retention-days: 30
