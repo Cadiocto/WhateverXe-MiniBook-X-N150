@@ -107,9 +107,22 @@ jobs:
             echo "DLS_SHIM_STAGED=$DLS_SHIM_DST"
             digest -a sha256 "$DLS_SHIM_DST" > "$ART/dls-shim.sha256"
 
+            # mac_wifi.h is gate-internal and includes net80211_proto.h,
+            # which is also absent from the OpenIndiana proto. Stage the
+            # exact illumos-gate header used by this GLDv3 adapter.
+            N80211_PROTO_SRC="$GITHUB_WORKSPACE/wifi-ax101/compat/sys/net80211_proto.h"
+            N80211_PROTO_DST="$SRC/src/ports/wifi/iwm/compat-illumos/sys/net80211_proto.h"
+            test -s "$N80211_PROTO_SRC"
+            cp "$N80211_PROTO_SRC" "$N80211_PROTO_DST"
+            chmod 0644 "$N80211_PROTO_DST"
+            cmp -s "$N80211_PROTO_SRC" "$N80211_PROTO_DST"
+            digest -a sha256 "$N80211_PROTO_DST" > "$ART/net80211-proto-header.sha256"
+
             cd "$SRC/src/ports/wifi/iwx"
             gmake -f Makefile.illumos clean
-            gmake -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
+            # Keep going across independent translation units so one missing
+            # header does not hide the rest of the compile-time error surface.
+            gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
             test -s iwx
             cp iwx "$ART/iwx"
             cp Makefile.illumos "$ART/"
