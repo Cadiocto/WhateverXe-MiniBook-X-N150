@@ -28,11 +28,11 @@ The pinned OpenBSD source already contains the necessary AX101-specific ingredie
 - PCI ID `0x54f0` is in the `iwx` device table.
 - `IWX_CFG_RF_TYPE_HR1` is `0x10c`.
 - The register macro extracts RF type from bits 23:12, so the reported `0x10c000` becomes `0x10c` (HR1).
-- The device-config table has generic SO/HR1 and SOF/HR1 entries explicitly labelled AX101.
+- The device-config table has an SO/HR1 entry explicitly labelled AX101. The matching logic compares the live MAC type and RF type; it is not enough for the source merely to contain an AX101 comment.
 - The attach path calls `iwx_find_device_cfg()`; when a match is found, it replaces the initial firmware name with the selected config's firmware name.
-- The HR firmware API-77 name is `iwx-so-a0-hr-b0-77`. The matching binary exists in linux-firmware; its firmware version is `74.f92b5fed.0`.
+- The pinned OpenBSD source names the SO/HR1 firmware API-77 image `iwx-so-a0-hr-b0-77`; the build workflow stages that exact candidate because it is what this source revision requests. This is not proof that API 77 is accepted by the Chuwi's silicon. Other current AX101 implementations request API 89 (`iwlwifi-so-a0-hr-b0-89`), so firmware acceptance/ALIVE remains a mandatory hardware gate. Do not substitute API 89 into this OpenBSD driver without checking its API parser and command/notification compatibility.
 
-This is stronger than simply adding a PCI alias: the source has a hardware-family/RF-specific AX101 selection path. The new CI source gate checks each of these facts against the pinned source. The remaining uncertainty is runtime: actual MAC type/step, selected config, firmware acceptance/ALIVE and network operation on this Chuwi.
+This is stronger than simply adding a PCI alias: the source has a hardware-family/RF-specific AX101 selection path. The CI source gate checks the PCI mapping, HR1 constant and bit extraction, SO/HR1 table entry, live MAC/RF matching, firmware override, and requested API-77 filename against the pinned source. All eight checks were independently evaluated against the pinned files and passed. Note: the upstream compatibility header's comment for PCI macro `0x54f0` incorrectly labels it AX211; the target's subsystem `8086:0244` and RF ID `0x10c000` identify the user's AX101/HR1 configuration, so the comment is not used as evidence. The remaining uncertainty is runtime: actual MAC type/step, selected config, firmware acceptance/ALIVE and network operation on this Chuwi.
 
 ## Build and acceptance stages
 
