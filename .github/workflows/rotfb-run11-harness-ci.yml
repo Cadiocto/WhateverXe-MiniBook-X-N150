@@ -68,7 +68,7 @@ jobs:
       - name: Extract harness preserving archived Unix modes
         run: |
           set -euo pipefail
-          python3 -m zipfile -e rotfb-physical-test-final.zip "$RUNNER_TEMP/rotfb-extract"
+          unzip -q rotfb-physical-test-final.zip -d "$RUNNER_TEMP/rotfb-extract"
           test -x "$RUNNER_TEMP/rotfb-extract/rotfb-run11/preflight.sh"
           test -x "$RUNNER_TEMP/rotfb-extract/rotfb-run11/launch.sh"
           test -x "$RUNNER_TEMP/rotfb-extract/rotfb-run11/tests/run-all.sh"
