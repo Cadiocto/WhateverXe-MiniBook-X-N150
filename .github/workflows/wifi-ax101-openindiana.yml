@@ -1,0 +1,102 @@
+name: Intel AX101 Wi-Fi driver build (OpenIndiana)
+
+on:
+  push:
+    branches: [wifi-ax101-openindiana]
+    paths:
+      - "wifi-ax101/**"
+      - ".github/workflows/wifi-ax101-openindiana.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-iwx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout this branch
+        uses: actions/checkout@v4
+
+      - name: Prepare artifact directory
+        shell: bash
+        run: mkdir -p wifi-ax101-artifacts
+
+      - name: Build pinned illumos iwx port in OpenIndiana 2026.10
+        uses: vmactions/openindiana-vm@v1
+        with:
+          release: "202610-build"
+          arch: x86_64
+          mem: 8192
+          cpu: 4
+          sync: nfs
+          run: |
+            /usr/bin/bash -s <<'AX101_BUILD'
+            set -Eeuo pipefail
+            ART="$GITHUB_WORKSPACE/wifi-ax101-artifacts"
+            mkdir -p "$ART"
+            exec > "$ART/build.log" 2>&1
+            rc=0
+            finish() {
+              rc=$?
+              trap - EXIT
+              printf 'exit_code=%s\n' "$rc" > "$ART/build-status.txt"
+              printf 'completed_utc=%s\n' "$(date -u +%FT%TZ)" >> "$ART/build-status.txt"
+              if [ -s "$ART/iwx" ]; then
+                digest -a sha256 "$ART/iwx" > "$ART/iwx.sha256"
+                file "$ART/iwx" > "$ART/iwx.file.txt"
+                elfdump -e "$ART/iwx" > "$ART/iwx.elf-header.txt" 2>&1 || true
+                elfdump -d "$ART/iwx" > "$ART/iwx.dynamic.txt" 2>&1 || true
+                nm -p "$ART/iwx" > "$ART/iwx.symbols.txt" 2>&1 || true
+              fi
+              exit "$rc"
+            }
+            trap finish EXIT
+
+            uname -a
+            cat /etc/release
+            test "$(uname -s)" = SunOS
+            grep -q OpenIndiana /etc/release
+
+            pkg refresh
+            pkg install --accept developer/gcc-14 developer/build/gnu-make developer/versioning/git
+
+            export PATH="/usr/gcc/14/bin:/usr/bin:/usr/sbin"
+            export CC=/usr/gcc/14/bin/gcc
+            export LD=/usr/bin/ld
+            "$CC" --version | head -1
+            gmake --version | head -1
+            test -d /usr/include/sys
+
+            SRC=/tmp/solnix-wifi
+            PIN=1cee7021091f3df92b7816ece2902ff59b37f1be
+            git clone --no-checkout https://github.com/atiq-cs/solnix.git "$SRC"
+            git -C "$SRC" checkout --detach "$PIN"
+            test "$(git -C "$SRC" rev-parse HEAD)" = "$PIN"
+            echo "solnix_revision=$PIN" > "$ART/source-revision.txt"
+
+            cd "$SRC/src/ports/wifi/iwx"
+            ./gen-illumos-src.sh
+            cd "$SRC/src/ports/wifi/net80211"
+            ./gen-illumos-src.sh
+
+            cd "$SRC/src/ports/wifi/iwx"
+            gmake -f Makefile.illumos clean
+            gmake -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
+            test -s iwx
+            cp iwx "$ART/iwx"
+            cp Makefile.illumos "$ART/"
+            cp STATUS.md "$ART/upstream-iwx-STATUS.md"
+            cp PROVENANCE.md "$ART/upstream-iwx-PROVENANCE.md"
+            echo "BUILD_OK: native OpenIndiana iwx module linked" > "$ART/STATUS.txt"
+            AX101_BUILD
+
+      - name: Upload AX101 driver build and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wifi-ax101-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: wifi-ax101-artifacts/
+          if-no-files-found: error
+          retention-days: 30
