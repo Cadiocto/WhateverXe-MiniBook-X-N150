@@ -94,9 +94,18 @@ jobs:
 
             # The OpenIndiana proto omits the internal DLS header. iwm_gld.c
             # only needs DLS_SAP_LLC; provide the narrow, upstream-value shim.
-            mkdir -p "$SRC/src/ports/wifi/iwm/compat-illumos/sys"
-            install -m 0644 "$GITHUB_WORKSPACE/wifi-ax101/compat/sys/dls.h" \
-              "$SRC/src/ports/wifi/iwm/compat-illumos/sys/dls.h"
+            DLS_SHIM_SRC="$GITHUB_WORKSPACE/wifi-ax101/compat/sys/dls.h"
+            DLS_SHIM_DST="$SRC/src/ports/wifi/iwm/compat-illumos/sys/dls.h"
+            test -s "$DLS_SHIM_SRC"
+            mkdir -p "$(dirname "$DLS_SHIM_DST")"
+            # illumos /usr/bin/install is not GNU install: use cp for an
+            # explicit source-file -> destination-file copy (no path search).
+            cp "$DLS_SHIM_SRC" "$DLS_SHIM_DST"
+            chmod 0644 "$DLS_SHIM_DST"
+            cmp -s "$DLS_SHIM_SRC" "$DLS_SHIM_DST"
+            test -s "$DLS_SHIM_DST"
+            echo "DLS_SHIM_STAGED=$DLS_SHIM_DST"
+            digest -a sha256 "$DLS_SHIM_DST" > "$ART/dls-shim.sha256"
 
             cd "$SRC/src/ports/wifi/iwx"
             gmake -f Makefile.illumos clean
