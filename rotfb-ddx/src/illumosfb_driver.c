@@ -274,9 +274,12 @@ IlFbOpenDev(ScrnInfoPtr pScrn, const char *dev, IlFbPtr fPtr)
 		return (-1);
 	}
 
-	/* dev_specific is an embedded int[8], not a pointer. */
-	if ((attr.sattr.flags & FB_ATTR_DEVSPECIFIC) == 0 ||
-	    sizeof (attr.sattr.dev_specific) < sizeof (struct gfxfb_info)) {
+	/*
+	 * illumos_fb's gfxp_bitmap provider populates dev_specific but does
+	 * not set FB_ATTR_DEVSPECIFIC.  The identifier above scopes this
+	 * provider-specific exception; validate the payload below instead.
+	 */
+	if (sizeof (attr.sattr.dev_specific) < sizeof (struct gfxfb_info)) {
 		xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
 		    "Framebuffer device-specific metadata is unavailable\n");
 		close(fd);
