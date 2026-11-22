@@ -77,6 +77,7 @@ jobs:
             echo "solnix_revision=$PIN" > "$ART/source-revision.txt"
 
             cd "$SRC/src/ports/wifi/iwx"
+            bash "$GITHUB_WORKSPACE/wifi-ax101/check-ax101-source.sh" "$SRC/src/ports/wifi/iwx" | tee "$ART/ax101-source-gate.txt"
             ./gen-illumos-src.sh
             cd "$SRC/src/ports/wifi/net80211"
             ./gen-illumos-src.sh
@@ -89,7 +90,15 @@ jobs:
             cp Makefile.illumos "$ART/"
             cp STATUS.md "$ART/upstream-iwx-STATUS.md"
             cp PROVENANCE.md "$ART/upstream-iwx-PROVENANCE.md"
-            echo "BUILD_OK: native OpenIndiana iwx module linked" > "$ART/STATUS.txt"
+
+            # AX101 uses the SO/HR1 API-77 image, not the AX211 SO/GF image.
+            FWBASE="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain"
+            curl -fL "$FWBASE/iwlwifi-so-a0-hr-b0-77.ucode?id=20241017" -o "$ART/iwx-so-a0-hr-b0-77"
+            curl -fL "$FWBASE/LICENCE.iwlwifi_firmware?id=20241017" -o "$ART/iwx-license"
+            test -s "$ART/iwx-so-a0-hr-b0-77"
+            grep -qi "redistribution" "$ART/iwx-license"
+            digest -a sha256 "$ART/iwx-so-a0-hr-b0-77" > "$ART/ax101-firmware.sha256"
+            echo "BUILD_OK: native OpenIndiana iwx module linked; AX101 HR1 API-77 firmware staged" > "$ART/STATUS.txt"
             AX101_BUILD
 
       - name: Upload AX101 driver build and evidence
