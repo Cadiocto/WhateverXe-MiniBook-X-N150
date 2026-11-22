@@ -92,6 +92,12 @@ jobs:
             cd "$SRC/src/ports/wifi/net80211"
             ./gen-illumos-src.sh
 
+            # The OpenIndiana proto omits the internal DLS header. iwm_gld.c
+            # only needs DLS_SAP_LLC; provide the narrow, upstream-value shim.
+            mkdir -p "$SRC/src/ports/wifi/iwm/compat-illumos/sys"
+            install -m 0644 "$GITHUB_WORKSPACE/wifi-ax101/compat/sys/dls.h" \
+              "$SRC/src/ports/wifi/iwm/compat-illumos/sys/dls.h"
+
             cd "$SRC/src/ports/wifi/iwx"
             gmake -f Makefile.illumos clean
             gmake -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
