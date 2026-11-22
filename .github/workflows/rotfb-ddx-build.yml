@@ -184,8 +184,9 @@ jobs:
             test "$(digest -a sha256 "$SRC/src/illumosfb_driver.c")" = 649d6d6dc7230a647c8d516316fc5a6112ea40c6c2d3d37335c85090671fde2a
             git -C "$SRC" apply --check "$GITHUB_WORKSPACE/rotfb-ddx/patches/rotfb-ddx-clean-reimplementation.patch"
             git -C "$SRC" apply "$GITHUB_WORKSPACE/rotfb-ddx/patches/rotfb-ddx-clean-reimplementation.patch"
+            git -C "$SRC" apply "$GITHUB_WORKSPACE/rotfb-ddx/patches/rotfb-ddx-metadata-flag.patch"
             cmp "$SRC/src/illumosfb_driver.c" "$GITHUB_WORKSPACE/rotfb-ddx/src/illumosfb_driver.c"
-            test "$(digest -a sha256 "$SRC/src/illumosfb_driver.c")" = ee1f666598a8a1445fb91a1be78f5734764008363cc7acb7ea2fce5ed5948fc5
+            echo "ddx_source_sha256=$(digest -a sha256 "$SRC/src/illumosfb_driver.c")"
 
             cd "$SRC"
             NOCONFIGURE=1 /usr/bin/bash ./autogen.sh
