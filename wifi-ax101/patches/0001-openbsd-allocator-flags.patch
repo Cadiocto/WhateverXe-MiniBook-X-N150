@@ -1,0 +1,32 @@
+diff --git a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h b/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
+--- a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
++++ b/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
+@@ -176,5 +176,5 @@
+#define M_ZERO		0x0100
+#define M_NOWAIT	0x0002
+-#define M_WAITOK	0x0000
++#define M_WAITOK	0x0001
+#define M_CANFAIL	0x0004
+extern void *iwx_bsd_malloc(size_t, int, int);
+diff --git a/src/ports/wifi/iwx/compat/sys/mbuf.h b/src/ports/wifi/iwx/compat/sys/mbuf.h
+--- a/src/ports/wifi/iwx/compat/sys/mbuf.h
++++ b/src/ports/wifi/iwx/compat/sys/mbuf.h
+@@ -48,11 +48,11 @@
+#define MCLBYTES	2048
+#define MT_DATA		1
+-#define M_DONTWAIT	0
+-#define M_WAIT		1
+-#define M_WAITOK	1
+-#define M_NOWAIT	0
+-#define M_CANFAIL	0
+-#define M_ZERO		0x0100
+-#define M_DEVBUF	2
++/*
++ * M_WAIT/M_DONTWAIT are aliases of the allocator wait flags, as in
++ * OpenBSD sys/mbuf.h. The canonical values come from iwx_kernel.h;
++ * redefining M_NOWAIT here changes malloc() from KM_NOSLEEP to KM_SLEEP.
++ */
++#define M_DONTWAIT	M_NOWAIT
++#define M_WAIT		M_WAITOK
+#define M_EXT		0x0001
+#define M_PKTHDR	0x0002

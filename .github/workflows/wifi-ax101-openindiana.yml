@@ -86,6 +86,16 @@ jobs:
             test "$(git -C "$SRC" rev-parse HEAD)" = "$PIN"
             echo "solnix_revision=$PIN" > "$ART/source-revision.txt"
 
+            # Apply a local compatibility overlay without changing the pinned
+            # solnix revision. Keep malloc and mbuf wait flags in one namespace.
+            ALLOCATOR_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0001-openbsd-allocator-flags.patch"
+            test -s "$ALLOCATOR_PATCH"
+            git -C "$SRC" apply --check "$ALLOCATOR_PATCH"
+            git -C "$SRC" apply "$ALLOCATOR_PATCH"
+            git -C "$SRC" diff --check
+            echo "allocator_flags_patch=0001-openbsd-allocator-flags.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$ALLOCATOR_PATCH" > "$ART/allocator-flags-patch.sha256"
+
             cd "$SRC/src/ports/wifi/iwx"
             bash "$GITHUB_WORKSPACE/wifi-ax101/check-ax101-source.sh" "$SRC/src/ports/wifi/iwx" | tee "$ART/ax101-source-gate.txt"
             ./gen-illumos-src.sh

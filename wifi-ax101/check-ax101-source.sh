@@ -4,7 +4,7 @@ set -euo pipefail
 IWX=${1:?path to src/ports/wifi/iwx}
 python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" "$IWX/compat/dev/pci/pcidevs.h" <<'PY'
 import re, sys
-src, var, reg, pci = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
+src, var, reg, pci, kernel, mbuf = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
 checks = {
     "PCI device 54f0 maps to the device-table symbol used by iwx":
         re.search(r"PCI_PRODUCT_INTEL_WL_22500_16\s+0x54f0", pci, re.I)
@@ -23,6 +23,18 @@ checks = {
         re.search(r"cfg\s*=\s*iwx_find_device_cfg\(sc\);\s*if\s*\(cfg\)\s*\{\s*sc->sc_fwname\s*=\s*cfg->fw_name;", src, re.S),
     "HR firmware API-77 name is present":
         "iwx-so-a0-hr-b0-77" in var + src,
+    "allocator M_WAITOK is the OpenBSD 0x0001 bit":
+        re.search(r"^\\s*#define\\s+M_WAITOK\\s+0x0001\\b", kernel, re.M),
+    "allocator M_NOWAIT is the OpenBSD 0x0002 bit":
+        re.search(r"^\\s*#define\\s+M_NOWAIT\\s+0x0002\\b", kernel, re.M),
+    "allocator M_CANFAIL is the OpenBSD 0x0004 bit":
+        re.search(r"^\\s*#define\\s+M_CANFAIL\\s+0x0004\\b", kernel, re.M),
+    "mbuf M_DONTWAIT aliases M_NOWAIT":
+        re.search(r"^\\s*#define\\s+M_DONTWAIT\\s+M_NOWAIT\\b", mbuf, re.M),
+    "mbuf M_WAIT aliases M_WAITOK":
+        re.search(r"^\\s*#define\\s+M_WAIT\\s+M_WAITOK\\b", mbuf, re.M),
+    "mbuf shim does not redefine allocator flag macros":
+        not re.search(r"^\\s*#define\\s+M_(?:WAITOK|NOWAIT|CANFAIL|ZERO|DEVBUF)\\b", mbuf, re.M),
 }
 failed = []
 for label, ok in checks.items():
@@ -32,4 +44,5 @@ for label, ok in checks.items():
 if failed:
     raise SystemExit("AX101 source gate failed: " + "; ".join(failed))
 print("AX101_SO_HR1_STATIC_SOURCE_GATE=PASS")
+print("AX101_ALLOCATOR_FLAGS_STATIC_GATE=PASS")
 PY
