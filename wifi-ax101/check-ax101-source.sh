@@ -2,9 +2,9 @@
 # Static AX101 selection gate against the pinned OpenBSD iwx source.
 set -euo pipefail
 IWX=${1:?path to src/ports/wifi/iwx}
-python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" <<'PY'
+python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" "$IWX/compat/dev/pci/pcidevs.h" <<'PY'
 import re, sys
-src, var, reg = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
+src, var, reg, pci = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
 checks = {
     "PCI 54f0 is present in the port device table":
         re.search(r"PCI_PRODUCT_INTEL_WL_22500_16\s+0x54f0", var, re.I),
