@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Static AX101/So/HR1 selection gate against the pinned OpenBSD iwx source.
 set -euo pipefail
-IWX=\${1:?path to src/ports/wifi/iwx}
+IWX=${1:?path to src/ports/wifi/iwx}
 python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" "$IWX/compat/dev/pci/pcidevs.h" <<'PY'
 import re, sys
 src, var, reg, pci = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
