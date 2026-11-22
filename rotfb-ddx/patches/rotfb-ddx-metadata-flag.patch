@@ -14,5 +14,5 @@
 +	 */
 +	if (sizeof (attr.sattr.dev_specific) < sizeof (struct gfxfb_info)) {
  		xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
- 		    "Framebuffer device-specific metadata is unavailable\\n");
+ 		    "Framebuffer device-specific metadata is unavailable\n");
  		close(fd);
