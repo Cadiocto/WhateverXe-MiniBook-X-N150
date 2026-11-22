@@ -7,7 +7,7 @@ import re, sys
 src, var, reg, pci = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
 checks = {
     "PCI 54f0 is present in the port device table":
-        re.search(r"PCI_PRODUCT_INTEL_WL_22500_16\s+0x54f0", var, re.I),
+        re.search(r"PCI_PRODUCT_INTEL_WL_22500_16\s+0x54f0", pci, re.I),
     "RF type HR1 is 0x10c":
         re.search(r"IWX_CFG_RF_TYPE_HR1\s+0x10c", var, re.I),
     "RFID type extraction uses bits 23:12":
