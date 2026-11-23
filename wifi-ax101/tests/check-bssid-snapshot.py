@@ -30,11 +30,13 @@ checks = {
     "wifi_data_update_outside_giant": set_bss.index("mutex_exit(&n80211_giant)") < set_bss.index("mac_pdata_update"),
     "bssid_published_before_giant_drop": giant_exit.index("bssid_hook(xlate_arg") < giant_exit.index("mutex_exit(&n80211_giant)"),
     "interrupt_link_notification_deferred": "servicing_interrupt()" in giant_exit and "task_add(systq" in giant_exit,
-    "callbacks_snapshotted_before_unlock": giant_exit.index("rx_xlate = n80211_rx_xlate") < giant_exit.index("mutex_exit(&n80211_giant)"),
+    "callbacks_snapshotted_before_unlock": giant_exit.index("= n80211_rx_xlate") < giant_exit.index("mutex_exit(&n80211_giant)"),
     "callbacks_drained_before_return": "while (n80211_dispatch_refs != 0)" in disable and "cv_wait(" in disable,
     "callbacks_cleared_on_disable": "n80211_rx_xlate = NULL" in disable and "n80211_link_hook = NULL" in disable and "n80211_bssid_hook = NULL" in disable,
+    "disable_preserves_mac_handles_for_rollback": "n80211_rx_mh = NULL" not in disable and "n80211_link_mh = NULL" not in disable,
     "gld_unregister_quiesces_first": unregister.index("n80211_gld_callbacks_disable()") < unregister.index("mac_unregister("),
     "gld_unregister_rolls_back_on_failure": "n80211_gld_callbacks_enable" in unregister,
+    "gld_unregister_forgets_handles_only_after_success": unregister.index("if (err == 0)") < unregister.index("n80211_gld_callbacks_forget()") < unregister.index("mutex_destroy"),
 }
 failed = [name for name, ok in checks.items() if not ok]
 for name, ok in checks.items():

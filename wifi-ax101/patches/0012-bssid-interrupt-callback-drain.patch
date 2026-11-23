@@ -51,7 +51,7 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
  	(void) mac_pdata_update(g->g_mh, &g->g_wd, sizeof (g->g_wd));
  	mac_tx_update(g->g_mh);
  	mutex_exit(&g->g_bssid_lock);
-@@ -287,30 +304,20 @@
+@@ -287,30 +304,21 @@
   * BSSID under giant and push it to the plugin before mac_link_update.
   * mac_pdata_update allocates and notifies mac clients, so it runs unlocked.
   */
@@ -64,6 +64,7 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +    mblk_t *(*)(void *, mblk_t *), void (*)(void *, int),
 +    void (*)(void *, int), void *);
 +extern void n80211_gld_callbacks_disable(void);
++extern void n80211_gld_callbacks_forget(void);
  
  static void
  iwm_gld_link_hook(void *gp, int up)
@@ -101,13 +102,14 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
  	*gp = g;
  	return (0);
  }
-@@ -858,13 +864,14 @@
+@@ -858,13 +864,15 @@
  
  	if (g == NULL)
  		return (0);
 +	n80211_gld_callbacks_disable();
  	err = mac_unregister(g->g_mh);
  	if (err == 0) {
++		n80211_gld_callbacks_forget();
 -		n80211_rx_xlate = NULL;
 -		n80211_link_hook = NULL;
 -		n80211_xlate_arg = NULL;
@@ -256,7 +258,7 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
  	for (t = chain; t->b_next != NULL; t = t->b_next)
  		;
  	if (n80211_rx_head == NULL)
-@@ -214,10 +267,52 @@
+@@ -214,7 +267,60 @@
  n80211_defer_link(mac_handle_t mh, int up)
  {
  	ASSERT(mutex_owned(&n80211_giant));
@@ -290,8 +292,6 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
 +	n80211_link_hook = NULL;
 +	n80211_bssid_hook = NULL;
 +	n80211_xlate_arg = NULL;
-+	n80211_rx_mh = NULL;
-+	n80211_link_mh = NULL;
 +	n80211_link_pending = -1;
 +	n80211_deferred_link_pending = -1;
 +	n80211_deferred_link_mh = NULL;
@@ -306,6 +306,21 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
 +		freemsgchain(chain);
 +}
 +
++/* Called only after mac_unregister succeeds and dispatch is quiescent. */
++void
++n80211_gld_callbacks_forget(void)
++{
++	mutex_enter(&n80211_giant);
++	ASSERT(!n80211_gld_enabled);
++	ASSERT(n80211_dispatch_refs == 0);
++	n80211_rx_mh = NULL;
++	n80211_link_mh = NULL;
++	n80211_link_pending = -1;
++	n80211_deferred_link_pending = -1;
++	n80211_deferred_link_mh = NULL;
++	mutex_exit(&n80211_giant);
+NaN
+0+
  /*
   * splassert(IPL_NET): OpenBSD's machine-checked "caller holds the exclusion".
   * Here the exclusion is giant. Warn once instead of panicking: a missed entry
