@@ -131,6 +131,107 @@ jobs:
             echo "N80211_MBUF_NEGATIVE_CONTROL=PASS (expected exit 2)" >> "$ART/n80211-mbuf-test.txt"
 
             cd "$SRC/src/ports/wifi/iwx"
+            # Exercise the pinned mbuf, mbuf_list and ph_cookie suites with all negative controls.
+            python3 --version
+            CC="$CC" bash ./run-mbuf-tests.sh | tee "$ART/iwx-mbuf-tests.txt"
+            grep -Eq '^CLEAN: honest build passes and all [0-9]+ sabotages compiled and were caught\.
+            ./gen-illumos-src.sh
+            cd "$SRC/src/ports/wifi/net80211"
+            ./gen-illumos-src.sh
+
+            # The OpenIndiana proto omits the internal DLS header. iwm_gld.c
+            # only needs DLS_SAP_LLC; provide the narrow, upstream-value shim.
+            DLS_SHIM_SRC="$GITHUB_WORKSPACE/wifi-ax101/compat/sys/dls.h"
+            DLS_SHIM_DST="$SRC/src/ports/wifi/iwm/compat-illumos/sys/dls.h"
+            test -s "$DLS_SHIM_SRC"
+            mkdir -p "$(dirname "$DLS_SHIM_DST")"
+            # illumos /usr/bin/install is not GNU install: use cp for an
+            # explicit source-file -> destination-file copy (no path search).
+            cp "$DLS_SHIM_SRC" "$DLS_SHIM_DST"
+            chmod 0644 "$DLS_SHIM_DST"
+            cmp -s "$DLS_SHIM_SRC" "$DLS_SHIM_DST"
+            test -s "$DLS_SHIM_DST"
+            echo "DLS_SHIM_STAGED=$DLS_SHIM_DST"
+            digest -a sha256 "$DLS_SHIM_DST" > "$ART/dls-shim.sha256"
+
+            # Close the native GLDv3 net80211 header dependency chain using exact
+            # headers from the pinned illumos-gate revision. Prefer target /usr/include
+            # whenever a native header exists; stage only headers omitted from the proto.
+            : > "$ART/net80211-header-closure.txt"
+            for rel in sys/net80211_proto.h sys/net80211.h sys/net80211_crypto.h sys/net80211_ht.h sys/net80211_amrr.h net/wpa.h; do
+              case "$rel" in
+                sys/net80211_proto.h) expected_blob=4fe7d40604615e3ffd1adb80d6e061fd4859c546 ;;
+                sys/net80211.h) expected_blob=be6b65fe905fabd6ebfd31cf74d7048357510e12 ;;
+                sys/net80211_crypto.h) expected_blob=72ef3ebec3c9ccc599ba29823d3561198d953252 ;;
+                sys/net80211_ht.h) expected_blob=449726aa0feae79d6bcea0f73e0625a7078a150e ;;
+                sys/net80211_amrr.h) expected_blob=36bd2fcd0eacd88c7b2c307c32a4db32bff5ffa0 ;;
+                net/wpa.h) expected_blob=82c4fd468a5f623411a98a814c40ba3d9ac4c87b ;;
+                *) echo "ERROR: unlisted net80211 header $rel" >&2; exit 1 ;;
+              esac
+              src="$GITHUB_WORKSPACE/wifi-ax101/compat/$rel"
+              test -s "$src"
+              actual_blob=$(git -C "$GITHUB_WORKSPACE" hash-object "$src")
+              if [ "$actual_blob" != "$expected_blob" ]; then
+                echo "ERROR: $rel blob $actual_blob != pinned illumos-gate $expected_blob" >&2
+                exit 1
+              fi
+              native="/usr/include/$rel"
+              dst="$SRC/src/ports/wifi/iwm/compat-illumos/$rel"
+              safe=$(printf '%s' "$rel" | tr '/' '-')
+              if [ -s "$native" ]; then
+                echo "NATIVE_HEADER_USED=$rel"
+                digest -a sha256 "$native" > "$ART/native-header-$safe.sha256"
+                printf '%s\t%s\tnative\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
+              else
+                mkdir -p "$(dirname "$dst")"
+                cp "$src" "$dst"
+                chmod 0644 "$dst"
+                cmp -s "$src" "$dst"
+                echo "STAGED_PINNED_GATE_HEADER=$rel"
+                digest -a sha256 "$dst" > "$ART/header-$safe.sha256"
+                printf '%s\t%s\tstaged\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
+              fi
+            done
+
+            # Remaining dependencies are public target headers and must come from OI.
+            for rel in sys/mac.h sys/mac_provider.h sys/ethernet.h sys/atomic.h inet/wifi_ioctl.h; do
+              test -s "/usr/include/$rel" || {
+                echo "ERROR: missing native OpenIndiana header /usr/include/$rel" >&2
+                exit 1
+              }
+              printf '%s\tnative-dependency\n' "$rel" >> "$ART/net80211-header-closure.txt"
+            done
+
+            cd "$SRC/src/ports/wifi/iwx"
+            gmake -f Makefile.illumos clean
+            # Keep going across independent translation units so one missing
+            # header does not hide the rest of the compile-time error surface.
+            gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
+            test -s iwx
+            cp iwx "$ART/iwx"
+            cp Makefile.illumos "$ART/"
+            cp STATUS.md "$ART/upstream-iwx-STATUS.md"
+            cp PROVENANCE.md "$ART/upstream-iwx-PROVENANCE.md"
+
+            # AX101 uses the SO/HR1 API-77 image, not the AX211 SO/GF image.
+            FWBASE="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain"
+            curl -fL "$FWBASE/iwlwifi-so-a0-hr-b0-77.ucode?id=20241017" -o "$ART/iwx-so-a0-hr-b0-77"
+            curl -fL "$FWBASE/LICENCE.iwlwifi_firmware?id=20241017" -o "$ART/iwx-license"
+            test -s "$ART/iwx-so-a0-hr-b0-77"
+            grep -qi "redistribution" "$ART/iwx-license"
+            digest -a sha256 "$ART/iwx-so-a0-hr-b0-77" > "$ART/ax101-firmware.sha256"
+            echo "BUILD_OK: native OpenIndiana iwx module linked; AX101 HR1 API-77 firmware staged" > "$ART/STATUS.txt"
+            AX101_BUILD
+
+      - name: Upload AX101 driver build and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wifi-ax101-openindiana-${{ github.run_id }}-${{ github.sha }}
+          path: wifi-ax101-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+ "$ART/iwx-mbuf-tests.txt"
             bash "$GITHUB_WORKSPACE/wifi-ax101/check-ax101-source.sh" "$SRC/src/ports/wifi/iwx" | tee "$ART/ax101-source-gate.txt"
             ./gen-illumos-src.sh
             cd "$SRC/src/ports/wifi/net80211"
