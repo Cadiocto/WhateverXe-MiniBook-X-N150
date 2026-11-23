@@ -2,8 +2,10 @@
 # Static AX101/So/HR1 selection gate against the pinned OpenBSD iwx source.
 set -euo pipefail
 IWX=${1:?path to src/ports/wifi/iwx}
-python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" "$IWX/compat/dev/pci/pcidevs.h" <<'PY'
+python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" "$IWX/compat/dev/pci/pcidevs.h" "$IWX/compat/sys/iwx_kernel.h" "$IWX/compat/sys/mbuf.h" <<'PY'
 import re, sys
+if len(sys.argv) != 7:
+    raise SystemExit(f"expected 6 source paths, got {len(sys.argv) - 1}")
 src, var, reg, pci, kernel, mbuf = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
 checks = {
     "PCI device 54f0 maps to the device-table symbol used by iwx":
@@ -24,17 +26,17 @@ checks = {
     "HR firmware API-77 name is present":
         "iwx-so-a0-hr-b0-77" in var + src,
     "allocator M_WAITOK is the OpenBSD 0x0001 bit":
-        re.search(r"^\\s*#define\\s+M_WAITOK\\s+0x0001\\b", kernel, re.M),
+        re.search(r"^\s*#define\s+M_WAITOK\s+0x0001\b", kernel, re.M),
     "allocator M_NOWAIT is the OpenBSD 0x0002 bit":
-        re.search(r"^\\s*#define\\s+M_NOWAIT\\s+0x0002\\b", kernel, re.M),
+        re.search(r"^\s*#define\s+M_NOWAIT\s+0x0002\b", kernel, re.M),
     "allocator M_CANFAIL is the OpenBSD 0x0004 bit":
-        re.search(r"^\\s*#define\\s+M_CANFAIL\\s+0x0004\\b", kernel, re.M),
+        re.search(r"^\s*#define\s+M_CANFAIL\s+0x0004\b", kernel, re.M),
     "mbuf M_DONTWAIT aliases M_NOWAIT":
-        re.search(r"^\\s*#define\\s+M_DONTWAIT\\s+M_NOWAIT\\b", mbuf, re.M),
+        re.search(r"^\s*#define\s+M_DONTWAIT\s+M_NOWAIT\b", mbuf, re.M),
     "mbuf M_WAIT aliases M_WAITOK":
-        re.search(r"^\\s*#define\\s+M_WAIT\\s+M_WAITOK\\b", mbuf, re.M),
+        re.search(r"^\s*#define\s+M_WAIT\s+M_WAITOK\b", mbuf, re.M),
     "mbuf shim does not redefine allocator flag macros":
-        not re.search(r"^\\s*#define\\s+M_(?:WAITOK|NOWAIT|CANFAIL|ZERO|DEVBUF)\\b", mbuf, re.M),
+        not re.search(r"^\s*#define\s+M_(?:WAITOK|NOWAIT|CANFAIL|ZERO|DEVBUF)\b", mbuf, re.M),
 }
 failed = []
 for label, ok in checks.items():

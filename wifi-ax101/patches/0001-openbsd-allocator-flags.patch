@@ -2,18 +2,18 @@ diff --git a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h b/src/ports/wifi/iwx/com
 --- a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
 +++ b/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
 @@ -176,5 +176,5 @@
-#define M_ZERO		0x0100
-#define M_NOWAIT	0x0002
+ #define M_ZERO		0x0100
+ #define M_NOWAIT	0x0002
 -#define M_WAITOK	0x0000
 +#define M_WAITOK	0x0001
-#define M_CANFAIL	0x0004
-extern void *iwx_bsd_malloc(size_t, int, int);
+ #define M_CANFAIL	0x0004
+ extern void *iwx_bsd_malloc(size_t, int, int);
 diff --git a/src/ports/wifi/iwx/compat/sys/mbuf.h b/src/ports/wifi/iwx/compat/sys/mbuf.h
 --- a/src/ports/wifi/iwx/compat/sys/mbuf.h
 +++ b/src/ports/wifi/iwx/compat/sys/mbuf.h
-@@ -48,11 +48,11 @@
-#define MCLBYTES	2048
-#define MT_DATA		1
+@@ -49,11 +49,11 @@
+ #define MCLBYTES	2048
+ #define MT_DATA		1
 -#define M_DONTWAIT	0
 -#define M_WAIT		1
 -#define M_WAITOK	1
@@ -28,5 +28,5 @@ diff --git a/src/ports/wifi/iwx/compat/sys/mbuf.h b/src/ports/wifi/iwx/compat/sy
 + */
 +#define M_DONTWAIT	M_NOWAIT
 +#define M_WAIT		M_WAITOK
-#define M_EXT		0x0001
-#define M_PKTHDR	0x0002
+ #define M_EXT		0x0001
+ #define M_PKTHDR	0x0002

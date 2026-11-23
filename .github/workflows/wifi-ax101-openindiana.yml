@@ -11,10 +11,10 @@ on:
 permissions:
   contents: read
 
-# Only one expensive OpenIndiana VM build may run for this branch.
+# Serialize VM builds without cancelling an active build when a newer commit arrives.
 concurrency:
   group: wifi-ax101-openindiana-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-iwx:
