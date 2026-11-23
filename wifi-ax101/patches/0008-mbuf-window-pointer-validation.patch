@@ -83,7 +83,7 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h b/src/ports/wifi/iwx/iwx_m
 +#include <stdint.h>
  #include <sys/types.h>
  
- #ifndef B_TRUE
+ #if !defined(__sun)
 diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_test.c
 --- a/src/ports/wifi/iwx/iwx_mbuf_test.c
 +++ b/src/ports/wifi/iwx/iwx_mbuf_test.c
