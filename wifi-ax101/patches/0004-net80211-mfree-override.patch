@@ -1,0 +1,11 @@
+diff --git a/src/ports/wifi/net80211/compat/sys/n80211_mbuf.h b/src/ports/wifi/net80211/compat/sys/n80211_mbuf.h
+--- a/src/ports/wifi/net80211/compat/sys/n80211_mbuf.h
++++ b/src/ports/wifi/net80211/compat/sys/n80211_mbuf.h
+@@ -137,3 +137,7 @@
+  * ieee80211_pae_output.c) are exactly this pattern on a one-mbuf frame. REAL.
+  */
++/* Explicitly replace the driver adapter's different m_free contract. */
++#ifdef m_free
++#undef m_free
++#endif
+ #define m_free(m)	((freemsg((m)), (mblk_t *)NULL))

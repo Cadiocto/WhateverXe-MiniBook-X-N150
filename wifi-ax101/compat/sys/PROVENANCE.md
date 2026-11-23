@@ -173,3 +173,11 @@ closure.
 Run #21 did not reach the userland harness, AX101 source gate, native header
 staging, or kernel translation-unit compilation. The prepend-bounds fix
 remains FIXED-CANDIDATE; no runtime or physical packet-path claim is made.
+
+
+## net80211 m_free override overlay
+
+The local patch `wifi-ax101/patches/0004-net80211-mfree-override.patch` applies to the pinned solnix header
+`src/ports/wifi/net80211/compat/sys/n80211_mbuf.h`. The upstream header documents that the two net80211 call sites use `m_free` only as `return m_free(m)` on a freshly allocated single management mbuf. In this narrow case, illumos `freemsg()` followed by `NULL` preserves the required result.
+
+The shared driver adapter defines `m_free` with a different return contract. The overlay explicitly `#undef`s that macro before defining the net80211 single-mbuf wrapper. It does not change the wrapper's generated behavior or the pinned solnix revision; it makes the intentional API boundary explicit and removes the compiler's accidental-redefinition diagnostic. CI checks the build log and fails if any `m_free` redefinition warning remains. This local compatibility patch imports no third-party code and changes no upstream license text.

@@ -32,13 +32,13 @@ The pinned OpenBSD source already contains the necessary AX101-specific ingredie
 - The attach path calls `iwx_find_device_cfg()`; when a match is found, it replaces the initial firmware name with the selected config's firmware name.
 - The pinned OpenBSD source names the SO/HR1 firmware API-77 image `iwx-so-a0-hr-b0-77`; the build workflow stages that exact candidate because it is what this source revision requests. This is not proof that API 77 is accepted by the Chuwi's silicon. Other current AX101 implementations request API 89 (`iwlwifi-so-a0-hr-b0-89`), so firmware acceptance/ALIVE remains a mandatory hardware gate. Do not substitute API 89 into this OpenBSD driver without checking its API parser and command/notification compatibility.
 
-This is stronger than simply adding a PCI alias: the source has a hardware-family/RF-specific AX101 selection path. The CI source gate checks the PCI mapping, HR1 constant and bit extraction, SO/HR1 table entry, live MAC/RF matching, firmware override, and requested API-77 filename against the pinned source. All eight checks were independently evaluated against the pinned files and passed. Note: the upstream compatibility header's comment for PCI macro `0x54f0` incorrectly labels it AX211; the target's subsystem `8086:0244` and RF ID `0x10c000` identify the user's AX101/HR1 configuration, so the comment is not used as evidence. The remaining uncertainty is runtime: actual MAC type/step, selected config, firmware acceptance/ALIVE and network operation on this Chuwi.
+This is stronger than simply adding a PCI alias: the source has a hardware-family/RF-specific AX101 selection path. The CI source gate checks the PCI mapping, HR1 constant and bit extraction, SO/HR1 table entry, live MAC/RF matching, firmware override, and requested API-77 filename against the pinned source. The current CI source gate evaluates 14 checks against the pinned files; all 14 passed in Run #24. Note: the upstream compatibility header's comment for PCI macro `0x54f0` incorrectly labels it AX211; the target's subsystem `8086:0244` and RF ID `0x10c000` identify the user's AX101/HR1 configuration, so the comment is not used as evidence. The remaining uncertainty is runtime: actual MAC type/step, selected config, firmware acceptance/ALIVE and network operation on this Chuwi.
 
 ## Build and acceptance stages
 
 1. Build the pinned illumos `iwx` module inside OpenIndiana 2026.10.
-2. Run the AX101 source-selection gate and verify the ELF module and symbol set.
-3. Package the API-77 HR firmware with its redistribution licence.
+2. Run the AX101 source-selection gate and collect ELF metadata/symbol diagnostics. Strict ELF acceptance (undefined-symbol, relocation, and export policy) remains pending; current `elfdump` and `nm` output is diagnostic only.
+3. Stage the API-77 HR firmware with its redistribution licence and checksum. No offline IPS repository or install kit has been produced yet.
 4. Physical acceptance on this Chuwi: driver binds to `00:14.3`, reports AX101/HR1, loads matching firmware and receives ALIVE; then scan, WPA2 association, DHCP and traffic.
 
 The CI build is not a hardware attach test. The driver must not be installed automatically or bound by default until firmware acceptance is proven.
@@ -46,3 +46,16 @@ The CI build is not a hardware attach test. The driver must not be installed aut
 ## Scope
 
 Wi-Fi only. No ROTFB, Xorg, Intel graphics, framebuffer, or kernel display changes in this branch.
+
+
+## Current CI evidence
+
+As of 2026-11-23, Runs #22 and #24 both completed the native OpenIndiana build and linked the same `iwx` artifact (SHA-256 `753223b974028399e327a57593b4efda62937a28a17d5f2afd70fe19cec009ad`). Run #24 also passed the pinned `run-mbuf-tests.sh` suite: 71 mbuf checks, 26 mlist checks, 23 cookie checks, and all 13 negative controls were caught. The existing net80211 mbuf harness and its negative control passed as well.
+
+This is userland test plus translation-unit compile/link evidence. It does not prove module load, runtime attach, firmware ALIVE, scan, association, WPA2, DHCP, DNS, internet, or reconnect.
+
+Run #24's baseline build emitted 559 warnings: 522 BSD/native `SIO*80211` macro redefinitions, 24 `m_free` redefinitions, 8 Ethernet macro redefinitions, one `roundup` redefinition, and four packed-member alignment warnings. The local `0004` overlay makes the intentional net80211 `m_free` replacement explicit; the next CI build fails if any `m_free` redefinition warning remains. The other warning groups remain open.
+
+## WPA2 userspace contract
+
+The GLDv3 adapter's WPA path expects the private `_wpa_psk` property to contain a precomputed 32-byte PMK as 64 hexadecimal characters, followed by a BSSID (or `-`) and SSID. It does not accept a passphrase directly. No userland PMK helper or secure SMF credential service is currently included in this repository, so WPA2-Personal is not yet an end-to-end usable path and persistent autoconnect is not implemented.

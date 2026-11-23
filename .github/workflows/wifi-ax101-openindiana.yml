@@ -114,6 +114,15 @@ jobs:
             echo "mbuf_test_patch=0003-mbuf-test-portability.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$TEST_PATCH" > "$ART/mbuf-test-portability-patch.sha256"
 
+            # Make the net80211 m_free override explicit; preserve its single-mbuf contract.
+            MFREE_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0004-net80211-mfree-override.patch"
+            test -s "$MFREE_PATCH"
+            git -C "$SRC" apply --check "$MFREE_PATCH"
+            git -C "$SRC" apply "$MFREE_PATCH"
+            git -C "$SRC" diff --check
+            echo "net80211_mfree_patch=0004-net80211-mfree-override.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$MFREE_PATCH" > "$ART/net80211-mfree-patch.sha256"
+
             # Run the existing userland mbuf harness against the patched implementation.
             cd "$SRC/src/ports/wifi/net80211"
             "$CC" -std=gnu99 -DN80211_MBUF_TEST -I../iwx n80211_mbuf_test.c n80211_mbuf.c ../iwx/iwx_mbuf.c -o "$ART/n80211_mbuf_test"
@@ -209,6 +218,11 @@ jobs:
             # Keep going across independent translation units so one missing
             # header does not hide the rest of the compile-time error surface.
             gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
+            if grep -Fq 'warning: "m_free" redefined' "$ART/build.log"; then
+              echo "ERROR: net80211 m_free override still produces redefinition warnings" >&2
+              exit 1
+            fi
+            echo "N80211_MFREE_OVERRIDE_WARNING=PASS"
             test -s iwx
             cp iwx "$ART/iwx"
             cp Makefile.illumos "$ART/"
