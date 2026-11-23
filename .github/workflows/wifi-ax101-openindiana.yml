@@ -251,7 +251,8 @@ jobs:
             python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" \
               "$SRC/src/ports/wifi/iwm/iwm_gld.c" \
               "$SRC/src/ports/wifi/net80211/n80211_giant.c" \
-              "$SRC/src/ports/wifi/iwm/iwm_attach.c" | tee "$ART/bssid-source-contract.txt"
+              "$SRC/src/ports/wifi/iwm/iwm_attach.c" \
+              "$SRC/src/ports/wifi/iwx/iwx_glue.c" | tee "$ART/bssid-source-contract.txt"
             "$CC" -std=c11 -Wall -Wextra -Werror -pthread \
               "$GITHUB_WORKSPACE/wifi-ax101/tests/bssid-snapshot-concurrency.c" \
               -o "$ART/bssid-snapshot-concurrency"
