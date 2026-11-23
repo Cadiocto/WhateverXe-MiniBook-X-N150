@@ -309,8 +309,10 @@ jobs:
             test -s iwx
             cp iwx "$ART/iwx"
 
-            # Reconcile every undefined reference against target exports, then
-            # ask this OpenIndiana kernel's krtld to load the ET_REL object.
+            # Inventory undefined references. The two export snapshots below
+            # are deliberately diagnostic, not the complete symbol universe;
+            # kldd walks the actual parent/dependency graph as the strict gate.
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/test-check-elf-exports.py"
             nm -u "$ART/iwx" > "$ART/iwx.undefined.txt"
             KERNEL_IMAGE=
             for candidate in /platform/i86pc/kernel/amd64/unix /kernel/amd64/unix /kernel/unix; do
@@ -341,13 +343,39 @@ jobs:
             elfdump -r "$ART/iwx" > "$ART/iwx.relocations.txt"
             grep -Eq 'NEEDED.*misc/mac' "$ART/iwx.dynamic-acceptance.txt"
             echo "ELF_NEEDED_MISC_MAC=PASS"
+            if ! command -v kldd >/dev/null 2>&1; then
+              echo "kldd is required but unavailable in the OpenIndiana VM" > "$ART/iwx.kldd.txt"
+              cat "$ART/iwx.kldd.txt"
+              exit 1
+            fi
+            if ! kldd -prw "$ART/iwx" > "$ART/iwx.kldd.txt" 2>&1; then
+              cat "$ART/iwx.kldd.txt"
+              echo "ERROR: kldd dependency/symbol analysis failed" >&2
+              exit 1
+            fi
+            if grep -Eiq 'symbol not found:|unresolved symbol' "$ART/iwx.kldd.txt"; then
+              cat "$ART/iwx.kldd.txt"
+              echo "ERROR: kldd reported unresolved kernel symbol references" >&2
+              exit 1
+            fi
+            echo "KLD_DEPENDENCY_AND_SYMBOL_CHECK=PASS"
             if grep -q 'TEXTREL' "$ART/iwx.dynamic-acceptance.txt"; then
               echo "ELF_TEXTREL_PRESENT=YES" | tee "$ART/elf-relocation-policy.txt"
             else
               echo "ELF_TEXTREL_PRESENT=NO" | tee "$ART/elf-relocation-policy.txt"
             fi
+            if command -v modinfo >/dev/null 2>&1; then
+              modinfo -c > "$ART/modinfo-before-modload.txt" 2>&1 || true
+            fi
             modload "$ART/iwx" > "$ART/iwx-krtld-modload.txt" 2>&1 || {
               cat "$ART/iwx-krtld-modload.txt"
+              if command -v modinfo >/dev/null 2>&1; then
+                modinfo -c > "$ART/modinfo-after-modload.txt" 2>&1 || true
+              fi
+              if command -v dmesg >/dev/null 2>&1; then
+                dmesg | tail -n 200 | grep -Ei 'iwx|krtld|modload|module|symbol|reloc|error|warn' > "$ART/iwx-krtld-dmesg.txt" || true
+                cat "$ART/iwx-krtld-dmesg.txt" || true
+              fi
               echo "ERROR: target OpenIndiana krtld rejected the AX101 module" >&2
               exit 1
             }
