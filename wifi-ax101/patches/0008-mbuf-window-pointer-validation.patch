@@ -183,6 +183,13 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_te
 diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-tests.sh
 --- a/src/ports/wifi/iwx/run-mbuf-tests.sh
 +++ b/src/ports/wifi/iwx/run-mbuf-tests.sh
+@@ -206,5 +206,5 @@
+ # (j) Accept allocated-but-unreceived padding. The shift would overwrite bytes
+ #     beyond the device-reported MPDU window.
+ sabotage shift_ignores_unreceived_pad \
+-	'	if (n > (size_t)(m->b_wptr - src) - len)
++	'	if (n > readable - len)
+ 		return (B_FALSE);' \
 @@ -211,6 +211,16 @@
  	'	if (0)
  		return (B_FALSE);'
