@@ -84,10 +84,7 @@ diff --git a/build/if_iwx_illumos.c b/build/if_iwx_illumos.c
  		    resp->n_channels);
  	} else {
  		struct iwx_mcc_update_resp *resp;
-@@ -10073,6 +10092,7 @@
- 		    resp->geo_info, resp->source_id, resp->n_channels));
- 
- 		/* Update channel map and our scan configuration. */
+@@ -10076,3 +10095,4 @@
 -		iwx_init_channel_map(sc, NULL, resp->channels,
 +		iwx_init_channel_map(sc, NULL, (const uint8_t *)resp +
 +		    offsetof(struct iwx_mcc_update_resp, channels),
