@@ -258,7 +258,7 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
  	for (t = chain; t->b_next != NULL; t = t->b_next)
  		;
  	if (n80211_rx_head == NULL)
-@@ -214,10 +267,65 @@
+@@ -214,11 +267,64 @@
  n80211_defer_link(mac_handle_t mh, int up)
  {
  	ASSERT(mutex_owned(&n80211_giant));
