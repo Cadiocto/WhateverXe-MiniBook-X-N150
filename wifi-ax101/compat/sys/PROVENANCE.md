@@ -137,3 +137,39 @@ applying the patch in the pinned checkout. Run #21 must prove that.
 The `net80211_ht.h` license row above was also corrected after inspecting
 the copied header's retained copyright/license text: it is a two-condition
 BSD notice, not BSD-3-Clause. No source license text was changed.
+
+
+## Run #21: portability patch ordering correction
+
+Finding: AX101-TEST-002
+First seen: 2026-11-23T02:04:24Z (Run #20)
+Latest seen: 2026-11-23T03:10:39Z (Run #21)
+Status: VERIFIED / FIXED-CANDIDATE
+
+Run #21 (GitHub Actions run `45103889328`, job `137460654737`,
+commit `98ac802b5cd8ff3bb8c35f17888d8e94fff1bcf2`) applied the
+allocator overlay `0001` and prepend overlay `0002`, then failed while
+applying `0003-mbuf-test-portability.patch` at
+`src/ports/wifi/net80211/n80211_mbuf.c:37`. The job log reports:
+
+`error: patch failed: src/ports/wifi/net80211/n80211_mbuf.c:37`
+
+The cause is the ordered overlay dependency. Patch `0002` adds
+`#include <stdint.h>` to the userland include block in
+`n80211_mbuf.c`. Patch `0003` is applied afterwards, but its second hunk
+still expected the original upstream block without that line. The hunk
+therefore had stale context even though its first hunk (the illumos
+`boolean_t` stub guard) was applicable.
+
+The corrected `0003` hunk now explicitly includes the post-`0002`
+`stdint.h` line and inserts `strings.h` after `string.h`. The first
+hunk remains unchanged. A targeted local `git apply --check` sequence
+against reconstructed exact upstream include contexts, applying the
+`0002` include hunk before `0003`, passed. This is not yet a substitute
+for applying both complete patches in the pinned checkout; Run #22 must
+verify that, then execute the mbuf harness and proceed to native header
+closure.
+
+Run #21 did not reach the userland harness, AX101 source gate, native header
+staging, or kernel translation-unit compilation. The prepend-bounds fix
+remains FIXED-CANDIDATE; no runtime or physical packet-path claim is made.

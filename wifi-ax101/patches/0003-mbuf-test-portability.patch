@@ -12,8 +12,9 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h b/src/ports/wifi/iwx/iwx_m
 diff --git a/src/ports/wifi/net80211/n80211_mbuf.c b/src/ports/wifi/net80211/n80211_mbuf.c
 --- a/src/ports/wifi/net80211/n80211_mbuf.c
 +++ b/src/ports/wifi/net80211/n80211_mbuf.c
-@@ -37,3 +37,4 @@
+@@ -37,4 +37,5 @@
  #include "iwx_mbuf_test_stubs.h"
+ #include <stdint.h>
  #include <string.h>
 +#include <strings.h>
  #endif
