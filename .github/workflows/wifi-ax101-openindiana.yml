@@ -96,6 +96,31 @@ jobs:
             echo "allocator_flags_patch=0001-openbsd-allocator-flags.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$ALLOCATOR_PATCH" > "$ART/allocator-flags-patch.sha256"
 
+            # Apply the bounded net80211 prepend-bounds fix to the pinned source.
+            N80211_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0002-net80211-prepend-bounds.patch"
+            test -s "$N80211_PATCH"
+            git -C "$SRC" apply --check "$N80211_PATCH"
+            git -C "$SRC" apply "$N80211_PATCH"
+            git -C "$SRC" diff --check
+            echo "net80211_patch=0002-net80211-prepend-bounds.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$N80211_PATCH" > "$ART/net80211-prepend-patch.sha256"
+
+            # Run the existing userland mbuf harness against the patched implementation.
+            cd "$SRC/src/ports/wifi/net80211"
+            "$CC" -std=gnu99 -DN80211_MBUF_TEST -I../iwx n80211_mbuf_test.c n80211_mbuf.c ../iwx/iwx_mbuf.c -o "$ART/n80211_mbuf_test"
+            "$ART/n80211_mbuf_test" | tee "$ART/n80211-mbuf-test.txt"
+            "$CC" -std=gnu99 -DN80211_MBUF_TEST -DN80211_MBUF_SABOTAGE -I../iwx n80211_mbuf_test.c n80211_mbuf.c ../iwx/iwx_mbuf.c -o "$ART/n80211_mbuf_test_sabotage"
+            set +e
+            "$ART/n80211_mbuf_test_sabotage" > "$ART/n80211-mbuf-sabotage.log" 2>&1
+            sabotage_rc=$?
+            set -e
+            if [ "$sabotage_rc" -ne 2 ]; then
+              cat "$ART/n80211-mbuf-sabotage.log"
+              echo "ERROR: n80211 mbuf negative control returned $sabotage_rc, expected 2" >&2
+              exit 1
+            fi
+            echo "N80211_MBUF_NEGATIVE_CONTROL=PASS (expected exit 2)" >> "$ART/n80211-mbuf-test.txt"
+
             cd "$SRC/src/ports/wifi/iwx"
             bash "$GITHUB_WORKSPACE/wifi-ax101/check-ax101-source.sh" "$SRC/src/ports/wifi/iwx" | tee "$ART/ax101-source-gate.txt"
             ./gen-illumos-src.sh
@@ -117,16 +142,53 @@ jobs:
             echo "DLS_SHIM_STAGED=$DLS_SHIM_DST"
             digest -a sha256 "$DLS_SHIM_DST" > "$ART/dls-shim.sha256"
 
-            # mac_wifi.h is gate-internal and includes net80211_proto.h,
-            # which is also absent from the OpenIndiana proto. Stage the
-            # exact illumos-gate header used by this GLDv3 adapter.
-            N80211_PROTO_SRC="$GITHUB_WORKSPACE/wifi-ax101/compat/sys/net80211_proto.h"
-            N80211_PROTO_DST="$SRC/src/ports/wifi/iwm/compat-illumos/sys/net80211_proto.h"
-            test -s "$N80211_PROTO_SRC"
-            cp "$N80211_PROTO_SRC" "$N80211_PROTO_DST"
-            chmod 0644 "$N80211_PROTO_DST"
-            cmp -s "$N80211_PROTO_SRC" "$N80211_PROTO_DST"
-            digest -a sha256 "$N80211_PROTO_DST" > "$ART/net80211-proto-header.sha256"
+            # Close the native GLDv3 net80211 header dependency chain using exact
+            # headers from the pinned illumos-gate revision. Prefer target /usr/include
+            # whenever a native header exists; stage only headers omitted from the proto.
+            : > "$ART/net80211-header-closure.txt"
+            for rel in sys/net80211_proto.h sys/net80211.h sys/net80211_crypto.h sys/net80211_ht.h sys/net80211_amrr.h net/wpa.h; do
+              case "$rel" in
+                sys/net80211_proto.h) expected_blob=4fe7d40604615e3ffd1adb80d6e061fd4859c546 ;;
+                sys/net80211.h) expected_blob=be6b65fe905fabd6ebfd31cf74d7048357510e12 ;;
+                sys/net80211_crypto.h) expected_blob=72ef3ebec3c9ccc599ba29823d3561198d953252 ;;
+                sys/net80211_ht.h) expected_blob=449726aa0feae79d6bcea0f73e0625a7078a150e ;;
+                sys/net80211_amrr.h) expected_blob=36bd2fcd0eacd88c7b2c307c32a4db32bff5ffa0 ;;
+                net/wpa.h) expected_blob=82c4fd468a5f623411a98a814c40ba3d9ac4c87b ;;
+                *) echo "ERROR: unlisted net80211 header $rel" >&2; exit 1 ;;
+              esac
+              src="$GITHUB_WORKSPACE/wifi-ax101/compat/$rel"
+              test -s "$src"
+              actual_blob=$(git -C "$GITHUB_WORKSPACE" hash-object "$src")
+              if [ "$actual_blob" != "$expected_blob" ]; then
+                echo "ERROR: $rel blob $actual_blob != pinned illumos-gate $expected_blob" >&2
+                exit 1
+              fi
+              native="/usr/include/$rel"
+              dst="$SRC/src/ports/wifi/iwm/compat-illumos/$rel"
+              safe=$(printf '%s' "$rel" | tr '/' '-')
+              if [ -s "$native" ]; then
+                echo "NATIVE_HEADER_USED=$rel"
+                digest -a sha256 "$native" > "$ART/native-header-$safe.sha256"
+                printf '%s\t%s\tnative\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
+              else
+                mkdir -p "$(dirname "$dst")"
+                cp "$src" "$dst"
+                chmod 0644 "$dst"
+                cmp -s "$src" "$dst"
+                echo "STAGED_PINNED_GATE_HEADER=$rel"
+                digest -a sha256 "$dst" > "$ART/header-$safe.sha256"
+                printf '%s\t%s\tstaged\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
+              fi
+            done
+
+            # Remaining dependencies are public target headers and must come from OI.
+            for rel in sys/mac.h sys/mac_provider.h sys/ethernet.h sys/atomic.h inet/wifi_ioctl.h; do
+              test -s "/usr/include/$rel" || {
+                echo "ERROR: missing native OpenIndiana header /usr/include/$rel" >&2
+                exit 1
+              }
+              printf '%s\tnative-dependency\n' "$rel" >> "$ART/net80211-header-closure.txt"
+            done
 
             cd "$SRC/src/ports/wifi/iwx"
             gmake -f Makefile.illumos clean

@@ -1,0 +1,109 @@
+diff --git a/src/ports/wifi/net80211/n80211_mbuf.c b/src/ports/wifi/net80211/n80211_mbuf.c
+--- a/src/ports/wifi/net80211/n80211_mbuf.c
++++ b/src/ports/wifi/net80211/n80211_mbuf.c
+@@ -35,6 +35,7 @@
+ #include <sys/sunddi.h>
+ #else
+ #include "iwx_mbuf_test_stubs.h"
++#include <stdint.h>
+ #include <string.h>
+ #endif
+ 
+@@ -114,21 +115,37 @@
+ mblk_t *
+ n80211_m_prepend(mblk_t *m, int len, int how)
+ {
++	uintptr_t base, lim, rptr, wptr;
++	size_t need;
++
+ 	(void) how;
+ 	if (m == NULL || len < 0)
+ 		return (NULL);
+-	if (m->b_rptr - (size_t)len < DB_BASE(m)) {
+-		/* not enough headroom -- OpenBSD would alloc a new head; on the
+-		 * mgmt/EAPOL paths this cannot happen because the frame was
+-		 * allocated with slop, so a shortfall is a real error. */
++
++	/*
++	 * Validate integer address values before forming a pointer before
++	 * DB_BASE. Subtracting len from b_rptr first (the old check) forms an
++	 * out-of-object pointer when headroom is insufficient; that is
++	 * undefined behavior even though the pointer is only compared.
++	 */
++	base = (uintptr_t)DB_BASE(m);
++	lim = (uintptr_t)DB_LIM(m);
++	rptr = (uintptr_t)m->b_rptr;
++	wptr = (uintptr_t)m->b_wptr;
++	need = (size_t)len;
++
++	if (lim < base || rptr < base || rptr > lim ||
++	    wptr < rptr || wptr > lim || need > (size_t)(rptr - base)) {
++		/* Invalid window or insufficient headroom: consume the frame. */
+ 		freemsg(m);
+ 		return (NULL);
+ 	}
+-	m->b_rptr -= (size_t)len;
+-	/* the new bytes are part of the frame; keep the write window covering
+-	 * at least the prepended region so mtod()+len is writable. */
+-	if (m->b_wptr < m->b_rptr + (size_t)len)
+-		m->b_wptr = m->b_rptr + (size_t)len;
++
++	/*
++	 * b_wptr remains unchanged. Moving b_rptr back by need expands the
++	 * derived readable window by exactly need bytes.
++	 */
++	m->b_rptr = (unsigned char *)(rptr - need);
+ 	return (m);
+ }
+ 
+diff --git a/src/ports/wifi/net80211/n80211_mbuf_test.c b/src/ports/wifi/net80211/n80211_mbuf_test.c
+--- a/src/ports/wifi/net80211/n80211_mbuf_test.c
++++ b/src/ports/wifi/net80211/n80211_mbuf_test.c
+@@ -93,7 +93,37 @@
+ 		printf("ok 2b prepend underflow returns NULL and frees\n");
+ 	}
+ 
+-	/* --- 2c. m_align + prepend: the auth-frame path (regression test) ---
++	/* --- 2c. exact headroom boundary succeeds --- */
++	{
++		mblk_t *m = n80211_m_gethdr(M_DONTWAIT, MT_DATA);
++		assert(m != NULL);
++		m->b_rptr += 8;
++		m->b_wptr = m->b_rptr;
++		m->b_wptr[0] = 0x5A;
++		m->b_wptr++;
++		m = n80211_m_prepend(m, 8, M_DONTWAIT);
++		assert(m != NULL);
++		assert(m->b_rptr == DB_BASE(m));
++		assert(MBLKL(m) == 9);
++		assert(m->b_rptr[8] == 0x5A);
++		freemsg(m);
++		printf("ok 2c prepend exact headroom succeeds\n");
++	}
++
++	/* --- 2d. one byte less than required headroom is rejected --- */
++	{
++		mblk_t *m = n80211_m_gethdr(M_DONTWAIT, MT_DATA);
++		assert(m != NULL);
++		m->b_rptr += 7;
++		m->b_wptr = m->b_rptr;
++		long f0 = iwx_test_frees;
++		mblk_t *r = n80211_m_prepend(m, 8, M_DONTWAIT);
++		assert(r == NULL);
++		assert(iwx_test_frees > f0);
++		printf("ok 2d prepend one-byte-short headroom rejected and freed\n");
++	}
++
++	/* --- 2e. m_align + prepend: the auth-frame path (regression test) ---
+ 	 * ieee80211_get_auth does MGETHDR; m_align(m, 6); write 6 body bytes;
+ 	 * then ieee80211_mgmt_output M_PREPENDs the 24-byte 802.11 header. If
+ 	 * m_align leaves no leading headroom the prepend underflows and the
+@@ -111,7 +141,7 @@
+ 		assert(m != NULL);			/* prepend MUST succeed */
+ 		assert(m->b_rptr[24]==0x11 && m->b_rptr[29]==0x66);
+ 		freemsg(m);
+-		printf("ok 2c m_align leaves header room; auth prepend succeeds\n");
++		printf("ok 2e m_align leaves header room; auth prepend succeeds\n");
+ 	}
+ 
+ 	/* --- 3. copydata across a multi-segment chain --- */
