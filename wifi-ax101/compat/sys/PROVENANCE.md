@@ -85,3 +85,28 @@ its existing negative control, before the kernel-module build.
 
 This source change is a candidate until the patched harness and subsequent
 OpenIndiana build pass. It does not establish physical packet-path behavior.
+
+
+## Userland mbuf harness portability overlay
+
+Run #19 (GitHub Actions run `45092903456`, job `137426241172`, commit
+`e65fcba6d9c1cb5ab701dec483031896784a2bca`) failed before the native
+header-closure stage. The userland harness did not compile on the OpenIndiana
+host because the pinned test stub checked `#ifndef B_TRUE`; illumos exposes
+`B_TRUE` and `B_FALSE` as enum constants, not preprocessor macros. The
+condition therefore redefined `boolean_t`, conflicting with the native
+typedef in `sys/types.h`. The same compile also found that the non-kernel
+branch of `n80211_mbuf.c` called `bcopy()` without including
+`<strings.h>`.
+
+The new local overlay
+`wifi-ax101/patches/0003-mbuf-test-portability.patch` makes the stub define
+its fallback boolean type only on non-Solaris hosts (`!__sun`) and includes
+`<strings.h>` in the userland test branch so the native declaration of
+`bcopy()` is visible. The kernel include branch and production packet path
+are unchanged by this test-portability patch.
+
+Run #19 did not reach the mbuf tests, AX101 source gate, native header staging,
+or kernel compilation. The prepend bounds change remains FIXED-CANDIDATE
+until the harness passes and the OpenIndiana build proceeds through the
+relevant translation units.

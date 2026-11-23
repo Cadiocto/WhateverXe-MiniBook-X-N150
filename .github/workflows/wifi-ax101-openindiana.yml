@@ -105,6 +105,15 @@ jobs:
             echo "net80211_patch=0002-net80211-prepend-bounds.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$N80211_PATCH" > "$ART/net80211-prepend-patch.sha256"
 
+            # Keep the userland test stubs portable on the native illumos build host.
+            TEST_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0003-mbuf-test-portability.patch"
+            test -s "$TEST_PATCH"
+            git -C "$SRC" apply --check "$TEST_PATCH"
+            git -C "$SRC" apply "$TEST_PATCH"
+            git -C "$SRC" diff --check
+            echo "mbuf_test_patch=0003-mbuf-test-portability.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$TEST_PATCH" > "$ART/mbuf-test-portability-patch.sha256"
+
             # Run the existing userland mbuf harness against the patched implementation.
             cd "$SRC/src/ports/wifi/net80211"
             "$CC" -std=gnu99 -DN80211_MBUF_TEST -I../iwx n80211_mbuf_test.c n80211_mbuf.c ../iwx/iwx_mbuf.c -o "$ART/n80211_mbuf_test"
