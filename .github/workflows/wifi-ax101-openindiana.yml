@@ -193,6 +193,15 @@ jobs:
             test -s "$ART/iwx-mbuf-tests.txt"
             bash "$GITHUB_WORKSPACE/wifi-ax101/check-ax101-source.sh" "$SRC/src/ports/wifi/iwx" | tee "$ART/ax101-source-gate.txt"
             ./gen-illumos-src.sh
+
+            # Decode packed firmware channel-profile words without unaligned loads.
+            PACKED_MEMBER_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0009-packed-member-alignment.patch"
+            test -s "$PACKED_MEMBER_PATCH"
+            patch --dry-run -p1 -F0 -d "$SRC/src/ports/wifi/iwx" -i "$PACKED_MEMBER_PATCH"
+            patch -p1 -F0 -d "$SRC/src/ports/wifi/iwx" -i "$PACKED_MEMBER_PATCH"
+            echo "packed_member_alignment_patch=0009-packed-member-alignment.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$PACKED_MEMBER_PATCH" > "$ART/packed-member-alignment-patch.sha256"
+
             cd "$SRC/src/ports/wifi/net80211"
             ./gen-illumos-src.sh
 
@@ -264,6 +273,11 @@ jobs:
             # Keep going across independent translation units so one missing
             # header does not hide the rest of the compile-time error surface.
             gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
+            if grep -Fq 'warning: taking address of packed member' "$ART/build.log"; then
+              echo "ERROR: packed firmware channel-profile alignment warnings remain" >&2
+              exit 1
+            fi
+            echo "IWX_PACKED_MEMBER_ALIGNMENT=PASS"
             if grep -Fq 'warning: "m_free" redefined' "$ART/build.log"; then
               echo "ERROR: net80211 m_free override still produces redefinition warnings" >&2
               exit 1
