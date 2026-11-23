@@ -351,4 +351,54 @@ Workflow evidence: Run #31 `45130849256`, job `137545745809`, step 4, failure at
 
 **Change in this commit:** `wifi-ax101/patches/0006-net80211-ioctl-macro-closure.patch` changes one TAB byte in the deletion context. Parent: `0ad2ffaaeac20c1c5a4de94933f8b30cea08f38c`. No firmware, PCI identity, ABI structure, solnix pin or illumos-gate pin changed.
 
-**Lifecycle:** FIXED-CANDIDATE pending the next controlled OpenIndiana run. That run must apply all overlays in order, pass allocator/mbuf/source gates, compile and link the native module, and confirm no `SIOC*80211` macro-redefinition warnings remain. Strict ELF acceptance, firmware ALIVE, runtime attach and physical networking remain NOT TESTED.
+**Lifecycle:** FIXED-VERIFIED by Run #32 (`45132583917`, job `137551243195`, commit `38e92b1fb7dc6fd9303b1b6f1bb2f9a6bfef59aa`). The clean pinned checkout applied overlays 0001–0006 in order; the native build completed 30 compiler invocations and linked the module; the log reports `N80211_IOCTL_MACRO_REDEFINITION_WARNING=PASS`. This verifies patch application and build integration, not runtime ioctl behavior. Strict ELF acceptance, firmware ALIVE, runtime attach and physical networking remain NOT TESTED.
+
+
+## RUN #32 — overlay closure, regression tests and native build verification
+
+Run: `45132583917` (run number 32)  
+Job: `137551243195` (`build-iwx`)  
+Commit: `38e92b1fb7dc6fd9303b1b6f1bb2f9a6bfef59aa`  
+Parent: `0ad2ffaaeac20c1c5a4de94933f8b30cea08f38c`  
+Started: `2026-11-23T07:38:32Z`  
+Completed: `2026-11-23T07:42:16Z`  
+Result: **SUCCESS**
+
+**Observed build evidence.** The workflow checked out the branch commit, cloned solnix, detached at `1cee7021091f3df92b7816ece2902ff59b37f1be`, then ran `git apply --check`, `git apply`, and `git diff --check` for overlays 0001 through 0006 in that exact order. All six applied. The previous 0006 hunk-count and TAB-context failures did not recur. The OpenIndiana 2026.10 job completed 30 GCC compile invocations and `ld -r -Breduce`; artifact `build-status.txt` records `exit_code=0`.
+
+**Overlay 0006 disposition.** The only byte-level context correction in the patch is the deleted `SIOCS80211KEYRUN` line: the patch now matches the one-TAB source line in the pinned `n80211_stack.h`. Run #32 proves application against the actual pinned checkout, rather than only a reconstructed fixture. The overlay removes the 29 duplicated ifreq-encoded SIOC80211 definitions and leaves `SIOCG80211ZSTATS` in the stack header. The build log reports `N80211_IOCTL_MACRO_REDEFINITION_WARNING=PASS`; no ioctl macro redefinition warning remains. The pinned iwx ioctl header remains authoritative; ioctl request structures and pinned source are not rewritten.
+
+**Regression evidence.**
+- Allocator helper: 6 checks, 0 failures.
+- net80211 mbuf harness: `allocs==frees==20`; negative control returned its expected exit 2.
+- iwx mbuf: 71 checks, 0 failures.
+- mlist: 26 checks, 0 failures.
+- cookie: 23 checks, 0 failures.
+- Negative controls: 13/13 detected.
+- AX101 static source gate: PASS, including device 0x54f0, HR1 extraction/config selection, firmware-name candidate, allocator flag values, helper mapping, and NULL handling at all five active M_CANFAIL sites.
+- `N80211_MFREE_OVERRIDE_WARNING=PASS` and `N80211_IOCTL_MACRO_REDEFINITION_WARNING=PASS`.
+
+**Artifact.** Artifact ID `14798054384`, size 812,737 bytes, GitHub SHA-256 `4674d8c1c73506e4dfa2cd76fd1a2f41e84c321ba8a40a8566229984552f0402`. It contains 38 files. Module size 403,864 bytes; module SHA-256 `c7b2140d7d2c237937f046fd0e0dca672837c0eedd002c73359f28dfd449716e`. Firmware candidate size 1,500,532 bytes; SHA-256 `bed4958236366c3c451b3ec994a56b2ad83c08d70e0a1eae42fb00f2eaabbcc8`. The firmware license file was staged and the workflow checked for its redistribution text. These are artifact/build facts, not firmware ALIVE evidence.
+
+**ELF inspection (independent host-side inspection of the downloaded artifact).** The module is ELF64, little-endian, EM_AMD64, ET_REL, with 18 sections and no `.interp`. Its `.dynamic` section declares `NEEDED misc/mac` and `FLAGS TEXTREL`. The artifact has 3,463 relocations: 3,051 in `.rela.text` (808 `R_X86_64_32S`, 2,243 `R_X86_64_PC32`), 372 `R_X86_64_64` in `.rela.rodata`, and 40 `R_X86_64_64` in `.rela.data`. The symbol table contains 132 named undefined symbols (133 UND entries including the null symbol). They are in recognizable illumos DDI/PCI, GLDv3/MAC, STREAMS, kernel synchronization/memory/thread/time, firmware, security-policy, and compiler-runtime groups; no Linux-only symbol was identified by name. **This is not a complete export reconciliation.** The target kernel's actual export set and ABI prototypes were not available as an authoritative export map in this run.
+
+`TEXTREL` is a dynamic flag indicating relocations that require modification of a non-writable section; it is not by itself proof that an ET_REL illumos module is unloadable or invalid. The relocation sections need to be checked against the target release's krtld-supported x86_64 relocation handling. That check remains OPEN. The workflow still runs `elfdump -e`, `elfdump -d`, and `nm` under `|| true`, does not emit a relocation report, and does not enforce symbol/export reconciliation. Therefore strict ELF acceptance is OPEN despite successful compile/link.
+
+**Packed-member diagnostics.** Run #32 still reports four `-Waddress-of-packed-member` warnings:
+- `iwx_nvm_get_info_regulatory.channel_profile` at generated `if_iwx_illumos.c:4040`;
+- `iwx_nvm_get_info_regulatory_v1.channel_profile` at line 4043;
+- `iwx_mcc_update_resp_v4.channels` at line 10054;
+- `iwx_mcc_update_resp.channels` at line 10076.
+
+The structures are firmware wire-format structures declared `__packed`; their layout must not be changed. The consumers pass these pointers to `iwx_init_channel_map()`, which reads 16- or 32-bit elements. An aligned local `memcpy` buffer is a plausible safe remediation preserving byte order/layout, but no patch was applied in this run. Finding remains OPEN pending a targeted overlay and compile test.
+
+**Source-level integration findings.**
+- The active Makefile defines `-DN80211_GIANT`. Thus the compiled `if_input()` branch calls `n80211_defer_rx()`; the non-GIANT branch would free received packets. This is build-verified selection of the intended RX bridge, not a live RX test.
+- `n80211_giant_exit()` detaches the queued RX chain under giant, releases the mutex, then translates and calls `mac_rx()` outside the giant lock. This avoids direct MAC callback re-entry while holding giant. However, the translation callback and its argument are read from globals after unlock; hook unregister/free synchronization and single-instance assumptions remain OPEN.
+- `ifq_enqueue()` frees a packet on queue overflow, increments `ifq_drops`, and returns a nonzero drop result. `iwx_glue.c` ignores that return, but the queue owns and frees the dropped packet, so that branch does not leave the packet allocated. This is source-level ownership evidence only.
+- `iwm_intr_trampoline()` enters `n80211_giant` from DDI interrupt context. `n80211_giant_init()` initializes that mutex with `MUTEX_DRIVER, NULL` (adaptive mutex); the interrupt setup rejects only high-level priorities. The interrupt path therefore has an unresolved DDI mutex-context contract and is a P0 engineering blocker. Do not treat the successful build as proof of interrupt safety.
+- `iwx_il_detach()` still returns `DDI_FAILURE` unconditionally; suspend/resume are not wired. Attach-failure unwind disestablishes the interrupt while holding giant, which requires review for an ISR/giant teardown wait cycle. No detach fix was attempted because a safe teardown must drain ISR, taskq, timeout, RX delivery and GLDv3 registration before freeing state.
+- `iwm_gld_rx_frame()` reads `g_wd.wd_bssid` while `iwm_gld_set_bss()` writes it outside giant; synchronization remains OPEN.
+- WPA join accepts a 32-byte PMK and passes it to the OpenBSD RSN path. The source documents PBKDF2-HMAC-SHA1/4096 in a userland helper; passphrase derivation is not performed by the kernel driver. End-to-end WPA2 is NOT TESTED.
+
+**Lifecycle.** Overlay 0006 is FIXED-VERIFIED for exact pinned application, warning removal and successful module build. Run #32 is the latest verified build on the branch at this record. It does not establish ELF loadability, interrupt safety, firmware ALIVE, attach, RX/TX hardware operation, WPA2, DHCP, DNS, or physical connectivity. No physical device, BIOS, NVRAM, bootloader, partition, or system network setting was changed.
