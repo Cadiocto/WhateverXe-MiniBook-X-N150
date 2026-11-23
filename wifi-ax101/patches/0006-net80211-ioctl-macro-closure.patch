@@ -20,7 +20,7 @@
   */
  #ifndef SIOCGIFMEDIA
  #define SIOCGIFMEDIA	_IOWR('i', 56, struct ifmediareq)
-@@ -122,37 +123,7 @@
+@@ -122,36 +123,6 @@
  #define SIOCSIFMEDIA	_IOWR('i', 55, struct ifreq)
  #endif
  
