@@ -97,12 +97,14 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_te
 +	unsigned char snapshot[32];
 +	unsigned char *saved_r, *saved_w, *saved_limit;
 +	uintptr_t b;
++	long frees_before;
 +
 +	CHECK(m != NULL, "alloc malformed-window test");
 +	if (m == NULL)
 +		return;
 +	base = DB_BASE(m);
 +	b = (uintptr_t)base;
++	frees_before = iwx_test_frees;
 +	memset(base, 0x6D, sizeof (snapshot));
 +	memcpy(snapshot, base, sizeof (snapshot));
 +
@@ -149,7 +151,7 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_te
 +	CHECK(iwx_m_shift_right(m, 8, SIZE_MAX) == B_FALSE, "reject SIZE_MAX padding length");
 +	CHECK(m->b_rptr == base && m->b_wptr == base + 16, "oversized-length refusals preserve pointers");
 +	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0, "all malformed-window refusals preserve bytes");
-+	CHECK(iwx_test_frees == 0, "helper does not consume malformed message");
++	CHECK(iwx_test_frees == frees_before, "helper does not consume malformed message");
 +	iwx_m_free(m);
 +}
 +
