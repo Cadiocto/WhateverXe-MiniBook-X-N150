@@ -406,8 +406,16 @@ jobs:
                 echo "ERROR: modload returned success but iwx is absent from modinfo -c" >&2
                 exit 1
               fi
-              iwx_modid=$(awk '$NF == "iwx" { print $1; exit }' "$ART/modinfo-after-modload.txt")
-              test -n "$iwx_modid"
+              # modinfo -c columns are: Id, Loadcnt, Module Name, State.
+              # The module name is field 3; field 4 is LOADED/INSTALLED.
+              iwx_modid=$(awk '$3 == "iwx" && $2 ~ /^[0-9]+$/ && $2 > 0 && $4 == "LOADED/INSTALLED" { print $1; exit }' "$ART/modinfo-after-modload.txt")
+              case "$iwx_modid" in
+                ''|*[!0-9]*)
+                  echo "ERROR: iwx is not reported as LOADED/INSTALLED by modinfo -c" >&2
+                  cat "$ART/modinfo-after-modload.txt"
+                  exit 1
+                  ;;
+              esac
               echo "IWX_MODULE_ID=$iwx_modid" > "$ART/iwx-module-id.txt"
             else
               echo "ERROR: modinfo unavailable; cannot verify post-load module registration" >&2
@@ -431,10 +439,12 @@ jobs:
               exit "$modunload_rc"
             fi
             modinfo -c > "$ART/modinfo-after-modunload.txt" 2>&1 || true
-            if awk '$NF == "iwx" && $2 != 0 { found=1 } END { exit !found }' "$ART/modinfo-after-modunload.txt"; then
+            if awk '$3 == "iwx" && $2 ~ /^[0-9]+$/ && $2 > 0 && $4 == "LOADED/INSTALLED" { found=1 } END { exit !found }' "$ART/modinfo-after-modunload.txt"; then
               echo "ERROR: iwx remains loaded after modunload" >&2
+              cat "$ART/modinfo-after-modunload.txt"
               exit 1
             fi
+            echo "IWX_MODINFO_AFTER_UNLOAD=PASS"
             rem_drv iwx > "$ART/rem-drv.txt" 2>&1
             rm -f /kernel/drv/amd64/iwx
             echo "KRTLD_CONTROLLED_UNLOAD=PASS"
