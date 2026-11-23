@@ -39,6 +39,6 @@ diff --git a/src/ports/wifi/net80211/n80211_kcompat.c b/src/ports/wifi/net80211/
  {
  	void *p;
 -	int km = (flags & M_NOWAIT) ? KM_NOSLEEP : KM_SLEEP;
-+\tint km = iwx_bsd_kmem_flags(flags);
++	int km = iwx_bsd_kmem_flags(flags);
  
  	(void) type;
