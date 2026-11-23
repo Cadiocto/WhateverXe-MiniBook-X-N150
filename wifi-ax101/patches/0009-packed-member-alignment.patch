@@ -1,8 +1,8 @@
 diff --git a/build/if_iwx_illumos.c b/build/if_iwx_illumos.c
 --- a/build/if_iwx_illumos.c
 +++ b/build/if_iwx_illumos.c
-@@ -309,7 +309,7 @@
- void	iwx_schedule_session_protection(struct iwx_softc *, struct iwx_node *,
+@@ -306,7 +306,7 @@
+ int	iwx_schedule_session_protection(struct iwx_softc *, struct iwx_node *,
  	    uint32_t);
  void	iwx_unprotect_session(struct iwx_softc *, struct iwx_node *);
 -void	iwx_init_channel_map(struct iwx_softc *, uint16_t *, uint32_t *, int);
@@ -10,7 +10,7 @@ diff --git a/build/if_iwx_illumos.c b/build/if_iwx_illumos.c
  void	iwx_setup_ht_rates(struct iwx_softc *);
  void	iwx_setup_vht_rates(struct iwx_softc *);
  int	iwx_mimo_enabled(struct iwx_softc *);
-@@ -3158,16 +3158,24 @@
+@@ -3162,13 +3162,15 @@
  
  void
 -iwx_init_channel_map(struct iwx_softc *sc, uint16_t *channel_profile_v3,
@@ -28,7 +28,7 @@ diff --git a/build/if_iwx_illumos.c b/build/if_iwx_illumos.c
  	int is_5ghz;
  	int flags, hw_value;
  	int nchan;
-@@ -3180,9 +3188,15 @@
+@@ -3184,8 +3186,20 @@
  
  	for (ch_idx = 0; ch_idx < nchan && ch_idx < nchan_profile; ch_idx++) {
 -		if (channel_profile_v4)
@@ -53,7 +53,7 @@ diff --git a/build/if_iwx_illumos.c b/build/if_iwx_illumos.c
 +		}
  
  		/* net80211 cannot handle 6 GHz channel numbers yet */
-@@ -4031,12 +4045,18 @@
+@@ -4036,12 +4050,16 @@
  	}
  
  	if (v4) {
@@ -74,7 +74,7 @@ diff --git a/build/if_iwx_illumos.c b/build/if_iwx_illumos.c
  	}
  out:
  	iwx_free_resp(sc, &hcmd);
-@@ -10016,8 +10036,9 @@
+@@ -10051,7 +10069,8 @@
  		    resp->geo_info, resp->source_id, resp->n_channels));
  
  		/* Update channel map and our scan configuration. */
@@ -84,7 +84,7 @@ diff --git a/build/if_iwx_illumos.c b/build/if_iwx_illumos.c
  		    resp->n_channels);
  	} else {
  		struct iwx_mcc_update_resp *resp;
-@@ -10038,8 +10059,9 @@
+@@ -10073,6 +10092,7 @@
  		    resp->geo_info, resp->source_id, resp->n_channels));
  
  		/* Update channel map and our scan configuration. */
