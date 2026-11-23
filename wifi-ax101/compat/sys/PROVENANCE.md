@@ -51,7 +51,7 @@ Git blob IDs are recorded to let CI verify byte identity before staging:
 | `compat/sys/net80211_proto.h` | `usr/src/uts/common/sys/net80211_proto.h` | `4fe7d40604615e3ffd1adb80d6e061fd4859c546` | BSD-style / GPL-2 dual notice |
 | `compat/sys/net80211.h` | `usr/src/uts/common/sys/net80211.h` | `be6b65fe905fabd6ebfd31cf74d7048357510e12` | BSD-3-Clause / GPL-2 dual notice |
 | `compat/sys/net80211_crypto.h` | `usr/src/uts/common/sys/net80211_crypto.h` | `72ef3ebec3c9ccc599ba29823d3561198d953252` | BSD-style / GPL-2 dual notice |
-| `compat/sys/net80211_ht.h` | `usr/src/uts/common/sys/net80211_ht.h` | `449726aa0feae79d6bcea0f73e0625a7078a150e` | BSD-3-Clause notice |
+| `compat/sys/net80211_ht.h` | `usr/src/uts/common/sys/net80211_ht.h` | `449726aa0feae79d6bcea0f73e0625a7078a150e` | Two-condition BSD license notice |
 | `compat/sys/net80211_amrr.h` | `usr/src/uts/common/sys/net80211_amrr.h` | `36bd2fcd0eacd88c7b2c307c32a4db32bff5ffa0` | ISC-style permission notice |
 | `compat/net/wpa.h` | `usr/src/uts/common/net/wpa.h` | `82c4fd468a5f623411a98a814c40ba3d9ac4c87b` | CDDL header retained verbatim |
 
@@ -110,3 +110,30 @@ Run #19 did not reach the mbuf tests, AX101 source gate, native header staging,
 or kernel compilation. The prepend bounds change remains FIXED-CANDIDATE
 until the harness passes and the OpenIndiana build proceeds through the
 relevant translation units.
+
+
+## Run #20 patch-format correction
+
+Run #20 (GitHub Actions run `45097606012`, job `137440814065`, commit
+`3e40f14c8331ac9d1385acb565bb8e42f2295754`) failed while applying
+`0003-mbuf-test-portability.patch`, before the userland mbuf harness,
+native header staging, or kernel compilation. The job log reports
+`error: corrupt patch .../0003-mbuf-test-portability.patch:12`.
+
+The first hunk declared seven old/new lines although its body contains six;
+its corrected range is `@@ -24,6 +24,6 @@`. The second hunk was based
+on a stale include context: the pinned solnix source at
+`atiq-cs/solnix@1cee7021091f3df92b7816ece2902ff59b37f1be` has only
+`iwx_mbuf_test_stubs.h`, `string.h`, and `#endif` in the userland
+include block (lines 37-39); it does not include `stdint.h` there. The
+corrected hunk is `@@ -37,3 +37,4 @@` and inserts `strings.h` after
+`string.h`.
+
+A local `git apply --check` and application test against a minimal file
+reconstructed from the exact pinned source context passed. This validates
+the unified-diff syntax and context shape, but is not a substitute for
+applying the patch in the pinned checkout. Run #21 must prove that.
+
+The `net80211_ht.h` license row above was also corrected after inspecting
+the copied header's retained copyright/license text: it is a two-condition
+BSD notice, not BSD-3-Clause. No source license text was changed.
