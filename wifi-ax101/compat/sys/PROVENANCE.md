@@ -299,3 +299,56 @@ The OpenIndiana build status is `exit_code=0`.
 **Artifact/ELF limits:** the artifact contains an ELF64 little-endian AMD64 relocatable object (`ET_REL`), and independent inspection found no `.interp` section. The OpenIndiana `elfdump` report includes `TEXTREL`; 132 undefined symbols are present in the symbol listing and were not reconciled against the target kernel's complete export set. The workflow stores `elfdump`/`nm` output diagnostically with `|| true`; it does not implement a strict independent ELF acceptance parser. Firmware file and license were staged; the firmware file hash is `bed4958236366c3c451b3ec994a56b2ad83c08d70e0a1eae42fb00f2eaabbcc8`. Firmware ALIVE and runtime operation remain NOT TESTED.
 
 **Subsequent branch status (outside PATCH-003):** after Run #29, later commits introduced overlay `0006-net80211-ioctl-macro-closure.patch`. Run #30 `45130051443` failed with `corrupt patch ...0006...:60`; Run #31 `45130849256` then failed applying that patch at `src/ports/wifi/net80211/compat/net80211/n80211_stack.h:122`. Source HEAD before this provenance-only update: `6a4fccf67e04ddd2f3927e538971ce3279b19449`. The provenance-only documentation commit recording this state is `b3922ed7647edb7dfb7793b678aaa630942a9dd7`; no driver source or build inputs changed in that commit. These later failures do not invalidate Run #29's PATCH-003 verification, but the latest branch HEAD is not build-green. No automatic retry is authorized or recorded here.
+
+
+## AX101-CI-PATCH-004 — malformed hunk count in ioctl macro overlay
+
+Finding: AX101-CI-PATCH-004  
+First seen: 2026-11-23T07:22:49.797Z (Run #30)  
+Latest seen: 2026-11-23T07:29:00.707Z (Run #31)  
+Failure HEAD: `fd1e08ae8fe5c90d922b92ded0490355ff1ca934`  
+Failure parent: `f900e457bfc2ac7b89fb397519e13143d76049d1`  
+Fix commit: `6a4fccf67e04ddd2f3927e538971ce3279b19449`  
+Path: `wifi-ax101/patches/0006-net80211-ioctl-macro-closure.patch`  
+Target: second unified-diff hunk for `src/ports/wifi/net80211/compat/net80211/n80211_stack.h`  
+Run #30: `45130051443`, job `137543235465`, step 4, log at `2026-11-23T07:22:49.797Z`  
+Run #31: `45130849256`, job `137545745809`, step 4.
+
+**Observed:** Run #30 rejected overlay 0006 with `error: corrupt patch ...0006-net80211-ioctl-macro-closure.patch:60`. It stopped before the allocator tests, mbuf suites, source gate and native compilation.
+
+**Root cause: VERIFIED.** The second hunk declared 37 old lines and 7 new lines, while its body contained 36 old and 6 new lines. The unified-diff counts were each one too large.
+
+**Selected correction:** commit `6a4fccf67e04ddd2f3927e538971ce3279b19449` changed only the hunk header from `@@ -122,37 +123,7 @@` to `@@ -122,36 +123,6 @@`. No source, ioctl values, structure layout, pinned revision or acceptance gate changed.
+
+**Validation:** Run #31 no longer reported a corrupt-patch/parser error; it advanced to a context mismatch in the same hunk. `git apply --stat` on the corrected patch parsed successfully and reported one file, 7 insertions and 36 deletions. This verifies hunk syntax only, not full application.
+
+**Lifecycle:** FIXED-VERIFIED for unified-diff syntax/counts only. Full patch application remained blocked by AX101-CI-PATCH-005. No OpenIndiana compilation or runtime ioctl behavior is established by this finding.
+
+
+## AX101-CI-PATCH-005 — ioctl overlay tab mismatch in deletion context
+
+Finding: AX101-CI-PATCH-005  
+First seen: 2026-11-23T07:29:00.707780Z (Run #31)  
+Latest seen: 2026-11-23T07:31:23Z  
+Failure HEAD: `6a4fccf67e04ddd2f3927e538971ce3279b19449`  
+Failure parent: `fd1e08ae8fe5c90d922b92ded0490355ff1ca934`  
+Current pre-fix HEAD: `0ad2ffaaeac20c1c5a4de94933f8b30cea08f38c` (parent `b3922ed7647edb7dfb7793b678aaa630942a9dd7`; intervening commits are provenance-only)  
+Path: `wifi-ax101/patches/0006-net80211-ioctl-macro-closure.patch`  
+Pinned upstream: `atiq-cs/solnix@1cee7021091f3df92b7816ece2902ff59b37f1be`  
+Upstream file: `src/ports/wifi/net80211/compat/net80211/n80211_stack.h:155`  
+Upstream blob: `8b94c33afe9e378814b070864b34f0faedaa8fca`  
+Workflow evidence: Run #31 `45130849256`, job `137545745809`, step 4, failure at `2026-11-23T07:29:00.707Z`.
+
+**Observed:** after overlays 0001–0005 applied, Run #31 failed at `git apply --check` for overlay 0006 with `patch failed: .../n80211_stack.h:122`. The reported line is the hunk start, not the exact mismatching line.
+
+**Root cause: VERIFIED.** A byte-level comparison of every deleted context line against the pinned source found exactly one mismatch: `SIOCS80211KEYRUN`. The pinned upstream line is `#define SIOCS80211KEYRUN<TAB>_IOW(...)` (one TAB), while the deletion context in overlay 0006 contained two TABs. Git therefore rejected the otherwise correctly counted hunk.
+
+**Semantic audit:** the pinned `Makefile.illumos` force-includes `sys/n80211_prelude.h`; that prelude includes `net80211/n80211_stack.h`. The pinned `ieee80211_ioctl.c` includes `net80211/ieee80211_var.h` and `net80211/ieee80211_ioctl.h`; `ieee80211_var.h` also includes the ioctl header. The pinned `ieee80211_ioctl.h` provides the canonical definitions for the 29 duplicated SIOC80211 command names, with their original command numbers and request structures. It does not define `SIOCG80211ZSTATS`, so that one definition remains in `n80211_stack.h`. The overlay removes only the conflicting ifreq-only duplicates; it does not alter wire structures or the pinned ioctl header.
+
+**Selected resolution:** change only the deleted `SIOCS80211KEYRUN` context line in overlay 0006 to use the single TAB present in the pinned source. Alternatives such as changing hunk offsets, adding fuzz, or modifying upstream source were rejected because the exact one-TAB correction is sufficient and preserves the source.
+
+**Local validation:** an isolated fixture reconstructed from the exact pinned upstream lines 108–157 reproduced the failure before correction (`git apply --check` returned 1 at hunk line 122). After changing only that deletion line to one TAB, `git apply --check` passed. `git apply --stat` reported one file changed, 7 insertions and 36 deletions; after application, `SIOCG80211ZSTATS` was the only remaining `SIOC*80211` definition in `n80211_stack.h`. This is a targeted exact-context fixture, not a full pinned-checkout or OpenIndiana build.
+
+**Change in this commit:** `wifi-ax101/patches/0006-net80211-ioctl-macro-closure.patch` changes one TAB byte in the deletion context. Parent: `0ad2ffaaeac20c1c5a4de94933f8b30cea08f38c`. No firmware, PCI identity, ABI structure, solnix pin or illumos-gate pin changed.
+
+**Lifecycle:** FIXED-CANDIDATE pending the next controlled OpenIndiana run. That run must apply all overlays in order, pass allocator/mbuf/source gates, compile and link the native module, and confirm no `SIOC*80211` macro-redefinition warnings remain. Strict ELF acceptance, firmware ALIVE, runtime attach and physical networking remain NOT TESTED.

@@ -54,6 +54,6 @@
 -#define SIOCG80211JOIN		_IOWR('i', 257, struct ifreq)
 -#define SIOCG80211JOINALL	_IOWR('i', 258, struct ifreq)
 -#define SIOCS80211KEYAVAIL	_IOW('i', 259, struct ifreq)
--#define SIOCS80211KEYRUN		_IOW('i', 260, struct ifreq)
+-#define SIOCS80211KEYRUN	_IOW('i', 260, struct ifreq)
  
  #endif /* _N80211_STACK_H */
