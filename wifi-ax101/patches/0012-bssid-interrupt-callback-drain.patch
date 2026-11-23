@@ -1,7 +1,7 @@
 diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 --- a/src/ports/wifi/iwm/iwm_gld.c
 +++ b/src/ports/wifi/iwm/iwm_gld.c
-@@ -251,17 +251,40 @@
+@@ -266,23 +260,40 @@
  	    ((uint64_t)bssid[5] << 40));
  }
  
@@ -40,12 +40,18 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
  	g->g_wd.wd_opmode = IEEE80211_M_STA;
  	g->g_wd.wd_qospad = 0;
 -	bcopy(bssid, g->g_wd.wd_bssid, IEEE80211_ADDR_LEN);
+-	/*
+-	 * The BSSID is a self-contained 48-bit value in one 64-bit atomic
+-	 * object. No separate payload fields depend on this publication, so
+-	 * atomicity (rather than ordering between multiple objects) is the
+-	 * required property for the RX reader.
+-	 */
 -	(void) atomic_swap_64(&g->g_bssid_word, iwm_bssid_pack(bssid));
 +	bcopy(st.s_bssid, g->g_wd.wd_bssid, IEEE80211_ADDR_LEN);
  	(void) mac_pdata_update(g->g_mh, &g->g_wd, sizeof (g->g_wd));
  	mac_tx_update(g->g_mh);
  	mutex_exit(&g->g_bssid_lock);
-@@ -272,30 +295,20 @@
+@@ -287,30 +304,20 @@
   * BSSID under giant and push it to the plugin before mac_link_update.
   * mac_pdata_update allocates and notifies mac clients, so it runs unlocked.
   */
@@ -83,7 +89,7 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
  }
  
  static int
-@@ -828,9 +841,8 @@
+@@ -843,9 +850,8 @@
  		return (err);
  	}
  	mac_link_update(g->g_mh, LINK_STATE_DOWN);
@@ -95,7 +101,7 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
  	*gp = g;
  	return (0);
  }
-@@ -843,13 +855,14 @@
+@@ -858,13 +864,14 @@
  
  	if (g == NULL)
  		return (0);
