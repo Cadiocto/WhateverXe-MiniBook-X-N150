@@ -416,3 +416,79 @@ The downloaded Run #32 module uses only three relocation types:
 The pinned illumos krtld relocation table explicitly defines `R_AMD64_64`, `R_AMD64_PC32`, and `R_AMD64_32S`. Its kernel relocation routine `do_reloc_krtld()` includes the 32S sign-extension verification and PC32 range handling. Therefore **the relocation types observed in this artifact are recognized by the pinned gate's x86_64 krtld implementation**. No unsupported relocation type was found in the artifact.
 
 This closes only the relocation-*type support* question. It does not prove that the target OpenIndiana 2026.10 kernel exports all 132 undefined symbols with compatible ABI, that the artifact's dynamic `TEXTREL` flag is ignored/accepted in the module loading path, or that every relocation value fits at the actual kernel load address. Those remain OPEN until checked against the target kernel and loader (or an equivalent controlled krtld module-load test). Do not classify strict ELF acceptance as complete.
+
+## AX101-MBUF-SHIFT-001 — RX alignment-pad length and received-window bounds
+
+**First seen:** 2026-11-23T09:05:03Z (first confirmed in this run; no earlier accessible journal entry records this defect).  
+**Latest seen:** 2026-11-23T09:05:03Z.  
+**Repository baseline:** `wifi-ax101-openindiana` HEAD `f296fd307f4e2365becaed72ca2aaf908bbbae4f`; parent `UNKNOWN`.  
+**Pinned inputs:** solnix `1cee7021091f3df92b7816ece2902ff59b37f1be`; illumos-gate `098e95820891f8a83fae679daece7fcf58b7b3a4`.  
+**Relevant prior CI evidence:** Run #32 `45132583917`, job `137551243195`, commit `38e92b1fb7dc6fd9303b1b6f1bb2f9a6bfef59aa`. It passed the old iwx mbuf suite (71 checks) and all 13 existing negative controls; that suite encoded the incorrect length-neutral expectation.
+
+**Observed defect — VERIFIED.**
+- Pinned solnix `src/ports/wifi/iwx/upstream/if_iwx.c:5235-5265` accounts for the hardware pad after the 802.11 header, moves the header over the pad, then calls positive `m_adj(m, 2)`.
+- Pinned solnix `src/ports/wifi/iwx/iwx_mbuf.c:109-120` maps the adapter's positive adjustment to illumos `adjmsg()`; `iwx_m_shift_right()` at approximately lines 178-211 currently performs the move and then extends `b_wptr` by `n`.
+- Pinned illumos-gate `usr/src/uts/common/io/stream.c:1728-1757` proves positive `adjmsg()` trims from the head by advancing `b_rptr`; it does not extend `b_wptr`.
+- Therefore the old `b_wptr += n` cancels the following head trim: the resulting packet length remains `mpdu_len` instead of `mpdu_len - n`, exposing `n` bytes beyond the device-reported MPDU at the tail. The old test asserted `before + 2` after the shift and `before` after adjustment, so it validated the wrong contract.
+- The helper also checked that the header bytes were readable but did not prove that the following `n` pad bytes were inside the received window. With a short device-reported window, it could overwrite allocated-but-unreceived bytes.
+
+**Root cause confidence:** VERIFIED. This is a helper-contract error plus a test that encoded the same mistaken assumption; it is not a firmware or wire-layout change.
+
+**Selected resolution:** overlay `0007-rx-padding-window-length.patch`.
+- Keep `b_wptr` unchanged during the memmove; the caller's positive adjustment then reduces the packet length by exactly the pad size.
+- Before moving bytes, check both backing-cluster capacity and the complete readable range `header_len + pad_len`; subtraction is performed only after the preceding length check.
+- Correct the helper/API comments and both iwx/iwm generated-call-site comments that share this helper contract.
+- Replace the old length-neutral test with assertions for unchanged pointers/write end during the move, packet/segment length reduction after adjustment, preserved header and payload bytes, and no extension beyond the received MPDU.
+- Extend failure tests to verify atomic refusal for cluster overflow, unreadable header, and missing pad bytes: no pointer movement, no byte modification, no ownership transfer, and exactly one caller free.
+- Add two negative controls: reintroducing the old write-pointer extension and removing the received-pad check must each make the harness fail.
+
+**Alternatives rejected:** changing `adjmsg()`/native STREAMS semantics would break the illumos contract; adjusting the length later in a caller would leave the shared helper unsafe and would not prevent a write into allocated-but-unreceived padding. No firmware API, descriptor layout, ABI, PCI identity, or pinned revision changes.
+
+**Overlay scope:** nine pinned-source files under `src/ports/wifi/{iwx,iwm}`: `iwx_mbuf.c`, `iwx_mbuf.h`, `iwx_mbuf_adapter.h`, `iwx_mbuf_test.c`, `iwx/run-mbuf-tests.sh`, `iwx/patches/if_iwx.illumos.patch`, `iwx/STATUS.md`, `iwm/gen-illumos-src.py`, and `iwm/patches/if_iwm.illumos.patch`. The two iwm changes are comment/generator-contract corrections only; no iwm runtime code is changed.
+**Project changes in this commit:** add `wifi-ax101/patches/0007-rx-padding-window-length.patch`; apply it after overlay 0006 in `.github/workflows/wifi-ax101-openindiana.yml`; append this record to `wifi-ax101/compat/sys/PROVENANCE.md`.
+**Validation before commit:** exact raw source fetched at the pinned solnix SHA; generated unified diff reconstructed byte-for-byte against all nine original pinned files in memory; a byte-layout model produced the expected 38-byte result from a 40-byte padded MPDU and showed that the old write-end extension includes two sentinel tail bytes. No C harness, native compile, or `git apply` execution has occurred yet.
+**Acceptance plan:** the push-triggered Run #33 must apply overlays 0001-0007 to the exact pinned checkout, pass the expanded allocator/net80211/iwx mbuf/mbuf-list/cookie suites, detect all 15 negative controls, pass the static source gate, complete all per-translation-unit compiler invocations, and link the module. A pass proves source/test/build integration only, not interrupt runtime, firmware ALIVE, scan, association, WPA2, TX/RX on hardware, DHCP, DNS, internet, or reconnect.
+**Lifecycle:** FIXED-CANDIDATE pending the exact CI run.  
+**Commit:** parent `f296fd307f4e2365becaed72ca2aaf908bbbae4f`; SHA and push result will be recorded in the follow-up audit entry after GitHub confirms the ref update.
+
+## AX101-IRQ-001 — adaptive giant mutex in the interrupt trampoline (severity re-audit)
+
+**First seen:** 2026-11-23T07:42:16Z (Run #32 report). **Latest seen:** 2026-11-23T09:05:03Z.  
+**Paths/symbols:** `src/ports/wifi/iwm/iwm_bus.c:541-580` (`iwm_intr_trampoline`, `pci_intr_establish`); `src/ports/wifi/net80211/n80211_giant.c:23-35,105,119-122`; `src/ports/wifi/iwx/Makefile.illumos:8-9,28-38`.  
+**Prior status:** Run #32 called adaptive-mutex acquisition from the interrupt trampoline a P0 blocker. That severity is narrowed, not silently erased. The iwx Makefile explicitly compiles the iwm bus trampoline; it obtains the actual DDI priority and rejects `pri >= ddi_intr_get_hilevel_pri()`. The giant is adaptive (`mutex_init(..., NULL, MUTEX_DRIVER, NULL)`). The pinned illumos-gate precedent `usr/src/uts/common/io/iwn/if_iwn.c:862,3286-3397` initializes its interrupt mutex adaptively and takes it from its ordinary interrupt handler, including condition-variable signalling. The pinned solnix `n80211_giant.c` documents the same low-level-interrupt rule.
+**Root-cause confidence:** VERIFIED for the source precedent; UNKNOWN for the actual AX101 interrupt priority/runtime behavior. The mere presence of an adaptive mutex in this non-high-level ISR is not, by itself, proof of an invalid context.
+**Status/lifecycle:** PARTIAL / STILL OPEN, not a verified P0 blocker. Exact AX101 MSI priority and hardware interrupt behavior are NOT TESTED. Next action is to preserve the high-level-priority rejection and obtain actual device-side evidence when physical testing is authorized.
+
+## AX101-DDI-UNWIND-001 — interrupt teardown while holding giant
+
+**First seen:** 2026-11-23T07:42:16Z (Run #32 report). **Latest seen:** 2026-11-23T09:05:03Z.  
+**Paths/symbols:** `src/ports/wifi/iwx/iwx_glue.c:400-420,491-507` (`iwx_il_free_hw`, `iwx_il_attach`, `iwx_il_detach`); `src/ports/wifi/iwm/iwm_bus.c:541-551,613-630` (`iwm_intr_trampoline`, `iwm_intr_disestablish`).  
+**Observed risk:** `iwx_il_free_hw()` enters giant and calls `iwm_intr_disestablish()`; an in-flight ISR enters the same giant before running the driver handler. If DDI disable/remove waits for an in-flight handler, this lock ordering can deadlock. `iwx_il_detach()` currently refuses detach with `DDI_FAILURE`; attach-failure unwind remains active.  
+**Root cause confidence:** SUSPECTED; exact `ddi_intr_disable/remove_handler` synchronization semantics and the device-stop/DMA quiesce order still need authoritative verification.  
+**Lifecycle:** STILL OPEN; no code change. Next action: audit the pinned DDI implementation/man pages and all attach-failure states before moving disestablish or freeing DMA/rings.
+
+## AX101-RX-HOOK-001 — deferred RX translation callback lifetime
+
+**First seen:** 2026-11-23T07:42:16Z (Run #32 report). **Latest seen:** 2026-11-23T09:05:03Z.  
+**Paths/symbols:** `src/ports/wifi/net80211/n80211_giant.c:157-185` (`n80211_giant_exit`); `src/ports/wifi/iwm/iwm_gld.c:801-826` (`iwm_gld_register/unregister`).  
+**Observed risk:** RX chains are detached under giant, then the mutex is released before the global translation callback and argument are read/called. Unregister clears those globals and frees the GLDv3 state after `mac_unregister`; synchronization with a chain already detached by `n80211_giant_exit` is not proven.  
+**Root cause confidence:** SUSPECTED. **Lifecycle:** STILL OPEN. Next action: establish an in-flight callback reference/registration lifetime protocol and test unregister-vs-drain races before changing the code.
+
+## AX101-RX-BSSID-001 — BSSID state race in RX translation
+
+**First seen:** 2026-11-23T07:42:16Z (Run #32 report). **Latest seen:** 2026-11-23T09:05:03Z.  
+**Paths/symbols:** `src/ports/wifi/iwm/iwm_gld.c:190-220` (`iwm_gld_rx_frame` reads `g_wd.wd_bssid`); `src/ports/wifi/iwm/iwm_gld.c:233-243` (`iwm_gld_set_bss` writes it).  
+**Observed risk:** the RX translator reads the BSSID while the BSS update writes the same field outside giant; no common synchronization is visible in these functions.  
+**Root cause confidence:** SUSPECTED. **Lifecycle:** STILL OPEN. Next action: define a consistent snapshot/update protocol that does not hold giant across `mac_pdata_update`.
+
+## AX101-ELF-001 — strict module ELF/export acceptance
+
+**First seen:** 2026-11-23T07:42:16Z (Run #32 report). **Latest seen:** 2026-11-23T09:05:03Z.  
+**Evidence:** Run #32 artifact `14798054384` contains an ELF64 AMD64 ET_REL module with 3,463 relocations, dynamic `TEXTREL`, and 132 named undefined symbols. The pinned krtld recognizes the three observed relocation types, but the target OpenIndiana 2026.10 kernel's complete export set and ABI prototypes were not reconciled. Workflow diagnostic commands remain non-gating.  
+**Root cause confidence:** UNKNOWN for target export compatibility. **Lifecycle:** STILL OPEN. Next action: obtain an authoritative target export map and enforce a strict symbol/relocation acceptance check; do not infer acceptance from compile/link.
+
+## AX101-PACKED-001 — packed firmware-member alignment warnings
+
+**First seen:** 2026-11-23T07:42:16Z (Run #32 report). **Latest seen:** 2026-11-23T09:05:03Z.  
+**Evidence:** four `-Waddress-of-packed-member` diagnostics in generated `if_iwx_illumos.c` at lines 4040, 4043, 10054 and 10076 for regulatory/MCC firmware wire structures. Their packed layout must remain unchanged; aligned local copies via `memcpy` are the candidate remediation after auditing every consumer.  
+**Root cause confidence:** VERIFIED for the warning sites; remediation not implemented. **Lifecycle:** STILL OPEN / NOT TESTED. Next action: add aligned locals with byte-for-byte ABI preservation and compile the affected translation unit.

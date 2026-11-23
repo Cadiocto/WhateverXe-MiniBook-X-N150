@@ -1,0 +1,384 @@
+diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
+--- a/src/ports/wifi/iwx/iwx_mbuf.c
++++ b/src/ports/wifi/iwx/iwx_mbuf.c
+@@ -180,29 +180,29 @@
+ 		return (B_TRUE);
+ 
+ 	/*
+-	 * OpenBSD's memmove(m->m_data + 2, m->m_data, hdrlen) writes hdrlen
+-	 * bytes starting 2 past the read pointer, i.e. it needs len + n bytes of
+-	 * cluster from b_rptr. On OpenBSD the RX cluster is oversized and that
+-	 * slack is implicit; allocb() does not promise it at the same offset, so
+-	 * check it. Overflow-safe form: compare against the remaining span
+-	 * rather than computing src + len + n.
++	 * The RX descriptor's MPDU length includes the alignment pad after
++	 * the header. The caller moves the header over that pad, then trims
++	 * the pad from the head with iwx_m_adj(m, n). Do not extend b_wptr:
++	 * that would cancel the head trim and expose n bytes beyond the
++	 * received MPDU as payload.
++	 *
++	 * The destination must fit both the backing cluster and the received
++	 * window. The second check also proves that all n pad bytes are
++	 * actually present in the received MPDU, not merely allocated.
+ 	 */
+ 	if (len > (size_t)(DB_LIM(m) - src))
+ 		return (B_FALSE);
+ 	if (n > (size_t)(DB_LIM(m) - src) - len)
+ 		return (B_FALSE);
+ 
+-	/* The source bytes must actually be readable, not merely allocated. */
++	/* The source header and the following pad must both be readable. */
+ 	if (len > (size_t)(m->b_wptr - src))
+ 		return (B_FALSE);
++	if (n > (size_t)(m->b_wptr - src) - len)
++		return (B_FALSE);
+ 
++	/* b_wptr stays put; the caller's iwx_m_adj(m, n) removes the pad. */
+ 	memmove(src + n, src, len);
+-	/*
+-	 * The frame is now n bytes longer. Without this the caller's following
+-	 * m_adj(m, n) (if_iwx.c:5265) trims the pad AND n bytes of real payload
+-	 * off the tail-derived length, and the corruption is silent.
+-	 */
+-	m->b_wptr += n;
+ 	return (B_TRUE);
+ }
+ 
+diff --git a/src/ports/wifi/iwx/iwx_mbuf.h b/src/ports/wifi/iwx/iwx_mbuf.h
+--- a/src/ports/wifi/iwx/iwx_mbuf.h
++++ b/src/ports/wifi/iwx/iwx_mbuf.h
+@@ -113,12 +113,14 @@
+  * if_iwx.c:5264, which shifts the 802.11 header right over the hardware's
+  * 2-byte alignment pad. OpenBSD relies on the cluster having slack at the tail;
+  * allocb() makes no such promise at the same offset, so the destination end
+- * (n + len) is checked against the cluster limit first. The write window is
+- * extended by n, because the frame just got n bytes longer -- omitting that is
+- * the subtle half of this bug: the memmove would succeed and the caller's
+- * following m_adj(m, 2) would then trim real header bytes.
++ * (n + len) is checked against the cluster limit and the received window
++ * before memmove; this also proves that the n-byte pad follows the header.
++ * The pad is already included in the MPDU length. The caller then uses
++ * iwx_m_adj(m, n) to trim it from the head, so b_wptr remains unchanged and
++ * the derived length decreases by n. Extending b_wptr would expose bytes
++ * beyond the received MPDU as payload.
+  *
+- * Returns B_FALSE with the buffer untouched if the shift does not fit.
++ * Returns B_FALSE with the buffer untouched if the shift or pad does not fit.
+  */
+ extern boolean_t iwx_m_shift_right(mblk_t *m, size_t len, size_t n);
+ 
+diff --git a/src/ports/wifi/iwx/iwx_mbuf_adapter.h b/src/ports/wifi/iwx/iwx_mbuf_adapter.h
+--- a/src/ports/wifi/iwx/iwx_mbuf_adapter.h
++++ b/src/ports/wifi/iwx/iwx_mbuf_adapter.h
+@@ -66,12 +66,12 @@
+  *      :10305       m->m_len < sizeof(*eh)            -> iwx_m_len
+  *
+  * B2. READS OF m_data AS A BARE POINTER, inside a memmove that shifts the frame
+- *    header over the hardware's 2-byte pad.
++ *    header over the hardware's 2-byte pad in the received MPDU.
+  *      :5264  memmove(m->m_data + 2, m->m_data, hdrlen)
+- *             -> iwx_m_shift_right(m, hdrlen, 2), which performs the bounds
+- *                check OpenBSD gets for free from cluster slack: allocb() does
+- *                not promise headroom at the same offset, so 2 + hdrlen must be
+- *                checked against the cluster limit BEFORE the memmove.
++ *             -> iwx_m_shift_right(m, hdrlen, 2), which checks both cluster
++ *                capacity and the readable window before moving bytes. The
++ *                following m_adj(m, 2) removes the pad from the head, so
++ *                b_wptr is deliberately left unchanged.
+  *
+  * B3. m_pullup USED AS AN ASSIGNMENT. :10306 "(m = m_pullup(m, ...)) == NULL".
+  *    Resolved by the TYPE alias: the local is `struct mbuf *` which now IS
+diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_test.c
+--- a/src/ports/wifi/iwx/iwx_mbuf_test.c
++++ b/src/ports/wifi/iwx/iwx_mbuf_test.c
+@@ -358,23 +358,23 @@
+ }
+ 
+ /*
+- * if_iwx.c:5264 -- memmove(m->m_data + 2, m->m_data, hdrlen) shifts the 802.11
+- * header right over the hardware's 2-byte alignment pad, and the caller then
+- * does m_adj(m, 2). Two things must hold and only one of them is obvious.
++ * if_iwx.c:5264-5265 -- the received MPDU is [header][2-byte pad],
++ * followed by payload. memmove shifts the header over the pad; m_adj then
++ * trims it from the head. The result is two bytes shorter, with payload intact.
+  */
+ static void
+ test_shift_right_moves_header_and_length(void)
+ {
+ 	mblk_t *m = iwx_m_alloc(64);
+-	unsigned char *p;
++	unsigned char *p, *base;
+ 	size_t before;
+ 	int i;
+ 
+ 	CHECK(m != NULL, "alloc");
+ 	if (m == NULL)
+ 		return;
+-	/* A 24-byte 802.11 header of recognisable bytes in a 40-byte frame. */
+-	CHECK(iwx_m_set_window(m, DB_BASE(m), 40), "set_window");
++	base = DB_BASE(m);
++	CHECK(iwx_m_set_window(m, base, 40), "set_window");
+ 	p = iwx_mtod(m);
+ 	for (i = 0; i < 40; i++)
+ 		p[i] = (unsigned char)(i + 1);
+@@ -382,57 +382,96 @@
+ 
+ 	CHECK(iwx_m_shift_right(m, 24, 2) == B_TRUE,
+ 	    "shift of 24 bytes by 2 must fit in a 64-byte cluster");
++	CHECK(m->b_rptr == base, "shift must not move the read pointer");
++	CHECK(m->b_wptr == base + before,
++	    "shift must not extend the received MPDU window");
++	CHECK(iwx_m_len(m) == before,
++	    "shift alone must leave the received length unchanged");
++	CHECK(iwx_m_pktlen(m) == before,
++	    "shift alone must leave the chain packet length unchanged");
+ 	p = iwx_mtod(m);
+ 	CHECK(p[2] == 1 && p[25] == 24,
+-	    "the 24 header bytes must appear 2 further along");
+-	/*
+-	 * THE NON-OBVIOUS HALF. The frame is 2 bytes longer, so the write window
+-	 * must grow with it. If it does not, the caller's following m_adj(m, 2)
+-	 * trims 2 bytes off a length that never accounted for them and the tail
+-	 * of every padded frame is silently lost.
+-	 */
+-	CHECK(iwx_m_len(m) == before + 2,
+-	    "shift must extend the write window (else m_adj(m,2) eats payload)");
++	    "the 24 header bytes must appear 2 bytes later");
+ 
+-	/* And after the caller's m_adj(m, 2) the frame is back to its length. */
+ 	CHECK(iwx_m_adj(m, 2) == B_TRUE, "m_adj(m,2) after the shift");
+-	CHECK(iwx_m_len(m) == before,
+-	    "shift-then-adj must be length-neutral (if_iwx.c:5264-5265)");
++	CHECK(iwx_m_len(m) == before - 2,
++	    "removing the 2-byte pad must shorten the frame by exactly 2");
++	CHECK(iwx_m_pktlen(m) == before - 2,
++	    "the packet length must exclude the removed pad");
+ 	p = iwx_mtod(m);
+ 	CHECK(p[0] == 1 && p[23] == 24,
+-	    "after adj the header must start at the read pointer again");
++	    "after pad removal the header must start at the read pointer");
++	CHECK(p[24] == 27 && p[37] == 40,
++	    "payload bytes after the header must be preserved");
+ 	iwx_m_free(m);
+ }
+ 
+ /*
+- * The bounds check OpenBSD gets for free from oversized clusters. hdrlen comes
+- * from ieee80211_get_hdrlen() on a header the DEVICE supplied, so a frame that
+- * fills its cluster must not be shifted past the end.
++ * The destination and the two-byte pad must be inside both the backing
++ * cluster and the received MPDU window. Every refusal must be atomic:
++ * pointers, bytes and ownership stay unchanged.
+  */
+ static void
+ test_shift_right_rejects_overflow(void)
+ {
+ 	mblk_t *m = iwx_m_alloc(32);
+-	unsigned char *base;
++	unsigned char *base, *saved_r, *saved_w;
++	unsigned char snapshot[32];
+ 	size_t len;
++	long frees_before;
+ 
+ 	CHECK(m != NULL, "alloc");
+ 	if (m == NULL)
+ 		return;
+ 	base = DB_BASE(m);
+ 	len = iwx_m_clustersize(m);
+-	/* Window covering the entire cluster: there is no slack to shift into. */
++	memset(base, 0xA5, sizeof (snapshot));
++
++	/* No tail room in the cluster for the shifted header. */
+ 	CHECK(iwx_m_set_window(m, base, len), "set_window full");
++	saved_r = m->b_rptr;
++	saved_w = m->b_wptr;
++	memcpy(snapshot, base, sizeof (snapshot));
++	frees_before = iwx_test_frees;
+ 	CHECK(iwx_m_shift_right(m, len, 2) == B_FALSE,
+ 	    "shifting a full cluster right by 2 must be refused");
+-	CHECK(iwx_m_len(m) == len, "refused shift must leave the length alone");
+-	CHECK(iwx_mtod(m) == base, "refused shift must leave the window alone");
++	CHECK(m->b_rptr == saved_r && m->b_wptr == saved_w,
++	    "cluster-bound refusal must preserve both pointers");
++	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0,
++	    "cluster-bound refusal must preserve all sampled bytes");
++	CHECK(iwx_test_frees == frees_before,
++	    "a refused shift must not consume or free the buffer");
+ 
+-	/* A shift whose SOURCE is longer than the readable window is also bogus. */
++	/* The source header itself must be readable. */
+ 	CHECK(iwx_m_set_window(m, base, 4), "set_window short");
++	saved_r = m->b_rptr;
++	saved_w = m->b_wptr;
++	memcpy(snapshot, base, sizeof (snapshot));
+ 	CHECK(iwx_m_shift_right(m, 8, 2) == B_FALSE,
+-	    "shifting more bytes than are readable must be refused");
++	    "shifting more header bytes than are readable must be refused");
++	CHECK(m->b_rptr == saved_r && m->b_wptr == saved_w,
++	    "short-source refusal must preserve both pointers");
++	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0,
++	    "short-source refusal must preserve all sampled bytes");
++	CHECK(iwx_test_frees == frees_before,
++	    "short-source refusal must preserve ownership");
++
++	/* The cluster has room, but only one of the required two pad bytes arrived. */
++	CHECK(iwx_m_set_window(m, base, 25), "set_window one pad byte");
++	saved_r = m->b_rptr;
++	saved_w = m->b_wptr;
++	memcpy(snapshot, base, sizeof (snapshot));
++	CHECK(iwx_m_shift_right(m, 24, 2) == B_FALSE,
++	    "a missing received pad byte must be refused");
++	CHECK(m->b_rptr == saved_r && m->b_wptr == saved_w,
++	    "missing-pad refusal must preserve both pointers");
++	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0,
++	    "missing-pad refusal must not overwrite allocated but unread bytes");
++	CHECK(iwx_test_frees == frees_before,
++	    "missing-pad refusal must preserve ownership");
+ 	iwx_m_free(m);
++	CHECK(iwx_test_frees == frees_before + 1,
++	    "caller must retain ownership and free the buffer exactly once");
+ }
+ 
+ /*
+diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-tests.sh
+--- a/src/ports/wifi/iwx/run-mbuf-tests.sh
++++ b/src/ports/wifi/iwx/run-mbuf-tests.sh
+@@ -194,6 +194,23 @@
+ 	'	(void) adjmsg(m, (ssize_t)len);
+ 	return (B_TRUE);'
+ 
++# (i) Re-introduce the old write-pointer extension: it cancels m_adj(m, 2)
++#     and exposes n unread tail bytes beyond the received MPDU as payload.
++sabotage shift_extends_write_window \
++	'	memmove(src + n, src, len);
++	return (B_TRUE);' \
++	'	memmove(src + n, src, len);
++	m->b_wptr += n;
++	return (B_TRUE);'
++
++# (j) Accept allocated-but-unreceived padding. The shift would overwrite bytes
++#     beyond the device-reported MPDU window.
++sabotage shift_ignores_unreceived_pad \
++	'	if (n > (size_t)(m->b_wptr - src) - len)
++		return (B_FALSE);' \
++	'	if (0)
++		return (B_FALSE);'
++
+ # --- mbuf_list negative controls. Header-only, so the sabotage patches the
+ # --- header into the per-case directory and that copy shadows the real one.
+ mlist_sabotage() {
+@@ -258,23 +275,23 @@
+ 	fi
+ }
+ 
+-# (i) THE central mbuf_list bug: build the batch with b_cont instead of b_next,
++# (k) THE central mbuf_list bug: build the batch with b_cont instead of b_next,
+ #     which concatenates two separate frames into one oversized corrupt frame.
+ mlist_sabotage enqueue_uses_bcont \
+ 	'		ml->ml_tail->b_next = m;' \
+ 	'		ml->ml_tail->b_cont = m;'
+ 
+-# (j) Fail to detach on dequeue, so freeing one packet frees the whole batch.
++# (l) Fail to detach on dequeue, so freeing one packet frees the whole batch.
+ mlist_sabotage dequeue_no_detach \
+ 	'	m->b_next = NULL;	/* detach, or the caller frees the whole batch */' \
+ 	'	/* sabotaged: left attached */'
+ 
+-# (k) Purge that walks only the head packet, leaking the rest of the batch.
++# (m) Purge that walks only the head packet, leaking the rest of the batch.
+ mlist_sabotage purge_leaks_batch \
+ 	'	for (m = ml->ml_head; m != NULL; m = n) {' \
+ 	'	for (m = ml->ml_head; m != NULL && m == ml->ml_head; m = n) {'
+ 
+-# (l) THE COOKIE DISCIPLINE. ml_purge frees a still-queued management frame
++# (n) THE COOKIE DISCIPLINE. ml_purge frees a still-queued management frame
+ #     without going through iwx_m_take_cookie, so it must clear b_prev itself or
+ #     freemsg() gets a message the kernel ASSERTs against
+ #     (uts/common/io/stream.c:659) -- a DEBUG panic and a SILENT non-DEBUG bug.
+@@ -288,7 +305,7 @@
+ 	'		freemsg(m);	/* frees this' \
+ 	iwx_mcookie_test.c
+ 
+-# (m) The consumer must CLEAR as it reads. A peek that leaves b_prev set sends
++# (o) The consumer must CLEAR as it reads. A peek that leaves b_prev set sends
+ #     the frame down the TX path still dirty.
+ mlist_sabotage cookie_take_does_not_clear \
+ 	'	void *cookie = (void *)m->b_prev;
+diff --git a/src/ports/wifi/iwx/patches/if_iwx.illumos.patch b/src/ports/wifi/iwx/patches/if_iwx.illumos.patch
+--- a/src/ports/wifi/iwx/patches/if_iwx.illumos.patch
++++ b/src/ports/wifi/iwx/patches/if_iwx.illumos.patch
+@@ -89,11 +89,11 @@
+  
+ -		memmove(m->m_data + 2, m->m_data, hdrlen);
+ +		/*
+-+		 * ILLUMOS: the memmove needs 2 + hdrlen bytes of cluster from
+-+		 * b_rptr, which allocb() does not promise, and the frame gets 2
+-+		 * bytes longer so the write pointer must move with it. Both are
+-+		 * inside iwx_m_shift_right(). A failure here means the device
+-+		 * reported a header longer than the buffer it sent.
+++		 * ILLUMOS: the 2-byte pad is part of the received MPDU window.
+++		 * The helper checks cluster capacity and readable data, and leaves
+++		 * b_wptr unchanged. The following m_adj(m, 2) removes the pad
+++		 * from the head and shortens the frame by two. This prevents
+++		 * unread tail bytes beyond the MPDU from being exposed as payload.
+ +		 */
+ +		if (!iwx_m_shift_right(m, hdrlen, 2)) {
+ +			IC2IFP(ic)->if_ierrors++;
+diff --git a/src/ports/wifi/iwx/STATUS.md b/src/ports/wifi/iwx/STATUS.md
+--- a/src/ports/wifi/iwx/STATUS.md
++++ b/src/ports/wifi/iwx/STATUS.md
+@@ -301,10 +301,10 @@
+ **Two functions were added in session two, both because the mechanical translation was wrong:**
+ 
+ * **`iwx_m_shift_right(m, len, n)`** for `memmove(m->m_data + 2, m->m_data, hdrlen)` (`:5264`). The
+-  obvious translation gets the *bounds* right and the *length* wrong: the frame becomes 2 bytes longer,
+-  so `b_wptr` must move with it, or the caller's following `m_adj(m, 2)` (`:5265`) trims real payload off
+-  a length that never accounted for the pad. Both halves are checked, and the length half is the one a
+-  reviewer would not think to look for.
++  helper checks that the shifted header and the following pad fit both the backing cluster and the
++  received MPDU window. It deliberately leaves `b_wptr` unchanged: the caller's following
++  `m_adj(m, 2)` (`:5265`) trims the pad from the head, so the final frame length is two bytes shorter.
++  The test now verifies the payload bytes after the header as well as the resulting length.
+ * **`iwx_m_at(m, offset, need)`** for `m0->m_data + offset` (`:10882`, `:10927`), which steps through
+   several firmware responses packed in one RX buffer with `offset` advancing by a device-reported length.
+   The interesting refusal is an offset **inside the cluster but past the received data** -- allocated but
+diff --git a/src/ports/wifi/iwm/gen-illumos-src.py b/src/ports/wifi/iwm/gen-illumos-src.py
+--- a/src/ports/wifi/iwm/gen-illumos-src.py
++++ b/src/ports/wifi/iwm/gen-illumos-src.py
+@@ -69,11 +69,11 @@
+ rep('''		memmove(m->m_data + 2, m->m_data, hdrlen);
+ 		m_adj(m, 2);
+ ''', '''		/*
+-		 * ILLUMOS: the memmove needs 2 + hdrlen bytes of cluster from
+-		 * b_rptr and the frame gets 2 bytes longer, so the write pointer
+-		 * must move with it; both are inside iwx_m_shift_right(). A
+-		 * failure means the device reported a header longer than the
+-		 * buffer it sent.
++		 * ILLUMOS: the 2-byte pad is included in the received MPDU.
++		 * iwx_m_shift_right() checks cluster capacity and readable data
++		 * before moving the header, and leaves b_wptr unchanged. The
++		 * following m_adj(m, 2) removes the pad from the head, so the
++		 * reported frame length decreases by two.
+ 		 */
+ 		if (!iwx_m_shift_right(m, hdrlen, 2)) {
+ 			IC2IFP(ic)->if_ierrors++;
+diff --git a/src/ports/wifi/iwm/patches/if_iwm.illumos.patch b/src/ports/wifi/iwm/patches/if_iwm.illumos.patch
+--- a/src/ports/wifi/iwm/patches/if_iwm.illumos.patch
++++ b/src/ports/wifi/iwm/patches/if_iwm.illumos.patch
+@@ -104,11 +104,11 @@
+  	
+ -		memmove(m->m_data + 2, m->m_data, hdrlen);
+ +		/*
+-+		 * ILLUMOS: the memmove needs 2 + hdrlen bytes of cluster from
+-+		 * b_rptr and the frame gets 2 bytes longer, so the write pointer
+-+		 * must move with it; both are inside iwx_m_shift_right(). A
+-+		 * failure means the device reported a header longer than the
+-+		 * buffer it sent.
+++		 * ILLUMOS: the 2-byte pad is included in the received MPDU.
+++		 * iwx_m_shift_right() checks cluster capacity and readable data
+++		 * before moving the header, and leaves b_wptr unchanged. The
+++		 * following m_adj(m, 2) removes the pad from the head, so the
+++		 * reported frame length decreases by two.
+ +		 */
+ +		if (!iwx_m_shift_right(m, hdrlen, 2)) {
+ +			IC2IFP(ic)->if_ierrors++;

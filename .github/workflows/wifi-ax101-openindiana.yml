@@ -143,6 +143,16 @@ jobs:
             echo "net80211_ioctl_macro_patch=0006-net80211-ioctl-macro-closure.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$IOCTL_PATCH" > "$ART/net80211-ioctl-macro-patch.sha256"
 
+            # Preserve the RX descriptor's MPDU length: the two-byte pad is
+            # already in the received window and is removed by the following m_adj.
+            RX_PADDING_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0007-rx-padding-window-length.patch"
+            test -s "$RX_PADDING_PATCH"
+            git -C "$SRC" apply --check "$RX_PADDING_PATCH"
+            git -C "$SRC" apply "$RX_PADDING_PATCH"
+            git -C "$SRC" diff --check
+            echo "rx_padding_window_patch=0007-rx-padding-window-length.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$RX_PADDING_PATCH" > "$ART/rx-padding-window-patch.sha256"
+
             # Unit-test the exact helper included by n80211_kcompat.c.
             "$CC" -std=c99 -Wall -Wextra -Werror \
               -I"$SRC/src/ports/wifi/net80211/compat" \
