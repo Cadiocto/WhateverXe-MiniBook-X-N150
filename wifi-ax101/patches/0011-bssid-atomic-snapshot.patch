@@ -2,7 +2,16 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 index 083eb111166ade0d91c2e82c3aa52de533459207..0000000000000000000000000000000000000000 100644
 --- a/src/ports/wifi/iwm/iwm_gld.c
 +++ b/src/ports/wifi/iwm/iwm_gld.c
-@@ extern int mac_header_info(mac_handle_t, mblk_t *, mac_header_info_t *);
+@@ -36,6 +36,8 @@
+ #include <sys/policy.h>
+ #include <sys/mac_provider.h>
+ #include <sys/dls.h>		/* DLS_SAP_LLC */
++#include <sys/atomic.h>
++#include <sys/mutex.h>
+ #include <sys/mac_wifi.h>
+ #include <sys/net80211.h>
+ #include <inet/wifi_ioctl.h>
+@@ -50,5 +52,12 @@ extern int mac_header_info(mac_handle_t, mblk_t *, mac_header_info_t *);
  
  struct iwm_gld {
 +	/*
@@ -15,41 +24,7 @@ index 083eb111166ade0d91c2e82c3aa52de533459207..00000000000000000000000000000000
  	mac_handle_t	g_mh;
  	void		*g_sc;
  	uint8_t		g_addr[ETHERADDRL];
-@@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
- 
- 	g = kmem_zalloc(sizeof (*g), KM_SLEEP);
- 	g->g_sc = sc;
-+	mutex_init(&g->g_bssid_lock, NULL, MUTEX_DRIVER, NULL);
- 	bcopy(addr, g->g_addr, ETHERADDRL);
- 
- 	macp = mac_alloc(MAC_VERSION);
- 	if (macp == NULL) {
-+		mutex_destroy(&g->g_bssid_lock);
- 		kmem_free(g, sizeof (*g));
- 		return (ENOMEM);
-@@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
- 	mac_free(macp);
- 	if (err != 0) {
-+		mutex_destroy(&g->g_bssid_lock);
- 		kmem_free(g, sizeof (*g));
- 		return (err);
-@@ iwm_gld_unregister(void *gp)
- 		n80211_rx_xlate = NULL;
- 		n80211_link_hook = NULL;
- 		n80211_xlate_arg = NULL;
-+		mutex_destroy(&g->g_bssid_lock);
- 		kmem_free(g, sizeof (*g));
- 	}
-@@ -36,6 +36,8 @@
- #include <sys/policy.h>
- #include <sys/mac_provider.h>
- #include <sys/dls.h>		/* DLS_SAP_LLC */
-+#include <sys/atomic.h>
-+#include <sys/mutex.h>
- #include <sys/mac_wifi.h>
- #include <sys/net80211.h>
- #include <inet/wifi_ioctl.h>
-@@ -50,5 +52,12 @@ -211,5 +220,11 @@
+@@ -211,5 +220,11 @@
  	wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_DATA;
  	wh->i_fc[1] = IEEE80211_FC1_DIR_FROMDS;
  	bcopy(&eh.ether_dhost, wh->i_addr1, ETHERADDRL);
@@ -103,4 +78,28 @@ index 083eb111166ade0d91c2e82c3aa52de533459207..00000000000000000000000000000000
  	mac_tx_update(g->g_mh);
 +	mutex_exit(&g->g_bssid_lock);
  }
-@@ -775,9 +814,11 @@ -798,4 +839,5 @@ -821,5 +863,6 
+@@ -775,9 +814,11 @@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
+ 
+ 	g = kmem_zalloc(sizeof (*g), KM_SLEEP);
+ 	g->g_sc = sc;
++	mutex_init(&g->g_bssid_lock, NULL, MUTEX_DRIVER, NULL);
+ 	bcopy(addr, g->g_addr, ETHERADDRL);
+ 
+ 	macp = mac_alloc(MAC_VERSION);
+ 	if (macp == NULL) {
++		mutex_destroy(&g->g_bssid_lock);
+ 		kmem_free(g, sizeof (*g));
+ 		return (ENOMEM);
+@@ -798,4 +839,5 @@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
+ 	mac_free(macp);
+ 	if (err != 0) {
++		mutex_destroy(&g->g_bssid_lock);
+ 		kmem_free(g, sizeof (*g));
+ 		return (err);
+@@ -821,5 +863,6 @@ iwm_gld_unregister(void *gp)
+ 		n80211_rx_xlate = NULL;
+ 		n80211_link_hook = NULL;
+ 		n80211_xlate_arg = NULL;
++		mutex_destroy(&g->g_bssid_lock);
+ 		kmem_free(g, sizeof (*g));
+ 	}
