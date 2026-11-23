@@ -254,4 +254,48 @@ Workflow evidence: Run #27 `45115843531`, job `137498379960`, step 4; log timest
 
 **Validation performed locally:** exact-context `git apply --check` fixture passed after the tab-only correction; host `cc -std=c99 -Wall -Wextra -Werror` compiled the helper/test, and all six allocator-flag checks passed. This is not a full pinned-checkout application or an OpenIndiana build.
 
-**Lifecycle:** FIXED-CANDIDATE. The next OpenIndiana run must apply all five overlays in order to the complete pinned checkout, pass the six allocator checks, mbuf ownership suites and source gate, then complete the native translation-unit compile/link. Runtime memory-pressure behavior and physical networking remain NOT TESTED.
+**Lifecycle:** FIXED-VERIFIED for patch application and compile/link. Run #29 (`45128665119`) applied the corrected overlay sequence to the exact pinned solnix checkout, passed the allocator and mbuf suites, and completed all 30 translation-unit compiler invocations plus the module link. Runtime memory-pressure behavior and physical networking remain NOT TESTED.
+
+
+## AX101-CI-PATCH-003 — literal backslash-t in allocator overlay
+
+Finding: AX101-CI-PATCH-003
+First observed: 2026-11-23T06:08:10.385Z (Run #28)
+Baseline HEAD: `afa08480d956a280331e1dc953533c7995659566`
+Baseline parent: `6b16dbbb53e9bc3c7378876ab214dfd569d0ed3c`
+Path: `wifi-ax101/patches/0005-malloc-canfail-nonsleep.patch`
+Target after patch: `src/ports/wifi/net80211/n80211_kcompat.c:255`
+Run #28: `45121693091`, job `137516679772`, artifact `14794221085`
+Fix commit: `f900e457bfc2ac7b89fb397519e13143d76049d1`
+Verification run: Run #29 `45128665119`, job `137538818671`, artifact `14796997103`
+
+**Observed:** Run #28 successfully applied overlays 0001–0005 and passed the allocator tests, net80211 mbuf harness, iwx mbuf/mlist/cookie suites, negative controls and AX101 static source gate. Compilation then failed in `n80211_kcompat.c:255`:
+`error: stray '\\' in program`
+and
+`error: unknown type name 'tint'`.
+The job ended with `exit_code=2`. This was a malformed added C source line, not a patch-application failure. Run #28 artifact was 37,873 bytes; uploaded ZIP SHA-256:
+`5ef0dce5283c924fa4cfbf3adb9d98dcccc9ec4c230f508a607743bbcb9391a2`.
+
+**Root cause: VERIFIED.** The added line in patch 0005 contained the two literal characters backslash and `t` before `int`. After patch application, the C compiler received `\\tint km = ...` instead of a TAB-indented `int km = ...`.
+
+**Selected correction:** commit `f900e457bfc2ac7b89fb397519e13143d76049d1` changes only that added indentation prefix to an actual TAB. The commit diff confirms the old literal backslash-t representation was replaced by a real tab byte. A byte-level scan of the current patch reports no literal backslash-t sequence; the modified added line contains an actual TAB. No allocator logic, ABI, source pin, firmware identity or acceptance condition was changed.
+
+**Run #29 verification:** the workflow checked and applied overlays 0001–0005 in order against solnix commit `1cee7021091f3df92b7816ece2902ff59b37f1be`. The resulting `n80211_kcompat.c` compiled successfully as part of the 30 compiler invocations, and `ld -r -Breduce` linked the module. Artifact `14796997103` is 816,168 bytes; ZIP SHA-256:
+`8a33dcd33e918b27270ae66c85acb3dabbb0bb9db13c474dace0731f54bedea4`.
+The OpenIndiana build status is `exit_code=0`.
+
+**Tests in Run #29:**
+- allocator helper: 6 checks, 0 failures;
+- net80211 mbuf harness: all cases passed, `allocs==frees==20`, negative control caught;
+- iwx mbuf suite: 71 checks; mlist: 26; cookie: 23; all passed;
+- all 13 iwx sabotage/negative controls were caught;
+- AX101 SO/HR1 static source gate passed;
+- 30 compiler invocations and the module link completed.
+
+**M_CANFAIL call-site audit:** the five pinned `if_iwx.c` call sites are at lines 1532–1537, 1565–1571, 4247–4255, 7688–7691 and 7748–7751. Each checks the allocation result for NULL. The first three set `err = ENOMEM` and unwind; the final two return `ENOMEM` directly. The async command allocations preserve `M_NOWAIT` precedence; the non-async `M_WAIT | M_CANFAIL` form uses the conservative failure-capable path.
+
+**Allocator limitation remains explicit:** illumos has no exact waitable-and-failable equivalent for OpenBSD `M_WAITOK | M_CANFAIL`. The helper maps `M_CANFAIL` to `KM_NOSLEEP`, so it may fail earlier under transient memory pressure instead of waiting. The six helper tests verify flag-to-mode selection, not real memory-pressure behavior. The mapping is intentionally not described as fully semantically equivalent.
+
+**Artifact/ELF limits:** the artifact contains an ELF64 little-endian AMD64 relocatable object (`ET_REL`), and independent inspection found no `.interp` section. The OpenIndiana `elfdump` report includes `TEXTREL`; 132 undefined symbols are present in the symbol listing and were not reconciled against the target kernel's complete export set. The workflow stores `elfdump`/`nm` output diagnostically with `|| true`; it does not implement a strict independent ELF acceptance parser. Firmware file and license were staged; the firmware file hash is `bed4958236366c3c451b3ec994a56b2ad83c08d70e0a1eae42fb00f2eaabbcc8`. Firmware ALIVE and runtime operation remain NOT TESTED.
+
+**Subsequent branch status (outside PATCH-003):** after Run #29, later commits introduced overlay `0006-net80211-ioctl-macro-closure.patch`. Run #30 `45130051443` failed with `corrupt patch ...0006...:60`; Run #31 `45130849256` then failed applying that patch at `src/ports/wifi/net80211/compat/net80211/n80211_stack.h:122`. Current branch HEAD at this record is `6a4fccf67e04ddd2f3927e538971ce3279b19449`. These later failures do not invalidate Run #29's PATCH-003 verification, but the latest branch HEAD is not build-green. No automatic retry is authorized or recorded here.
