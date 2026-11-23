@@ -35,7 +35,7 @@ diff --git a/src/ports/wifi/net80211/n80211_kcompat.c b/src/ports/wifi/net80211/
 +#include <sys/n80211_alloc.h>
  
  #ifndef N80211_GIANT
-@@ -251,7 +252,7 @@ iwx_bsd_malloc(size_t size, int type, int flags)
+@@ -251,5 +252,5 @@ iwx_bsd_malloc(size_t size, int type, int flags)
  {
      void *p;
 -    int km = (flags & M_NOWAIT) ? KM_NOSLEEP : KM_SLEEP;

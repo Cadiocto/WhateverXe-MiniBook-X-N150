@@ -210,3 +210,23 @@ Relevant workflow evidence: Run #25 `45111068752`, job `137483300319`, commit `e
 - `wifi-ax101/README.md` and this file: record Run #25 evidence and the conservative compatibility trade-off.
 
 Lifecycle at source commit: **FIXED-CANDIDATE**. Promotion to FIXED-VERIFIED requires the new helper test, source gate, and subsequent OpenIndiana translation-unit compile/link to pass. This does not prove runtime memory-pressure behavior or physical networking.
+
+
+## AX101-CI-PATCH-001 — malformed allocator patch hunk
+
+First seen: 2026-11-23T04:44:48Z
+Latest seen: 2026-11-23T05:05:16Z
+HEAD at failure: `7d59deafc073ae91539e50fc86162f0df6545c1c`
+Parent: `e47ab1086465e66fc16d2ed4b4fad5e9aab4124f`
+Pinned source: `atiq-cs/solnix@1cee7021091f3df92b7816ece2902ff59b37f1be`
+Workflow evidence: Run #26 `45113192316`, job `137489976111`, step 4, commit `7d59deafc073ae91539e50fc86162f0df6545c1c`.
+
+**Observed:** OpenIndiana VM setup and pinned solnix checkout completed, then `git apply --check` rejected `wifi-ax101/patches/0005-malloc-canfail-nonsleep.patch` with `error: corrupt patch ...:45`. The job stopped before the allocator unit test, source gate, native translation-unit compilation, or link. Artifact `14790587546` is a 1,923-byte diagnostic artifact only; it is not a build result.
+
+**Root cause: VERIFIED.** The second hunk declared seven old/new lines (`@@ -251,7 +252,7 @@`) but its body contains five lines on each side. The unified-diff parser reached EOF with two declared lines missing.
+
+**Selected resolution:** correct only the hunk range to `@@ -251,5 +252,5 @@`. No C helper logic, allocator constants, pinned source, or build acceptance condition is changed. Adding unrelated context lines was rejected because the five-line hunk already contains sufficient exact context.
+
+**Validation performed locally:** `git apply --stat` passed; `git apply --check` passed against a temporary fixture reconstructed from the exact pinned include/function context; `cc -std=c99 -Wall -Wextra -Werror` compiled the allocator test and all six checks passed. These are local syntax/context and host-compiler checks, not an OpenIndiana build.
+
+**Lifecycle:** FIXED-CANDIDATE. Run #27 must prove the corrected patch applies to the complete pinned checkout, the six allocator checks pass on OpenIndiana, the source gate passes, and the 30-TU compile/link completes. Run #26 did not test allocator semantics. No runtime memory-pressure behavior or physical networking is established.
