@@ -201,6 +201,9 @@ jobs:
             patch -p1 -F0 -d "$SRC/src/ports/wifi/iwx" -i "$PACKED_MEMBER_PATCH"
             echo "packed_member_alignment_patch=0009-packed-member-alignment.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$PACKED_MEMBER_PATCH" > "$ART/packed-member-alignment-patch.sha256"
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-packed-member-alignment.py" \
+              "$SRC/src/ports/wifi/iwx/build/if_iwx_illumos.c" \
+              | tee "$ART/packed-member-alignment-test.txt"
 
             cd "$SRC/src/ports/wifi/net80211"
             ./gen-illumos-src.sh

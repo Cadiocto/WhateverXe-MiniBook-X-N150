@@ -1,7 +1,7 @@
 diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
 --- a/src/ports/wifi/iwx/iwx_mbuf.c
 +++ b/src/ports/wifi/iwx/iwx_mbuf.c
-@@ -174,11 +174,33 @@
+@@ -174,11 +174,40 @@
  boolean_t
  iwx_m_shift_right(mblk_t *m, size_t len, size_t n)
  {
@@ -27,30 +27,37 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
 +	    write_addr > limit_addr)
 +		return (B_FALSE);
 +
- 	if (n == 0)
- 		return (B_TRUE);
+-	if (n == 0)
+-		return (B_TRUE);
  
 +	capacity = (size_t)(limit_addr - read_addr);
 +	readable = (size_t)(write_addr - read_addr);
 +
++	/*
++	 * Validate the source bytes even for a zero-pad no-op. This prevents
++	 * an impossible header length from being accepted by the fast path.
++	 */
++	if (len > capacity || len > readable)
++		return (B_FALSE);
++	if (n == 0)
++		return (B_TRUE);
++
  	/*
  	 * The RX descriptor's MPDU length includes the alignment pad after
  	 * the header. The caller moves the header over that pad, then trims
-@@ -190,18 +212,19 @@
+@@ -190,18 +219,15 @@
  	 * window. The second check also proves that all n pad bytes are
  	 * actually present in the received MPDU, not merely allocated.
  	 */
 -	if (len > (size_t)(DB_LIM(m) - src))
-+	if (len > capacity)
- 		return (B_FALSE);
+-		return (B_FALSE);
 -	if (n > (size_t)(DB_LIM(m) - src) - len)
 +	if (n > capacity - len)
  		return (B_FALSE);
  
  	/* The source header and the following pad must both be readable. */
 -	if (len > (size_t)(m->b_wptr - src))
-+	if (len > readable)
- 		return (B_FALSE);
+-		return (B_FALSE);
 -	if (n > (size_t)(m->b_wptr - src) - len)
 +	if (n > readable - len)
  		return (B_FALSE);
@@ -63,13 +70,14 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
 diff --git a/src/ports/wifi/iwx/iwx_mbuf.h b/src/ports/wifi/iwx/iwx_mbuf.h
 --- a/src/ports/wifi/iwx/iwx_mbuf.h
 +++ b/src/ports/wifi/iwx/iwx_mbuf.h
-@@ -115,6 +115,9 @@
+@@ -115,6 +115,10 @@
   * allocb() makes no such promise at the same offset, so the destination end
   * (n + len) is checked against the cluster limit and the received window
   * before memmove; this also proves that the n-byte pad follows the header.
 + * Before any span is computed, the implementation validates the integer
 + * address ordering db_base <= b_rptr <= b_wptr <= db_lim. Malformed windows
 + * are rejected without changing pointers, bytes, or ownership.
++ * The source length is still checked when n is zero.
   * The pad is already included in the MPDU length. The caller then uses
   * iwx_m_adj(m, n) to trim it from the head, so b_wptr remains unchanged and
   * the derived length decreases by n. Extending b_wptr would expose bytes
@@ -87,7 +95,7 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h b/src/ports/wifi/iwx/iwx_m
 diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_test.c
 --- a/src/ports/wifi/iwx/iwx_mbuf_test.c
 +++ b/src/ports/wifi/iwx/iwx_mbuf_test.c
-@@ -475,6 +475,84 @@
+@@ -475,6 +475,125 @@
  }
  
  /*
@@ -116,6 +124,47 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_te
 +	    "bad-window rejection must preserve caller ownership");
 +	m->b_rptr = saved_rptr;
 +	m->b_wptr = saved_wptr;
++}
++
++static void
++test_shift_right_zero_pad_validates_length(void)
++{
++	mblk_t *m = iwx_m_alloc(64);
++	unsigned char *base;
++	unsigned char snapshot[16];
++	unsigned char *saved_rptr, *saved_wptr;
++	long frees_before;
++
++	CHECK(iwx_m_shift_right(NULL, SIZE_MAX, 0) == B_FALSE,
++	    "NULL mblk must be rejected for a zero-pad request");
++	CHECK(m != NULL, "alloc zero-pad length test");
++	if (m == NULL)
++		return;
++
++	base = DB_BASE(m);
++	m->b_rptr = base;
++	m->b_wptr = base + sizeof (snapshot);
++	memset(base, 0x5A, sizeof (snapshot));
++	memcpy(snapshot, base, sizeof (snapshot));
++	saved_rptr = m->b_rptr;
++	saved_wptr = m->b_wptr;
++	frees_before = iwx_test_frees;
++
++	CHECK(iwx_m_shift_right(m, sizeof (snapshot), 0) == B_TRUE,
++	    "zero-pad exact readable length is a valid no-op");
++	CHECK(iwx_m_shift_right(m, sizeof (snapshot) + 1, 0) == B_FALSE,
++	    "zero-pad source one byte past the readable window is rejected");
++	CHECK(iwx_m_shift_right(m, SIZE_MAX, 0) == B_FALSE,
++	    "zero-pad SIZE_MAX source length is rejected");
++	CHECK(iwx_m_shift_right(m, 0, 0) == B_TRUE,
++	    "empty zero-pad request remains a valid no-op");
++	CHECK(m->b_rptr == saved_rptr && m->b_wptr == saved_wptr,
++	    "zero-pad validation must preserve the message window");
++	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0,
++	    "zero-pad validation must preserve backing bytes");
++	CHECK(iwx_test_frees == frees_before,
++	    "zero-pad validation must preserve caller ownership");
++	iwx_m_free(m);
 +}
 +
 +static void
@@ -172,11 +221,12 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_te
   * if_iwx.c:10882 / :10927 -- "(struct iwx_rx_packet *)(m0->m_data + offset)"
   * walks several firmware responses packed into one RX buffer, where offset
   * advances by a length the device reported.
-@@ -535,6 +613,7 @@
+@@ -535,6 +654,8 @@
  	test_free_honours_refcount();
  	test_shift_right_moves_header_and_length();
  	test_shift_right_rejects_overflow();
 +	test_shift_right_rejects_malformed_window();
++	test_shift_right_zero_pad_validates_length();
  	test_at_bounds_checks_offset();
  	test_no_leaks();
  
@@ -190,7 +240,7 @@ diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-
 -	'	if (n > (size_t)(m->b_wptr - src) - len)
 +	'	if (n > readable - len)
  		return (B_FALSE);' \
-@@ -211,6 +211,16 @@
+@@ -211,6 +211,22 @@
  	'	if (0)
  		return (B_FALSE);'
  
@@ -203,44 +253,50 @@ diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-
 +		return (B_FALSE);' \
 +	'	if (0)
 +		return (B_FALSE);'
+++# (l) Skip source-length validation; zero-pad requests must still reject bad len.
++sabotage shift_skips_zero_pad_length_validation \
++	'	if (len > capacity || len > readable)
++		return (B_FALSE);' \
++	'	if (0)
++		return (B_FALSE);'
 +
  # --- mbuf_list negative controls. Header-only, so the sabotage patches the
  # --- header into the per-case directory and that copy shadows the real one.
  mlist_sabotage() {
-@@ -275,23 +285,23 @@
+@@ -275,23 +291,23 @@
  	fi
  }
  
 -# (k) THE central mbuf_list bug: build the batch with b_cont instead of b_next,
-+# (l) THE central mbuf_list bug: build the batch with b_cont instead of b_next,
++# (m) THE central mbuf_list bug: build the batch with b_cont instead of b_next,
  #     which concatenates two separate frames into one oversized corrupt frame.
  mlist_sabotage enqueue_uses_bcont \
  	'		ml->ml_tail->b_next = m;' \
  	'		ml->ml_tail->b_cont = m;'
  
 -# (l) Fail to detach on dequeue, so freeing one packet frees the whole batch.
-+# (m) Fail to detach on dequeue, so freeing one packet frees the whole batch.
++# (n) Fail to detach on dequeue, so freeing one packet frees the whole batch.
  mlist_sabotage dequeue_no_detach \
  	'	m->b_next = NULL;	/* detach, or the caller frees the whole batch */' \
  	'	/* sabotaged: left attached */'
  
 -# (m) Purge that walks only the head packet, leaking the rest of the batch.
-+# (n) Purge that walks only the head packet, leaking the rest of the batch.
++# (o) Purge that walks only the head packet, leaking the rest of the batch.
  mlist_sabotage purge_leaks_batch \
  	'	for (m = ml->ml_head; m != NULL; m = n) {' \
  	'	for (m = ml->ml_head; m != NULL && m == ml->ml_head; m = n) {'
  
 -# (n) THE COOKIE DISCIPLINE. ml_purge frees a still-queued management frame
-+# (o) THE COOKIE DISCIPLINE. ml_purge frees a still-queued management frame
++# (p) THE COOKIE DISCIPLINE. ml_purge frees a still-queued management frame
  #     without going through iwx_m_take_cookie, so it must clear b_prev itself or
  #     freemsg() gets a message the kernel ASSERTs against
  #     (uts/common/io/stream.c:659) -- a DEBUG panic and a SILENT non-DEBUG bug.
-@@ -305,7 +315,7 @@
+@@ -305,7 +321,7 @@
  	'		freemsg(m);	/* frees this' \
  	iwx_mcookie_test.c
  
 -# (o) The consumer must CLEAR as it reads. A peek that leaves b_prev set sends
-+# (p) The consumer must CLEAR as it reads. A peek that leaves b_prev set sends
++# (q) The consumer must CLEAR as it reads. A peek that leaves b_prev set sends
  #     the frame down the TX path still dirty.
  mlist_sabotage cookie_take_does_not_clear \
  	'	void *cookie = (void *)m->b_prev;
