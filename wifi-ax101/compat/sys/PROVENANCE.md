@@ -402,3 +402,17 @@ The structures are firmware wire-format structures declared `__packed`; their la
 - WPA join accepts a 32-byte PMK and passes it to the OpenBSD RSN path. The source documents PBKDF2-HMAC-SHA1/4096 in a userland helper; passphrase derivation is not performed by the kernel driver. End-to-end WPA2 is NOT TESTED.
 
 **Lifecycle.** Overlay 0006 is FIXED-VERIFIED for exact pinned application, warning removal and successful module build. Run #32 is the latest verified build on the branch at this record. It does not establish ELF loadability, interrupt safety, firmware ALIVE, attach, RX/TX hardware operation, WPA2, DHCP, DNS, or physical connectivity. No physical device, BIOS, NVRAM, bootloader, partition, or system network setting was changed.
+
+
+## RUN #32 follow-up — pinned krtld relocation-type cross-check
+
+Reference source: `illumos/illumos-gate@098e95820891f8a83fae679daece7fcf58b7b3a4`, `usr/src/uts/intel/amd64/krtld/doreloc.c`, Git blob `298cb85c14e9913e411bf05d7c7b06ab46826d6b`.
+
+The downloaded Run #32 module uses only three relocation types:
+- `R_X86_64_64` (ELF AMD64 relocation number 1): 412 entries total;
+- `R_X86_64_PC32` (number 2): 2,243 entries;
+- `R_X86_64_32S` (number 11): 808 entries.
+
+The pinned illumos krtld relocation table explicitly defines `R_AMD64_64`, `R_AMD64_PC32`, and `R_AMD64_32S`. Its kernel relocation routine `do_reloc_krtld()` includes the 32S sign-extension verification and PC32 range handling. Therefore **the relocation types observed in this artifact are recognized by the pinned gate's x86_64 krtld implementation**. No unsupported relocation type was found in the artifact.
+
+This closes only the relocation-*type support* question. It does not prove that the target OpenIndiana 2026.10 kernel exports all 132 undefined symbols with compatible ABI, that the artifact's dynamic `TEXTREL` flag is ignored/accepted in the module loading path, or that every relocation value fits at the actual kernel load address. Those remain OPEN until checked against the target kernel and loader (or an equivalent controlled krtld module-load test). Do not classify strict ELF acceptance as complete.
