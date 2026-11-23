@@ -230,3 +230,28 @@ Workflow evidence: Run #26 `45113192316`, job `137489976111`, step 4, commit `7d
 **Validation performed locally:** `git apply --stat` passed; `git apply --check` passed against a temporary fixture reconstructed from the exact pinned include/function context; `cc -std=c99 -Wall -Wextra -Werror` compiled the allocator test and all six checks passed. These are local syntax/context and host-compiler checks, not an OpenIndiana build.
 
 **Lifecycle:** FIXED-CANDIDATE. Run #27 must prove the corrected patch applies to the complete pinned checkout, the six allocator checks pass on OpenIndiana, the source gate passes, and the 30-TU compile/link completes. Run #26 did not test allocator semantics. No runtime memory-pressure behavior or physical networking is established.
+
+
+Status update (2026-11-23T05:11:16Z): Run #27 parsed the corrected five-line hunk but `git apply --check` still failed at `n80211_kcompat.c:251`. The earlier malformed-hunk-count diagnostic no longer reproduced; the full overlay was not yet applied. The separate context mismatch is tracked as AX101-CI-PATCH-002 below. Lifecycle remains FIXED-CANDIDATE until the complete overlay applies.
+
+## AX101-CI-PATCH-002 — allocator overlay indentation mismatch
+
+First seen: 2026-11-23T05:11:16Z
+Latest seen: 2026-11-23T06:00:37Z
+HEAD at failure: `6b16dbbb53e9bc3c7378876ab214dfd569d0ed3c`
+Parent: `7d59deafc073ae91539e50fc86162f0df6545c1c`
+Pinned source: `atiq-cs/solnix@1cee7021091f3df92b7816ece2902ff59b37f1be`
+Path: `wifi-ax101/patches/0005-malloc-canfail-nonsleep.patch`, second hunk; upstream target `src/ports/wifi/net80211/n80211_kcompat.c`, `iwx_bsd_malloc()`.
+Workflow evidence: Run #27 `45115843531`, job `137498379960`, step 4; log timestamp `2026-11-23T05:11:16.505Z`.
+
+**Observed:** The OpenIndiana 2026.10 job checked out the pinned solnix revision successfully, applied overlays 0001–0004, then failed applying overlay 0005 with `error: patch failed: src/ports/wifi/net80211/n80211_kcompat.c:251`. It stopped before the allocator unit test, mbuf suites, source gate, header staging, native translation-unit compilation and link. Artifact `14791252949` (1,895 bytes) is diagnostic only.
+
+**Root cause: VERIFIED.** At the pinned source revision, the relevant function lines use literal tab indentation: `\tvoid *p;`, `\tint km = ...`, and `\t(void) type;`. Overlay 0005 encoded those context/replacement lines with spaces. Git's exact context matcher therefore rejected the hunk. The hunk-count correction from AX101-CI-PATCH-001 was accepted by the parser; this is a distinct whitespace-context failure.
+
+**Reproduction:** A local fixture with the exact pinned include and allocator-function context failed `git apply --check` with the original space-indented hunk. Changing only those indentation bytes to tabs made `git apply --check` pass. Changing the hunk line offsets was not selected: the tabs-only variant already passed.
+
+**Selected resolution:** change only the three context/deletion/addition indentation prefixes in overlay 0005 to match the pinned source's tabs. Preserve helper logic, allocator flags, wire ABI, the solnix pin, the illumos-gate pin and all acceptance conditions.
+
+**Validation performed locally:** exact-context `git apply --check` fixture passed after the tab-only correction; host `cc -std=c99 -Wall -Wextra -Werror` compiled the helper/test, and all six allocator-flag checks passed. This is not a full pinned-checkout application or an OpenIndiana build.
+
+**Lifecycle:** FIXED-CANDIDATE. The next OpenIndiana run must apply all five overlays in order to the complete pinned checkout, pass the six allocator checks, mbuf ownership suites and source gate, then complete the native translation-unit compile/link. Runtime memory-pressure behavior and physical networking remain NOT TESTED.
