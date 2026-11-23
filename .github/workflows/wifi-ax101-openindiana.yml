@@ -309,9 +309,9 @@ jobs:
             test -s iwx
             cp iwx "$ART/iwx"
 
-            # Inventory undefined references. The two export snapshots below
-            # are deliberately diagnostic, not the complete symbol universe;
-            # kldd walks the actual parent/dependency graph as the strict gate.
+            # Inventory undefined references. Export snapshots are diagnostic
+            # only; the target native krtld load below is authoritative for
+            # resolving the module's actual dependency and relocation graph.
             python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/test-check-elf-exports.py"
             nm -u "$ART/iwx" > "$ART/iwx.undefined.txt"
             KERNEL_IMAGE=
@@ -357,11 +357,33 @@ jobs:
             if command -v dmesg >/dev/null 2>&1; then
               dmesg > "$ART/dmesg-before-modload.txt" 2>&1 || true
             fi
+            # A Solaris/illumos driver must be registered with add_drv before
+            # mod_install can assign its major number. RUN #49 proved that
+            # modload without /etc/name_to_major fails in mod_installdrv (ENXIO).
+            # This VM has no AX101 PCI function, so -n registers metadata only:
+            # it deliberately does not load or attach the driver.
+            mkdir -p /kernel/drv/amd64
+            cp "$ART/iwx" /kernel/drv/amd64/iwx
+            chmod 0644 /kernel/drv/amd64/iwx
+            if grep -Eq '^iwx[[:space:]]' /etc/name_to_major; then
+              echo "ERROR: unexpected pre-existing iwx major-number registration" >&2
+              exit 1
+            fi
+            add_drv -n -i '"pci8086,54f0"' iwx > "$ART/add-drv.txt" 2>&1
+            cat "$ART/add-drv.txt"
+            if ! grep -Eq '^iwx[[:space:]]+[0-9]+' /etc/name_to_major; then
+              echo "ERROR: add_drv did not create iwx name_to_major entry" >&2
+              exit 1
+            fi
+            grep -E '^iwx[[:space:]]' /etc/name_to_major > "$ART/iwx-name-to-major.txt"
+            grep -E '^iwx[[:space:]]' /etc/driver_aliases > "$ART/iwx-driver-aliases.txt" || true
+            echo "IWX_DRIVER_REGISTRATION=PASS"
+
             set +e
-            modload "$ART/iwx" > "$ART/iwx-krtld-modload.txt" 2>&1
+            modload /kernel/drv/amd64/iwx > "$ART/iwx-krtld-modload.txt" 2>&1
             modload_rc=$?
             set -e
-            printf 'modload_exit=%s\\n' "$modload_rc" > "$ART/iwx-krtld-modload-status.txt"
+            printf 'modload_exit=%s\n' "$modload_rc" > "$ART/iwx-krtld-modload-status.txt"
             if [ "$modload_rc" -ne 0 ]; then
               cat "$ART/iwx-krtld-modload.txt"
               if command -v modinfo >/dev/null 2>&1; then
@@ -375,13 +397,16 @@ jobs:
               echo "ERROR: native OpenIndiana modload failed (exit $modload_rc); classify from captured krtld and attach diagnostics" >&2
               exit "$modload_rc"
             fi
-            echo "KRTLD_RELOCATION_AND_SYMBOL_RESOLUTION=PASS" | tee -a "$ART/elf-relocation-policy.txt"
+            echo "KRTLD_NATIVE_MODLOAD=PASS" | tee -a "$ART/elf-relocation-policy.txt"
             if command -v modinfo >/dev/null 2>&1; then
               modinfo -c > "$ART/modinfo-after-modload.txt" 2>&1 || true
               if ! grep -Eiq '[[:space:]]iwx([[:space:]]|$)' "$ART/modinfo-after-modload.txt"; then
                 echo "ERROR: modload returned success but iwx is absent from modinfo -c" >&2
                 exit 1
               fi
+              iwx_modid=$(awk '$NF == "iwx" { print $1; exit }' "$ART/modinfo-after-modload.txt")
+              test -n "$iwx_modid"
+              echo "IWX_MODULE_ID=$iwx_modid" > "$ART/iwx-module-id.txt"
             else
               echo "ERROR: modinfo unavailable; cannot verify post-load module registration" >&2
               exit 1
@@ -390,6 +415,27 @@ jobs:
               dmesg > "$ART/dmesg-after-modload.txt" 2>&1 || true
             fi
             echo "KRTLD_LOAD_AND_MODINFO=PASS"
+
+            # With no matching PCI device in this VM, no instance is attached;
+            # _fini/mod_remove must therefore permit a clean unload.
+            set +e
+            modunload -i "$iwx_modid" > "$ART/iwx-modunload.txt" 2>&1
+            modunload_rc=$?
+            set -e
+            printf 'modunload_exit=%s\n' "$modunload_rc" > "$ART/iwx-modunload-status.txt"
+            if [ "$modunload_rc" -ne 0 ]; then
+              cat "$ART/iwx-modunload.txt"
+              echo "ERROR: iwx module failed controlled unload" >&2
+              exit "$modunload_rc"
+            fi
+            modinfo -c > "$ART/modinfo-after-modunload.txt" 2>&1 || true
+            if awk '$NF == "iwx" && $2 != 0 { found=1 } END { exit !found }' "$ART/modinfo-after-modunload.txt"; then
+              echo "ERROR: iwx remains loaded after modunload" >&2
+              exit 1
+            fi
+            rem_drv iwx > "$ART/rem-drv.txt" 2>&1
+            rm -f /kernel/drv/amd64/iwx
+            echo "KRTLD_CONTROLLED_UNLOAD=PASS"
             cp Makefile.illumos "$ART/"
             cp STATUS.md "$ART/upstream-iwx-STATUS.md"
             cp PROVENANCE.md "$ART/upstream-iwx-PROVENANCE.md"
