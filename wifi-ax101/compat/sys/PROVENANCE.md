@@ -492,3 +492,120 @@ This closes only the relocation-*type support* question. It does not prove that 
 **First seen:** 2026-11-23T07:42:16Z (Run #32 report). **Latest seen:** 2026-11-23T09:05:03Z.  
 **Evidence:** four `-Waddress-of-packed-member` diagnostics in generated `if_iwx_illumos.c` at lines 4040, 4043, 10054 and 10076 for regulatory/MCC firmware wire structures. Their packed layout must remain unchanged; aligned local copies via `memcpy` are the candidate remediation after auditing every consumer.  
 **Root cause confidence:** VERIFIED for the warning sites; remediation not implemented. **Lifecycle:** STILL OPEN / NOT TESTED. Next action: add aligned locals with byte-for-byte ABI preservation and compile the affected translation unit.
+
+
+## AX101 HANDOFF AUDIT — Run #33 RX padding verification and interrupt/lifecycle contract
+
+**Audit timestamp:** 2026-11-23, approximately 10:39 UTC.  
+**Observed branch HEAD:** `b9d68d901cd39932eab812ff5cd07993ba0f6921`.  
+**HEAD parent:** `f296fd307f4e2365becaed72ca2aaf908bbbae4f`.  
+**Commit message:** `AX101: correct RX padding length and bounds`.  
+**Display branch observation:** `gop-rotation-hook` HEAD `26529144cade11fe4210d199e44b1faf72c8b287`; this audit made no writes to that branch.  
+**Pinned dependencies unchanged:** solnix `1cee7021091f3df92b7816ece2902ff59b37f1be`; illumos-gate `098e95820891f8a83fae679daece7fcf58b7b3a4`.
+
+### CI and preserved baseline
+
+Run #32 remains the historical successful baseline: run `45132583917`, job `137551243195`, commit `38e92b1fb7dc6fd9303b1b6f1bb2f9a6bfef59aa`, artifact `14798054384`, artifact ZIP SHA-256 `4674d8c1c73506e4dfa2cd76fd1a2f41e84c321ba8a40a8566229984552f0402`, module SHA-256 `c7b2140d7d2c237937f046fd0e0dca672837c0eedd002c73359f28dfd449716e`. Its 71-check mbuf suite encoded the incorrect length-neutral RX padding expectation; it is retained as build history, not treated as proof of the corrected behavior.
+
+**Run #33:** run ID `45147324549`, job ID `137599737277`, commit `b9d68d901cd39932eab812ff5cd07993ba0f6921`, conclusion SUCCESS, completed `2026-11-23T09:33:30Z`. Artifact ID `14804947077`; artifact ZIP SHA-256 `7fc1b140964dd9eed3503b28f4541d73d1ffdb846c939b2b6d819c7e05c70ffb`; module SHA-256 `0f155609e5fcc152e7f97de54938b37e90d6a85a0c47cb02b138098cc572f3f7`. The ZIP digest was independently recomputed after download and matched GitHub's artifact digest. OpenIndiana 2026.10 / GCC 14.3.0; 30 compiler invocations; `ld -r -Breduce` completed; build-status exit code 0.
+
+Run #33 evidence:
+- Overlays 0001–0007 all applied in order to the exact pinned solnix checkout; `git diff --check` passed after each.
+- Allocator helper: 6/6 checks; net80211 mbuf harness: PASS, allocations == frees == 20.
+- iwx mbuf: 86/86; mlist: 26/26; cookie: 23/23.
+- All 15 compiled negative controls were caught, including `shift_extends_write_window` (5 failures) and `shift_ignores_unreceived_pad` (1 failure).
+- AX101 source gate: 19/19; PCI 54f0 / SO-HR1 / API-77 static checks passed.
+- No `m_free` or SIOC80211 macro redefinition warnings remained.
+- Four `-Waddress-of-packed-member` warnings remain at the four regulatory/MCC packed-member sites; other compatibility macro warnings also remain. No global warning suppression was introduced.
+- Firmware API-77 candidate was staged. Firmware ALIVE, device attach, scan, association, WPA, DHCP and physical RX/TX remain NOT TESTED.
+
+### AX101-MBUF-SHIFT-001 — RX alignment-pad semantics
+
+**Status: FIXED-VERIFIED for the demonstrated RX length and received-pad defect.**
+
+Overlay `wifi-ax101/patches/0007-rx-padding-window-length.patch` is present and was applied by Run #33. The helper now validates the backing-cluster destination span and requires both header and pad bytes to be inside the current readable window before `memmove`; it leaves `b_wptr` unchanged. The following positive `iwx_m_adj(m, 2)` advances the read pointer and reduces the frame length by two.
+
+The corrected test asserts unchanged `b_rptr`/`b_wptr` during the move, then `before - 2` for both segment and packet length after adjustment, with header/payload byte checks. A one-byte-short pad window is rejected with both pointers, bytes and ownership unchanged. Negative controls prove that restoring `b_wptr += n` or accepting an unreceived pad is detected. For the 40-byte MPDU example, the corrected logical result is 38 bytes.
+
+**Residual hardening — AX101-MBUF-WINDOW-002, status OPEN:** the current overlay's bounds expressions subtract `src` from `DB_LIM(m)` and from `b_wptr` before independently validating the integer address ordering `db_base <= b_rptr <= b_wptr <= db_lim`. The ordinary mblk contract may guarantee valid pointers, but the helper does not itself establish that invariant before pointer subtraction. Add overflow-safe integer-address range checks and negative tests for read pointer below/above the data block, write pointer before read pointer, and write pointer beyond `db_lim`; failure must be atomic. Do not weaken the existing 86 checks or 15 negative controls. This residual does not invalidate the verified fix for the originally demonstrated 2-byte length/pad bug, but the helper-boundary audit is not complete.
+
+### AX101-IRQ-PRIORITY-001 — giant mutex interrupt-priority cookie
+
+**Status: OPEN; source contract mismatch VERIFIED.**
+
+Pinned illumos-gate `usr/src/man/man9f/ddi_intr_get_pri.9f` states that the priority returned by `ddi_intr_get_pri()` may be used in `mutex_init()` and explicitly says it should be cast with `DDI_INTR_PRI`. Pinned `usr/src/man/man9f/mutex.9f` says the `mutex_init` argument is interrupt priority for a mutex used in an interrupt handler and should be NULL only when the mutex is never used in an interrupt handler.
+
+Current source facts:
+- `iwm_bus.c:pci_intr_establish()` allocates the actual DDI handle, calls `ddi_intr_get_pri()`, rejects `pri >= ddi_intr_get_hilevel_pri()`, stores `ih_pri`, then adds `iwm_intr_trampoline`.
+- The trampoline enters the global `n80211_giant`.
+- `n80211_giant_init()` currently calls `mutex_init(&n80211_giant, NULL, MUTEX_DRIVER, NULL)`.
+- `iwx_glue.c:_init()` initializes giant and starts the global systq before any device attach; at that point no `dip` or DDI interrupt handle exists.
+- `iwx_il_attach()` currently enters giant before calling `iwx_attach()`; the latter creates the real interrupt handle internally. Therefore simply passing `ih_pri` into the current initializer is impossible without changing initialization/attach order.
+
+**Minimum safe architecture before code change:**
+1. Defer giant and systq initialization from module `_init()` until the first attach, before any giant acquisition or task submission.
+2. Obtain the device's candidate interrupt priority in non-interrupt context before entering giant (preflight DDI allocation/query or a refactored prepared-interrupt handle).
+3. Initialize giant with `DDI_INTR_PRI(pri)`; preserve the high-level-priority rejection.
+4. Ensure the subsequently registered handler uses exactly the priority cookie used to initialize giant. If using a temporary preflight handle, compare the actual registered `ih_pri` and fail attach on mismatch.
+5. Because giant is module-global, either enforce one common priority across all attached instances or redesign to per-device execution locks; never destroy/reinitialize it while users exist.
+6. Initialize/start systq only after giant is valid, and unwind both in reverse order on attach/module failure.
+7. Add a source acceptance check that rejects `mutex_init(&n80211_giant, ..., NULL)` and verifies the `DDI_INTR_PRI` path. Do not move the entire RX ISR to taskq merely because the mutex is adaptive.
+
+The adaptive mutex/high-level analysis remains valid: the code rejects high-level interrupts, and adaptive acquisition is not itself proof of a deadlock. The missing DDI priority cookie is a separate documented initialization-contract issue. Actual AX101 interrupt priority and hardware interrupt delivery remain NOT TESTED.
+
+### AX101-DDI-UNWIND-001 — teardown lock ordering
+
+**Status: OPEN; lock-order hazard confirmed, exact nexus drain semantics not fully closed.**
+
+The current `iwx_il_free_hw()` holds giant while calling `iwm_intr_disestablish()`; the ISR trampoline enters the same giant. DDI `ddi_intr_disable()` and `ddi_intr_remove_handler()` are non-interrupt-context operations; the pinned `ddi_intr.c` takes the per-handle interrupt rwlock in writer mode around disable/remove operations. The pinned man page requires disable before remove/free. The exact platform-level guarantee for draining an already-dispatched ISR must still be stated from the x86 nexus implementation before claiming a fully proven wait cycle. Regardless, calling synchronous interrupt teardown while holding the mutex required by the ISR is an invalid lock order and must be removed.
+
+Required ordering: set stopping under the appropriate lock; mask device interrupt sources; prevent new task submissions; release giant; disable/remove/free the DDI handler outside giant; drain any in-flight handler and all taskq/systq/timeout/RX callback users; only then stop device DMA and release rings, DMA buffers, BAR mappings and soft state. Do not free resources on a timeout or failed drain.
+
+### Partial attach / resource ownership matrix
+
+| Resource | Acquisition / owner | Asynchronous users | Required release condition |
+|---|---|---|---|
+| `iwx_softc` | `kmem_zalloc` in `iwx_il_attach`; held by `il_sc` | ISR, global systq tasks, per-device taskq, timeouts, RX translation | all ISR/task/callout/callback references drained |
+| PCI config handle | `pci_config_setup`; held by `il_pcih` | attach/config access | device stopped and all users gone |
+| BAR mapping | `pci_mapreg_map`; held by `sc_st/sc_sh/sc_sz` | ISR and device MMIO | interrupts drained and device DMA/interrupt generation stopped |
+| interrupt wrapper `ih` | `iwm_intr_map_type`; later stored as `sc_ih` | DDI handler/trampoline | DDI handler removed and handle freed |
+| DDI handle array/handle | `pci_intr_establish` | interrupt dispatch | disable, remove, free, outside giant |
+| DMA context / scratch / ICT / rings | `iwx_dma_contig_alloc`, ring allocators; held by `sc` | device DMA, ISR and tasks | device quiesced and all asynchronous consumers drained |
+| per-device taskq | `taskq_create`; `sc_nswq` | task thread and queued tasks | stopping prevents new submissions; queue/thread joined |
+| global systq and embedded `init_task` | static systq; task object embedded in `sc` | global task thread | remove queued task and wait for running task before freeing `sc` |
+| timeout objects/tokens | timeout API; objects embedded in RXBA state, token separately allocated | timeout trampoline | cancel plus proof no trampoline retains object/token |
+| GLDv3 registration | `iwm_gld_register`; `il_gld` | mac callbacks and deferred RX translation | unregister plus in-flight callback drain before freeing GLD state |
+
+**Confirmed partial-unwind defect:** `iwm_intr_map_type()` allocates the wrapper `ih`. If `pci_intr_establish()` fails after that allocation, its local fail path frees the DDI table/handle but returns NULL without freeing the wrapper. The caller then has no `sc_ih` to pass to disestablish. Add explicit wrapper ownership transfer and free-on-establish-failure.
+
+**Confirmed attach-unwind gap:** `iwx_il_attach()` routes `iwx_mr_fn == NULL` to `fail_sc`, not `fail_hw`. Upstream `iwx_attach()` has early returns after BAR mapping/interrupt setup and internal `fail1/fail4` labels that release DMA/rings but do not own the illumos BAR/interrupt wrapper cleanup. This leaves some partial-attach states outside the glue cleanup path. Replace implicit `iwx_mr_fn` inference with explicit staged resource ownership/flags and one idempotent unwind routine; preserve upstream's own ring/DMA rollback or consolidate it without double-free.
+
+Other lifecycle findings remain OPEN:
+- global `systq` may retain `sc->init_task` after attach failure unless explicitly cancelled/drained;
+- timeout trampoline dereferences the timeout object after acquiring giant; cancellation must prove the callback/token no longer retains the embedded object before `sc` is freed;
+- `task_add()` has no stopping-state guard of its own; every producer must be gated under giant or through a common helper;
+- deferred RX translation reads global callback/argument after giant is dropped; unregister/free needs an in-flight reference/drain protocol;
+- `iwm_gld_rx_frame()` reads BSSID while `iwm_gld_set_bss()` writes it without a common snapshot lock;
+- `iwx_il_quiesce()` calls `iwx_stop_device()`; prove this is nonblocking and valid for DDI quiesce or replace it with a minimal interrupt/DMA quiesce sequence;
+- `iwx_il_detach()` still returns `DDI_FAILURE`. Keep that honest result until complete detach is implemented and tested.
+
+**Path separation:** normal stop, attach-failure unwind, detach and quiesce are different contracts. Do not use normal stop as an assumed detach primitive; do not free DMA until the hardware is stopped and all callbacks are drained; do not make quiesce execute firmware waits or sleeping teardown.
+
+### Remaining acceptance findings
+
+- **AX101-ELF-001 — OPEN:** Run #33 still emits ELF64 AMD64 ET_REL with `.dynamic NEEDED misc/mac` and `TEXTREL`; `nm -p` lists 132 undefined symbols. No complete target OpenIndiana export/prototype reconciliation or strict TEXTREL policy check has been implemented. Link success is not ELF acceptance.
+- **AX101-PACKED-001 — OPEN:** four `-Waddress-of-packed-member` warnings remain. Candidate remediation is aligned local copies via `memcpy`; packed firmware structures and wire ABI must not change.
+- **Firmware/runtime — NOT TESTED:** API-77 image staging is not Firmware ALIVE; no physical device testing or installation has occurred.
+
+### CI lock and next-agent instruction
+
+Immediately before this journal update, the branch-filtered Actions API returned all 33 runs for `wifi-ax101-openindiana`; all 33 were `completed`, page 2 was empty, and branch HEAD was `b9d68d901cd39932eab812ff5cd07993ba0f6921`. **CI LOCK: CERTIFIED CLEAR at that snapshot.** This journal-only commit will itself trigger the push workflow because the workflow watches `wifi-ax101/**`; wait for its single run and record the resulting SHA/artifact before any further push.
+
+**Next AX101 Hourly Watch continuation:**
+1. Read this entire journal section and verify the current branch HEAD and workflow runs again.
+2. Close AX101-MBUF-WINDOW-002 with integer-address validation and malformed-window tests without weakening Run #33's 86 checks / 15 negative controls.
+3. Implement the lazy/preflight DDI-priority initialization design for giant, with an explicit source gate for `DDI_INTR_PRI(pri)`.
+4. Fix the interrupt-wrapper leak and partial attach ownership/unwind before attempting broader lifecycle changes.
+5. Then implement stopping/task/timeout/RX callback drain sequencing; keep detach returning `DDI_FAILURE` until complete teardown is proven.
+6. Reconcile all 132 undefined symbols and the TEXTREL policy; remediate the four packed-member warnings without changing firmware wire layouts.
+7. Do not claim firmware ALIVE, physical attach, network connectivity, or production readiness without authorized hardware evidence.
