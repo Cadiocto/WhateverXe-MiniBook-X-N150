@@ -438,7 +438,7 @@ jobs:
             modunload -i "$iwx_modid" > "$ART/iwx-modunload.txt" 2>&1
             modunload_rc=$?
             set -e
-            printf 'modunload_exit=%s\\n' "$modunload_rc" > "$ART/iwx-modunload-status.txt"
+            printf 'modunload_exit=%s\n' "$modunload_rc" > "$ART/iwx-modunload-status.txt"
             if [ "$modunload_rc" -ne 0 ]; then
               cat "$ART/iwx-modunload.txt"
               echo "ERROR: iwx module failed controlled unload" >&2
@@ -460,7 +460,7 @@ jobs:
             modinfo -c > "$ART/modinfo-after-modunload.txt" 2>&1
             modinfo_after_unload_rc=$?
             set -e
-            printf 'modinfo_after_modunload_exit=%s\\n' "$modinfo_after_unload_rc" > "$ART/modinfo-after-modunload-status.txt"
+            printf 'modinfo_after_modunload_exit=%s\n' "$modinfo_after_unload_rc" > "$ART/modinfo-after-modunload-status.txt"
             if [ "$modinfo_after_unload_rc" -ne 0 ]; then
               cat "$ART/modinfo-after-modunload.txt"
               echo "ERROR: modinfo -c failed after modunload; unload state is unverified" >&2
