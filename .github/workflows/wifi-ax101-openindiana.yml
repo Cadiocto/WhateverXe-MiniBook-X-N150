@@ -133,6 +133,16 @@ jobs:
             echo "allocator_canfail_patch=0005-malloc-canfail-nonsleep.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$ALLOCFAIL_PATCH" > "$ART/allocator-canfail-patch.sha256"
 
+            # Keep the pinned OpenBSD ioctl header authoritative; remove the
+            # stale ifreq-only copies that changed 29 ioctl encodings.
+            IOCTL_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0006-net80211-ioctl-macro-closure.patch"
+            test -s "$IOCTL_PATCH"
+            git -C "$SRC" apply --check "$IOCTL_PATCH"
+            git -C "$SRC" apply "$IOCTL_PATCH"
+            git -C "$SRC" diff --check
+            echo "net80211_ioctl_macro_patch=0006-net80211-ioctl-macro-closure.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$IOCTL_PATCH" > "$ART/net80211-ioctl-macro-patch.sha256"
+
             # Unit-test the exact helper included by n80211_kcompat.c.
             "$CC" -std=c99 -Wall -Wextra -Werror \
               -I"$SRC/src/ports/wifi/net80211/compat" \
@@ -240,6 +250,11 @@ jobs:
               exit 1
             fi
             echo "N80211_MFREE_OVERRIDE_WARNING=PASS"
+            if grep -Eq 'warning: "SIOC[GS]80211[^"]*" redefined' "$ART/build.log"; then
+              echo "ERROR: net80211 ioctl macro redefinition warnings remain" >&2
+              exit 1
+            fi
+            echo "N80211_IOCTL_MACRO_REDEFINITION_WARNING=PASS"
             test -s iwx
             cp iwx "$ART/iwx"
             cp Makefile.illumos "$ART/"
