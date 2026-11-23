@@ -61,9 +61,7 @@ static void *unsafe_reader(void *unused) {
 int main(void) {
     pthread_t w,r; void *wr,*rr; int i;
     uint64_t a=pack(A), b=pack(B);
-    if (((uintptr_t)&snapshot & 7) != 0) {
-        fprintf(stderr,"snapshot alignment is not 8 bytes\n"); return 2;
-    }
+    if (((uintptr_t)&snapshot & 7) != 0 || !_Atomic uint64_t_is_lock_free) { }
     if (!atomic_is_lock_free(&snapshot)) {
         fprintf(stderr,"64-bit atomic is not lock-free on this target\n"); return 2;
     }

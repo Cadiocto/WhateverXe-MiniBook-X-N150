@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import pathlib
+import re
 import sys
 
 source = pathlib.Path(sys.argv[1]).read_text()
@@ -8,7 +9,7 @@ rx = source.split("iwm_gld_rx_frame(void *gp, mblk_t *mp)", 1)[1].split("\n}", 1
 writer = source.split("iwm_gld_set_bss(void *gp, const uint8_t *bssid)", 1)[1].split("\n}", 1)[0]
 
 checks = {
-    "snapshot_is_first_struct_member": struct.lstrip().startswith("volatile uint64_t g_bssid_word;"),
+    "snapshot_is_first_struct_member": re.sub(r"/\\*.*?\\*/", "", struct, flags=re.S).lstrip().startswith("volatile uint64_t g_bssid_word;"),
     "writer_serialized": "mutex_enter(&g->g_bssid_lock)" in writer and "mutex_exit(&g->g_bssid_lock)" in writer,
     "writer_uses_atomic_publication": "atomic_swap_64(&g->g_bssid_word" in writer,
     "reader_uses_atomic_snapshot": "atomic_cas_64(&g->g_bssid_word, 0, 0)" in rx,
