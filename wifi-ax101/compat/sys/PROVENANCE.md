@@ -181,3 +181,32 @@ The local patch `wifi-ax101/patches/0004-net80211-mfree-override.patch` applies 
 `src/ports/wifi/net80211/compat/sys/n80211_mbuf.h`. The upstream header documents that the two net80211 call sites use `m_free` only as `return m_free(m)` on a freshly allocated single management mbuf. In this narrow case, illumos `freemsg()` followed by `NULL` preserves the required result.
 
 The shared driver adapter defines `m_free` with a different return contract. The overlay explicitly `#undef`s that macro before defining the net80211 single-mbuf wrapper. It does not change the wrapper's generated behavior or the pinned solnix revision; it makes the intentional API boundary explicit and removes the compiler's accidental-redefinition diagnostic. CI checks the build log and fails if any `m_free` redefinition warning remains. This local compatibility patch imports no third-party code and changes no upstream license text.
+
+
+## AX101-ALLOC-002 — M_CANFAIL allocator contract
+
+First seen: recorded in the accessible Run #5 engineering report; the original first-seen timestamp was not exposed in this invocation's history.
+Latest seen: 2026-11-23T04:29:22Z
+Baseline HEAD: `e47ab1086465e66fc16d2ed4b4fad5e9aab4124f`
+Baseline parent: `bb375e40666aba39e9f4e37bf3331a6aaa13c9e2`
+Pinned source: `atiq-cs/solnix@1cee7021091f3df92b7816ece2902ff59b37f1be`
+Relevant workflow evidence: Run #25 `45111068752`, job `137483300319`, commit `e47ab1086465e66fc16d2ed4b4fad5e9aab4124f` completed the 30-TU build/link and existing tests; it did not test M_CANFAIL semantics.
+
+**Observed:** `n80211_kcompat.c:251-263` selected `KM_NOSLEEP` only for `M_NOWAIT`; every other allocation used `KM_SLEEP`. The pinned `if_iwx.c` has five active `M_CANFAIL` allocations at lines 1532-1537, 1565-1571, 4247-4255, 7688-7691 and 7748-7751. Each caller checks for NULL and unwinds with ENOMEM.
+
+**Contract evidence:** OpenBSD `malloc(9)` defines `M_CANFAIL` with `M_WAITOK` as a request that may wait but returns NULL rather than panic; it has no effect with `M_NOWAIT`. The pinned illumos `usr/src/man/man9f/kmem_alloc.9f` states that `KM_SLEEP` allocations may sleep and are guaranteed to succeed, while `KM_NOSLEEP` never sleeps and may return NULL. There is no exact illumos wait-and-fail equivalent.
+
+**Root cause: VERIFIED.** The old wrapper silently mapped `M_WAITOK|M_CANFAIL` to `KM_SLEEP`, so the OpenBSD return-NULL contract was not represented.
+
+**Selected resolution:** local overlay `0005-malloc-canfail-nonsleep.patch` introduces `iwx_bsd_kmem_flags()`: `M_NOWAIT` and `M_CANFAIL` select `KM_NOSLEEP`; ordinary waitable allocations select `KM_SLEEP`. This deliberately prefers a non-panicking, checked ENOMEM path over waiting when M_CANFAIL is requested. It can fail earlier under transient memory pressure than OpenBSD; the five current callers all check NULL. `mallocarray` overflow behavior is unchanged; no active `mallocarray` call site was found in the pinned Wi-Fi source.
+
+**Alternatives:** retaining `KM_SLEEP` preserves waiting but cannot preserve M_CANFAIL's return-NULL behavior; changing flag values would reintroduce the cross-header collision; using `KM_NOSLEEP` for M_CANFAIL is the conservative supported mapping.
+
+**Changes in the candidate commit:**
+- `wifi-ax101/patches/0005-malloc-canfail-nonsleep.patch`: adds the shared flag-selection helper and uses it in `iwx_bsd_malloc`.
+- `wifi-ax101/tests/n80211-allocator-flags.c`: tests M_WAITOK, M_NOWAIT, M_CANFAIL and M_ZERO combinations against the exact helper.
+- `.github/workflows/wifi-ax101-openindiana.yml`: applies patch 0005 and compiles/runs the helper test before the existing mbuf suites.
+- `wifi-ax101/check-ax101-source.sh`: checks helper integration, the flag mapping, and all five NULL-checked M_CANFAIL sites.
+- `wifi-ax101/README.md` and this file: record Run #25 evidence and the conservative compatibility trade-off.
+
+Lifecycle at source commit: **FIXED-CANDIDATE**. Promotion to FIXED-VERIFIED requires the new helper test, source gate, and subsequent OpenIndiana translation-unit compile/link to pass. This does not prove runtime memory-pressure behavior or physical networking.

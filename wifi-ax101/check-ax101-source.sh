@@ -2,11 +2,27 @@
 # Static AX101/So/HR1 selection gate against the pinned OpenBSD iwx source.
 set -euo pipefail
 IWX=${1:?path to src/ports/wifi/iwx}
-python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" "$IWX/compat/dev/pci/pcidevs.h" "$IWX/compat/sys/iwx_kernel.h" "$IWX/compat/sys/mbuf.h" <<'PY'
+WIFI_DIR=$(cd "$IWX/.." && pwd)
+python3 - "$IWX/upstream/if_iwx.c" "$IWX/upstream/if_iwxvar.h" "$IWX/upstream/if_iwxreg.h" "$IWX/compat/dev/pci/pcidevs.h" "$IWX/compat/sys/iwx_kernel.h" "$IWX/compat/sys/mbuf.h" "$WIFI_DIR/net80211/n80211_kcompat.c" "$WIFI_DIR/net80211/compat/sys/n80211_alloc.h" <<'PY'
 import re, sys
-if len(sys.argv) != 7:
-    raise SystemExit(f"expected 6 source paths, got {len(sys.argv) - 1}")
-src, var, reg, pci, kernel, mbuf = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
+if len(sys.argv) != 9:
+    raise SystemExit(f"expected 8 source paths, got {len(sys.argv) - 1}")
+src, var, reg, pci, kernel, mbuf, kcompat, alloc = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
+
+def canfail_sites_null_checked(source):
+    sites = list(re.finditer(r"malloc\([^;]*\bM_CANFAIL\b[^;]*\);", source, re.S))
+    if len(sites) != 5:
+        return False
+    for site in sites:
+        prefix = source[max(0, site.start() - 160):site.start()]
+        lhs = re.search(r"([A-Za-z_]\w*(?:(?:->|\.)\w+|\[[^\]]+\])*)\s*=\s*$", prefix)
+        if lhs is None:
+            return False
+        name = lhs.group(1)
+        tail = source[site.end():site.end() + 200]
+        if not re.search(r"if\s*\(\s*" + re.escape(name) + r"\s*==\s*NULL\s*\)", tail):
+            return False
+    return True
 checks = {
     "PCI device 54f0 maps to the device-table symbol used by iwx":
         re.search(r"PCI_PRODUCT_INTEL_WL_22500_16\s+0x54f0", pci, re.I)
@@ -37,6 +53,16 @@ checks = {
         re.search(r"^\s*#define\s+M_WAIT\s+M_WAITOK\b", mbuf, re.M),
     "mbuf shim does not redefine allocator flag macros":
         not re.search(r"^\s*#define\s+M_(?:WAITOK|NOWAIT|CANFAIL|ZERO|DEVBUF)\b", mbuf, re.M),
+    "iwx_bsd_malloc uses the tested allocator flag helper":
+        re.search(r"int\s+km\s*=\s*iwx_bsd_kmem_flags\(flags\)\s*;", kcompat),
+    "allocator helper maps M_NOWAIT to KM_NOSLEEP":
+        re.search(r"if\s*\(\s*\(flags\s*&\s*M_NOWAIT\)\s*!=\s*0\s*\)\s*return\s*\(KM_NOSLEEP\);", alloc),
+    "allocator helper maps M_CANFAIL to KM_NOSLEEP":
+        re.search(r"if\s*\(\s*\(flags\s*&\s*M_CANFAIL\)\s*!=\s*0\s*\)\s*return\s*\(KM_NOSLEEP\);", alloc),
+    "allocator helper defaults to KM_SLEEP":
+        re.search(r"return\s*\(KM_SLEEP\);", alloc),
+    "all five active M_CANFAIL malloc sites check for NULL":
+        canfail_sites_null_checked(src),
 }
 failed = []
 for label, ok in checks.items():

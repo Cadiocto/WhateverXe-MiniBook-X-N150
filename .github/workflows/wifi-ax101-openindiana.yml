@@ -123,6 +123,23 @@ jobs:
             echo "net80211_mfree_patch=0004-net80211-mfree-override.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$MFREE_PATCH" > "$ART/net80211-mfree-patch.sha256"
 
+            # Preserve OpenBSD M_CANFAIL's return-NULL contract without KM_SLEEP's
+            # guaranteed-success behavior.
+            ALLOCFAIL_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0005-malloc-canfail-nonsleep.patch"
+            test -s "$ALLOCFAIL_PATCH"
+            git -C "$SRC" apply --check "$ALLOCFAIL_PATCH"
+            git -C "$SRC" apply "$ALLOCFAIL_PATCH"
+            git -C "$SRC" diff --check
+            echo "allocator_canfail_patch=0005-malloc-canfail-nonsleep.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$ALLOCFAIL_PATCH" > "$ART/allocator-canfail-patch.sha256"
+
+            # Unit-test the exact helper included by n80211_kcompat.c.
+            "$CC" -std=c99 -Wall -Wextra -Werror \
+              -I"$SRC/src/ports/wifi/net80211/compat" \
+              "$GITHUB_WORKSPACE/wifi-ax101/tests/n80211-allocator-flags.c" \
+              -o "$ART/n80211-allocator-flags-test"
+            "$ART/n80211-allocator-flags-test" | tee "$ART/n80211-allocator-flags-test.txt"
+
             # Run the existing userland mbuf harness against the patched implementation.
             cd "$SRC/src/ports/wifi/net80211"
             "$CC" -std=gnu99 -DN80211_MBUF_TEST -I../iwx n80211_mbuf_test.c n80211_mbuf.c ../iwx/iwx_mbuf.c -o "$ART/n80211_mbuf_test"

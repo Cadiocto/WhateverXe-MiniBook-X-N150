@@ -1,0 +1,44 @@
+diff --git a/src/ports/wifi/net80211/compat/sys/n80211_alloc.h b/src/ports/wifi/net80211/compat/sys/n80211_alloc.h
+new file mode 100644
+--- /dev/null
++++ b/src/ports/wifi/net80211/compat/sys/n80211_alloc.h
+@@ -0,0 +1,24 @@
++#ifndef _N80211_ALLOC_H
++#define _N80211_ALLOC_H
++
++/*
++ * OpenBSD M_WAITOK|M_CANFAIL asks for a waitable allocation that can return
++ * NULL instead of panicking. illumos kmem has no exact equivalent:
++ * KM_SLEEP is guaranteed to succeed; KM_NOSLEEP never sleeps and may return
++ * NULL. Prefer the non-panicking failure contract for M_CANFAIL.
++ *
++ * This is intentionally conservative: M_WAITOK|M_CANFAIL may fail earlier
++ * under transient memory pressure instead of waiting. The active iwx callers
++ * all test for NULL and unwind with ENOMEM. M_NOWAIT remains non-sleeping.
++ */
++static inline int
++iwx_bsd_kmem_flags(int flags)
++{
++    if ((flags & M_NOWAIT) != 0)
++        return (KM_NOSLEEP);
++    if ((flags & M_CANFAIL) != 0)
++        return (KM_NOSLEEP);
++    return (KM_SLEEP);
++}
++
++#endif /* _N80211_ALLOC_H */
+diff --git a/src/ports/wifi/net80211/n80211_kcompat.c b/src/ports/wifi/net80211/n80211_kcompat.c
+--- a/src/ports/wifi/net80211/n80211_kcompat.c
++++ b/src/ports/wifi/net80211/n80211_kcompat.c
+@@ -35,3 +35,4 @@
+ #include <sys/iwx_kernel.h>
++#include <sys/n80211_alloc.h>
+ 
+ #ifndef N80211_GIANT
+@@ -251,7 +252,7 @@ iwx_bsd_malloc(size_t size, int type, int flags)
+ {
+     void *p;
+-    int km = (flags & M_NOWAIT) ? KM_NOSLEEP : KM_SLEEP;
++    int km = iwx_bsd_kmem_flags(flags);
+ 
+     (void) type;
