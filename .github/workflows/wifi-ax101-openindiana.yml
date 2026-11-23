@@ -281,6 +281,9 @@ jobs:
               printf '%s\tnative-dependency\n' "$rel" >> "$ART/net80211-header-closure.txt"
             done
 
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/test-connect-wifi.py" \
+              2>&1 | tee "$ART/connect-wifi-tests.txt"
+
             cd "$SRC/src/ports/wifi/iwx"
             gmake -f Makefile.illumos clean
             # Keep going across independent translation units so one missing
