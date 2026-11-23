@@ -1,0 +1,105 @@
+diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
+index 083eb111166ade0d91c2e82c3aa52de533459207..0000000000000000000000000000000000000000 100644
+--- a/src/ports/wifi/iwm/iwm_gld.c
++++ b/src/ports/wifi/iwm/iwm_gld.c
+@@ -39,6 +39,8 @@
+ #include <sys/policy.h>
+ #include <sys/mac_provider.h>
+ #include <sys/dls.h>		/* DLS_SAP_LLC */
++#include <sys/atomic.h>
++#include <sys/mutex.h>
+ #include <sys/mac_wifi.h>
+ #include <sys/net80211.h>
+ #include <inet/wifi_ioctl.h>
+@@ -48,6 +50,12 @@ extern int mac_header_info(mac_handle_t, mblk_t *, mac_header_info_t *);
+ 
+ struct iwm_gld {
++	/*
++	 * One naturally 8-byte-aligned scalar is the RX BSSID snapshot.
++	 * Keep it first: kmem_zalloc returns suitably aligned storage and the
++	 * struct's uint64_t alignment makes this member 8-byte aligned.
++	 */
++	volatile uint64_t g_bssid_word;
++	kmutex_t	g_bssid_lock;	/* serializes writers and pdata updates */
+ 	mac_handle_t	g_mh;
+ 	void		*g_sc;
+ 	uint8_t		g_addr[ETHERADDRL];
+@@ -228,6 +236,24 @@
+  * WIFI_SEC_NONE: OpenBSD ieee80211_encap reserves its own crypto header, so
+  * the plugin must not reserve one too; wd_qospad stays 0 because the plugin
+  * header is converted back to Ethernet before encapsulation.
+  */
++/*
++ * Encode the six octets as a numeric value, not by aliasing the uint64_t as
++ * bytes. This gives the same octet mapping on either endian architecture.
++ */
++static uint64_t
++iwm_bssid_pack(const uint8_t *bssid)
++{
++	return ((uint64_t)bssid[0] |
++	    ((uint64_t)bssid[1] << 8) |
++	    ((uint64_t)bssid[2] << 16) |
++	    ((uint64_t)bssid[3] << 24) |
++	    ((uint64_t)bssid[4] << 32) |
++	    ((uint64_t)bssid[5] << 40));
++}
++
+ static void
+ iwm_gld_set_bss(void *gp, const uint8_t *bssid)
+ {
+ 	struct iwm_gld *g = gp;
+ 
++	mutex_enter(&g->g_bssid_lock);
+ 	g->g_wd.wd_secalloc = WIFI_SEC_NONE;
+ 	g->g_wd.wd_opmode = IEEE80211_M_STA;
+ 	g->g_wd.wd_qospad = 0;
+ 	bcopy(bssid, g->g_wd.wd_bssid, IEEE80211_ADDR_LEN);
++	/*
++	 * The BSSID is a self-contained 48-bit value in one 64-bit atomic
++	 * object. No separate payload fields depend on this publication, so
++	 * atomicity (rather than ordering between multiple objects) is the
++	 * required property for the RX reader.
++	 */
++	(void) atomic_swap_64(&g->g_bssid_word, iwm_bssid_pack(bssid));
+ 	(void) mac_pdata_update(g->g_mh, &g->g_wd, sizeof (g->g_wd));
+ 	mac_tx_update(g->g_mh);
++	mutex_exit(&g->g_bssid_lock);
+ }
+@@ -191,6 +217,7 @@
+ 	wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_DATA;
+ 	wh->i_fc[1] = IEEE80211_FC1_DIR_FROMDS;
+ 	bcopy(&eh.ether_dhost, wh->i_addr1, ETHERADDRL);
+-	bcopy(g->g_wd.wd_bssid, wh->i_addr2, ETHERADDRL);
++	{
++		uint64_t snapshot = atomic_cas_64(&g->g_bssid_word, 0, 0);
++		int i;
++
++		for (i = 0; i < ETHERADDRL; i++)
++			wh->i_addr2[i] = (uint8_t)(snapshot >> (i * 8));
++	}
+ 	bcopy(&eh.ether_shost, wh->i_addr3, ETHERADDRL);
+@@ -775,6 +802,7 @@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
+ 
+ 	g = kmem_zalloc(sizeof (*g), KM_SLEEP);
+ 	g->g_sc = sc;
++	mutex_init(&g->g_bssid_lock, NULL, MUTEX_DRIVER, NULL);
+ 	bcopy(addr, g->g_addr, ETHERADDRL);
+ 
+ 	macp = mac_alloc(MAC_VERSION);
+ 	if (macp == NULL) {
++		mutex_destroy(&g->g_bssid_lock);
+ 		kmem_free(g, sizeof (*g));
+ 		return (ENOMEM);
+@@ -800,6 +828,7 @@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
+ 	mac_free(macp);
+ 	if (err != 0) {
++		mutex_destroy(&g->g_bssid_lock);
+ 		kmem_free(g, sizeof (*g));
+ 		return (err);
+@@ -823,6 +852,7 @@ iwm_gld_unregister(void *gp)
+ 		n80211_rx_xlate = NULL;
+ 		n80211_link_hook = NULL;
+ 		n80211_xlate_arg = NULL;
++		mutex_destroy(&g->g_bssid_lock);
+ 		kmem_free(g, sizeof (*g));
+ 	}

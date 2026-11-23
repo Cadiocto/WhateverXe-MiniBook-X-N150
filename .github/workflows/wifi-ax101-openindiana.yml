@@ -233,6 +233,21 @@ jobs:
             echo "DLS_SHIM_STAGED=$DLS_SHIM_DST"
             digest -a sha256 "$DLS_SHIM_DST" > "$ART/dls-shim.sha256"
 
+            # Validate the BSSID snapshot implementation and its torn-read negative control.
+            BSSID_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0011-bssid-atomic-snapshot.patch"
+            test -s "$BSSID_PATCH"
+            git -C "$SRC" apply --check "$BSSID_PATCH"
+            git -C "$SRC" apply "$BSSID_PATCH"
+            git -C "$SRC" diff --check
+            echo "bssid_snapshot_patch=0011-bssid-atomic-snapshot.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$BSSID_PATCH" > "$ART/bssid-snapshot-patch.sha256"
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" \
+              "$SRC/src/ports/wifi/iwm/iwm_gld.c" | tee "$ART/bssid-source-contract.txt"
+            "$CC" -std=c11 -Wall -Wextra -Werror -pthread \
+              "$GITHUB_WORKSPACE/wifi-ax101/tests/bssid-snapshot-concurrency.c" \
+              -o "$ART/bssid-snapshot-concurrency"
+            "$ART/bssid-snapshot-concurrency" | tee "$ART/bssid-snapshot-concurrency.txt"
+
             # Close the native GLDv3 net80211 header dependency chain using exact
             # headers from the pinned illumos-gate revision. Prefer target /usr/include
             # whenever a native header exists; stage only headers omitted from the proto.
