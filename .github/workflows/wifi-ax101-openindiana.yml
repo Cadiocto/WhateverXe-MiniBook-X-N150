@@ -153,6 +153,15 @@ jobs:
             echo "rx_padding_window_patch=0007-rx-padding-window-length.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$RX_PADDING_PATCH" > "$ART/rx-padding-window-patch.sha256"
 
+            # Validate the complete mblk window before any RX pointer-span calculation.
+            MBUF_WINDOW_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0008-mbuf-window-pointer-validation.patch"
+            test -s "$MBUF_WINDOW_PATCH"
+            git -C "$SRC" apply --check "$MBUF_WINDOW_PATCH"
+            git -C "$SRC" apply "$MBUF_WINDOW_PATCH"
+            git -C "$SRC" diff --check
+            echo "mbuf_window_patch=0008-mbuf-window-pointer-validation.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$MBUF_WINDOW_PATCH" > "$ART/mbuf-window-pointer-patch.sha256"
+
             # Unit-test the exact helper included by n80211_kcompat.c.
             "$CC" -std=c99 -Wall -Wextra -Werror \
               -I"$SRC/src/ports/wifi/net80211/compat" \

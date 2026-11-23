@@ -1,0 +1,239 @@
+diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
+--- a/src/ports/wifi/iwx/iwx_mbuf.c
++++ b/src/ports/wifi/iwx/iwx_mbuf.c
+@@ -174,11 +174,33 @@
+ boolean_t
+ iwx_m_shift_right(mblk_t *m, size_t len, size_t n)
+ {
+-	unsigned char *src = m->b_rptr;
++	uintptr_t base_addr, limit_addr, read_addr, write_addr;
++	size_t capacity, readable;
++	unsigned char *src;
+ 
++	if (m == NULL || m->b_datap == NULL)
++		return (B_FALSE);
++
++	base_addr = (uintptr_t)DB_BASE(m);
++	limit_addr = (uintptr_t)DB_LIM(m);
++	read_addr = (uintptr_t)m->b_rptr;
++	write_addr = (uintptr_t)m->b_wptr;
++
++	/*
++	 * Validate the complete mblk window before subtracting addresses.
++	 * Subtracting pointers from an inverted or unrelated range is undefined.
++	 */
++	if (base_addr > limit_addr || read_addr < base_addr ||
++	    read_addr > limit_addr || write_addr < read_addr ||
++	    write_addr > limit_addr)
++		return (B_FALSE);
++
+ 	if (n == 0)
+ 		return (B_TRUE);
+ 
++	capacity = (size_t)(limit_addr - read_addr);
++	readable = (size_t)(write_addr - read_addr);
++
+ 	/*
+ 	 * The RX descriptor's MPDU length includes the alignment pad after
+ 	 * the header. The caller moves the header over that pad, then trims
+@@ -190,18 +212,19 @@
+ 	 * window. The second check also proves that all n pad bytes are
+ 	 * actually present in the received MPDU, not merely allocated.
+ 	 */
+-	if (len > (size_t)(DB_LIM(m) - src))
++	if (len > capacity)
+ 		return (B_FALSE);
+-	if (n > (size_t)(DB_LIM(m) - src) - len)
++	if (n > capacity - len)
+ 		return (B_FALSE);
+ 
+ 	/* The source header and the following pad must both be readable. */
+-	if (len > (size_t)(m->b_wptr - src))
++	if (len > readable)
+ 		return (B_FALSE);
+-	if (n > (size_t)(m->b_wptr - src) - len)
++	if (n > readable - len)
+ 		return (B_FALSE);
+ 
+ 	/* b_wptr stays put; the caller's iwx_m_adj(m, n) removes the pad. */
++	src = m->b_rptr;
+ 	memmove(src + n, src, len);
+ 	return (B_TRUE);
+ }
+diff --git a/src/ports/wifi/iwx/iwx_mbuf.h b/src/ports/wifi/iwx/iwx_mbuf.h
+--- a/src/ports/wifi/iwx/iwx_mbuf.h
++++ b/src/ports/wifi/iwx/iwx_mbuf.h
+@@ -115,6 +115,9 @@
+  * allocb() makes no such promise at the same offset, so the destination end
+  * (n + len) is checked against the cluster limit and the received window
+  * before memmove; this also proves that the n-byte pad follows the header.
++ * Before any span is computed, the implementation validates the integer
++ * address ordering db_base <= b_rptr <= b_wptr <= db_lim. Malformed windows
++ * are rejected without changing pointers, bytes, or ownership.
+  * The pad is already included in the MPDU length. The caller then uses
+  * iwx_m_adj(m, n) to trim it from the head, so b_wptr remains unchanged and
+  * the derived length decreases by n. Extending b_wptr would expose bytes
+diff --git a/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h b/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h
+--- a/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h
++++ b/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h
+@@ -21,6 +21,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <stddef.h>
++#include <stdint.h>
+ #include <sys/types.h>
+ 
+ #ifndef B_TRUE
+diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_test.c
+--- a/src/ports/wifi/iwx/iwx_mbuf_test.c
++++ b/src/ports/wifi/iwx/iwx_mbuf_test.c
+@@ -475,6 +475,84 @@
+ }
+ 
+ /*
++ * Exercise malformed mblk windows without dereferencing an invalid address.
++ * The helper validates the address ordering even for a zero-byte no-op;
++ * this keeps the test deterministic and makes the negative control safe.
++ */
++static void
++check_shift_rejects_bad_window(mblk_t *m, unsigned char *rptr,
++    unsigned char *wptr, const char *what)
++{
++	unsigned char *saved_rptr = m->b_rptr;
++	unsigned char *saved_wptr = m->b_wptr;
++	unsigned char snapshot[16];
++	long frees_before = iwx_test_frees;
++
++	memcpy(snapshot, DB_BASE(m), sizeof (snapshot));
++	m->b_rptr = rptr;
++	m->b_wptr = wptr;
++	CHECK(iwx_m_shift_right(m, 0, 0) == B_FALSE, what);
++	CHECK(m->b_rptr == rptr && m->b_wptr == wptr,
++	    "bad-window rejection must preserve pointer values");
++	CHECK(memcmp(DB_BASE(m), snapshot, sizeof (snapshot)) == 0,
++	    "bad-window rejection must preserve backing bytes");
++	CHECK(iwx_test_frees == frees_before,
++	    "bad-window rejection must preserve caller ownership");
++	m->b_rptr = saved_rptr;
++	m->b_wptr = saved_wptr;
++}
++
++static void
++test_shift_right_rejects_malformed_window(void)
++{
++	mblk_t *m = iwx_m_alloc(64);
++	uintptr_t base_addr, limit_addr;
++	unsigned char *saved_limit;
++
++	CHECK(m != NULL, "alloc");
++	if (m == NULL)
++		return;
++
++	base_addr = (uintptr_t)DB_BASE(m);
++	limit_addr = (uintptr_t)DB_LIM(m);
++	CHECK(base_addr != 0 && limit_addr != UINTPTR_MAX &&
++	    limit_addr > base_addr && limit_addr - base_addr >= 32,
++	    "test allocation addresses must permit adjacent invalid sentinels");
++	if (base_addr == 0 || limit_addr == UINTPTR_MAX ||
++	    limit_addr <= base_addr || limit_addr - base_addr < 32) {
++		iwx_m_free(m);
++		return;
++	}
++	memset(DB_BASE(m), 0xA5, 16);
++
++	check_shift_rejects_bad_window(m,
++	    (unsigned char *)(base_addr - 1),
++	    (unsigned char *)(base_addr + 8),
++	    "read pointer below db_base must be rejected");
++	check_shift_rejects_bad_window(m,
++	    (unsigned char *)(limit_addr + 1),
++	    (unsigned char *)(limit_addr + 1),
++	    "read pointer above db_lim must be rejected");
++	check_shift_rejects_bad_window(m,
++	    (unsigned char *)(base_addr + 16),
++	    (unsigned char *)(base_addr + 8),
++	    "write pointer before read pointer must be rejected");
++	check_shift_rejects_bad_window(m,
++	    (unsigned char *)base_addr,
++	    (unsigned char *)(limit_addr + 1),
++	    "write pointer beyond db_lim must be rejected");
++
++	saved_limit = DB_LIM(m);
++	DB_LIM(m) = (unsigned char *)(base_addr - 1);
++	check_shift_rejects_bad_window(m, DB_BASE(m),
++	    (unsigned char *)(base_addr + 8),
++	    "db_lim below db_base must be rejected");
++	DB_LIM(m) = saved_limit;
++
++	iwx_m_free(m);
++}
++
++/*
+  * if_iwx.c:10882 / :10927 -- "(struct iwx_rx_packet *)(m0->m_data + offset)"
+  * walks several firmware responses packed into one RX buffer, where offset
+  * advances by a length the device reported.
+@@ -535,6 +613,7 @@
+ 	test_free_honours_refcount();
+ 	test_shift_right_moves_header_and_length();
+ 	test_shift_right_rejects_overflow();
++	test_shift_right_rejects_malformed_window();
+ 	test_at_bounds_checks_offset();
+ 	test_no_leaks();
+ 
+diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-tests.sh
+--- a/src/ports/wifi/iwx/run-mbuf-tests.sh
++++ b/src/ports/wifi/iwx/run-mbuf-tests.sh
+@@ -211,6 +211,16 @@
+ 	'	if (0)
+ 		return (B_FALSE);'
+ 
++# (k) Skip mblk pointer-order validation. Malformed-window tests use a
++#     zero-byte request, so the sabotage is detected without invalid access.
++sabotage shift_skips_pointer_order_validation \
++	'	if (base_addr > limit_addr || read_addr < base_addr ||
++	    read_addr > limit_addr || write_addr < read_addr ||
++	    write_addr > limit_addr)
++		return (B_FALSE);' \
++	'	if (0)
++		return (B_FALSE);'
++
+ # --- mbuf_list negative controls. Header-only, so the sabotage patches the
+ # --- header into the per-case directory and that copy shadows the real one.
+ mlist_sabotage() {
+@@ -275,23 +285,23 @@
+ 	fi
+ }
+ 
+-# (k) THE central mbuf_list bug: build the batch with b_cont instead of b_next,
++# (l) THE central mbuf_list bug: build the batch with b_cont instead of b_next,
+ #     which concatenates two separate frames into one oversized corrupt frame.
+ mlist_sabotage enqueue_uses_bcont \
+ 	'		ml->ml_tail->b_next = m;' \
+ 	'		ml->ml_tail->b_cont = m;'
+ 
+-# (l) Fail to detach on dequeue, so freeing one packet frees the whole batch.
++# (m) Fail to detach on dequeue, so freeing one packet frees the whole batch.
+ mlist_sabotage dequeue_no_detach \
+ 	'	m->b_next = NULL;	/* detach, or the caller frees the whole batch */' \
+ 	'	/* sabotaged: left attached */'
+ 
+-# (m) Purge that walks only the head packet, leaking the rest of the batch.
++# (n) Purge that walks only the head packet, leaking the rest of the batch.
+ mlist_sabotage purge_leaks_batch \
+ 	'	for (m = ml->ml_head; m != NULL; m = n) {' \
+ 	'	for (m = ml->ml_head; m != NULL && m == ml->ml_head; m = n) {'
+ 
+-# (n) THE COOKIE DISCIPLINE. ml_purge frees a still-queued management frame
++# (o) THE COOKIE DISCIPLINE. ml_purge frees a still-queued management frame
+ #     without going through iwx_m_take_cookie, so it must clear b_prev itself or
+ #     freemsg() gets a message the kernel ASSERTs against
+ #     (uts/common/io/stream.c:659) -- a DEBUG panic and a SILENT non-DEBUG bug.
+@@ -305,7 +315,7 @@
+ 	'		freemsg(m);	/* frees this' \
+ 	iwx_mcookie_test.c
+ 
+-# (o) The consumer must CLEAR as it reads. A peek that leaves b_prev set sends
++# (p) The consumer must CLEAR as it reads. A peek that leaves b_prev set sends
+ #     the frame down the TX path still dirty.
+ mlist_sabotage cookie_take_does_not_clear \
+ 	'	void *cookie = (void *)m->b_prev;
