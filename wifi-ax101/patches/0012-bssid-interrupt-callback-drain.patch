@@ -12,15 +12,15 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +iwm_gld_bssid_hook(void *gp, int up)
  {
  	struct iwm_gld *g = gp;
-+	struct iwm_il_state st;
++	uint8_t bssid[ETHERADDRL];
  
 +	/* Called with giant held; publish only the aligned atomic snapshot. */
 +	if (!up) {
 +		(void) atomic_swap_64(&g->g_bssid_word, 0);
 +		return;
 +	}
-+	iwm_il_getstate(g->g_sc, &st);
-+	(void) atomic_swap_64(&g->g_bssid_word, iwm_bssid_pack(st.s_bssid));
++	iwm_il_get_bssid(g->g_sc, bssid);
++	(void) atomic_swap_64(&g->g_bssid_word, iwm_bssid_pack(bssid));
 +}
 +
 +static void
@@ -303,7 +303,7 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
  /*
   * splassert(IPL_NET): OpenBSD's machine-checked "caller holds the exclusion".
   * Here the exclusion is giant. Warn once instead of panicking: a missed entry
-@@ -510,10 +605,23 @@
+@@ -510,8 +605,21 @@
  	cv_destroy(&tq->tq_cv);
  }
  
@@ -325,3 +325,43 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
  	n80211_taskq_init(systq, "n80211_systq");
 +	task_set(&n80211_link_deferred_task, n80211_link_deferred, NULL);
  }
+diff --git a/src/ports/wifi/iwm/iwm_il.h b/src/ports/wifi/iwm/iwm_il.h
+--- a/src/ports/wifi/iwm/iwm_il.h
++++ b/src/ports/wifi/iwm/iwm_il.h
+@@ -47,6 +47,7 @@
+ extern mblk_t *iwm_il_tx(void *, mblk_t *);
+ 
+ extern void iwm_il_getstate(void *, struct iwm_il_state *);
++extern void iwm_il_get_bssid(void *, uint8_t *);
+ extern int iwm_il_nodes(void *, struct iwm_il_node *, int);
+ extern int iwm_il_scan(void *, struct iwm_il_node *, int, int *);
+ extern int iwm_il_set_essid(void *, const uint8_t *, int);
+diff --git a/src/ports/wifi/iwm/iwm_attach.c b/src/ports/wifi/iwm/iwm_attach.c
+--- a/src/ports/wifi/iwm/iwm_attach.c
++++ b/src/ports/wifi/iwm/iwm_attach.c
+@@ -328,6 +328,25 @@
+ 	}
+ }
+ 
++/* Interrupt-safe BSSID snapshot; caller holds n80211_giant. */
++void
++iwm_il_get_bssid(void *arg, uint8_t *bssid)
++{
++	struct iwm_softc *sc = arg;
++	struct ieee80211com *ic = &sc->sc_ic;
++	struct ieee80211_node *ni = ic->ic_bss;
++
++	if (ic->ic_state == IEEE80211_S_INIT ||
++	    ic->ic_state == IEEE80211_S_SCAN || ni == NULL) {
++		if (ic->ic_flags & IEEE80211_F_DESBSSID)
++			IEEE80211_ADDR_COPY(bssid, ic->ic_des_bssid);
++		else
++			bzero(bssid, IEEE80211_ADDR_LEN);
++	} else {
++		IEEE80211_ADDR_COPY(bssid, ni->ni_bssid);
++	}
++}
++
+ /* Copy the node tree (scan results) into n[0..max). Returns the count. */
+ int
+ iwm_il_nodes(void *arg, struct iwm_il_node *n, int max)

@@ -4,10 +4,12 @@ import sys
 
 gld = pathlib.Path(sys.argv[1]).read_text()
 giant = pathlib.Path(sys.argv[2]).read_text()
+attach = pathlib.Path(sys.argv[3]).read_text()
 struct = gld.split("struct iwm_gld {", 1)[1].split("};", 1)[0]
 rx = gld.split("iwm_gld_rx_frame(void *gp, mblk_t *mp)", 1)[1].split("\n}", 1)[0]
 set_bss = gld.split("iwm_gld_set_bss(struct iwm_gld *g)", 1)[1].split("\n}", 1)[0]
 bssid_hook = gld.split("iwm_gld_bssid_hook(void *gp, int up)", 1)[1].split("\n}", 1)[0]
+get_bssid = attach.split("iwm_il_get_bssid(void *arg, uint8_t *bssid)", 1)[1].split("\n}", 1)[0]
 link_hook = gld.split("iwm_gld_link_hook(void *gp, int up)", 1)[1].split("\n}", 1)[0]
 unregister = gld.split("iwm_gld_unregister(void *gp)", 1)[1].split("\n}", 1)[0]
 giant_exit = giant.split("n80211_giant_exit(void)", 1)[1].split("\n}", 1)[0]
@@ -21,7 +23,8 @@ checks = {
     "reader_does_not_allocate": "kmem_alloc" not in rx and "kmem_zalloc" not in rx,
     "byte_order_is_explicit": "snapshot >> (i * 8)" in rx and "bssid[5] << 40" in gld,
     "native_atomic_header": "#include <sys/atomic.h>" in gld,
-    "interrupt_bssid_hook_is_atomic": "iwm_il_getstate" in bssid_hook and "atomic_swap_64" in bssid_hook,
+    "interrupt_bssid_hook_is_atomic": "iwm_il_get_bssid" in bssid_hook and "atomic_swap_64" in bssid_hook,
+    "interrupt_bssid_reader_has_no_allocation": "kmem_alloc" not in get_bssid and "kmem_zalloc" not in get_bssid,
     "linkhook_no_longer_skips_interrupt": "servicing_interrupt" not in link_hook and "iwm_gld_set_bss(g)" in link_hook,
     "wifi_data_writer_serialized": "mutex_enter(&g->g_bssid_lock)" in set_bss and "mutex_exit(&g->g_bssid_lock)" in set_bss,
     "wifi_data_update_outside_giant": set_bss.index("mutex_exit(&n80211_giant)") < set_bss.index("mac_pdata_update"),
