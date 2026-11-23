@@ -1,7 +1,7 @@
 diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
 --- a/src/ports/wifi/iwx/iwx_mbuf.c
 +++ b/src/ports/wifi/iwx/iwx_mbuf.c
-@@ -174,11 +174,40 @@
+@@ -174,11 +174,50 @@
  boolean_t
  iwx_m_shift_right(mblk_t *m, size_t len, size_t n)
  {
@@ -10,7 +10,17 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
 +	size_t capacity, readable;
 +	unsigned char *src;
  
-+	if (m == NULL || m->b_datap == NULL)
++	if (m == NULL)
++		return (B_FALSE);
++	if (m->b_datap == NULL)
++		return (B_FALSE);
++	if (DB_BASE(m) == NULL)
++		return (B_FALSE);
++	if (DB_LIM(m) == NULL)
++		return (B_FALSE);
++	if (m->b_rptr == NULL)
++		return (B_FALSE);
++	if (m->b_wptr == NULL)
 +		return (B_FALSE);
 +
 +	base_addr = (uintptr_t)DB_BASE(m);
@@ -45,7 +55,7 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf.c b/src/ports/wifi/iwx/iwx_mbuf.c
  	/*
  	 * The RX descriptor's MPDU length includes the alignment pad after
  	 * the header. The caller moves the header over that pad, then trims
-@@ -190,18 +219,15 @@
+@@ -190,18 +229,15 @@
  	 * window. The second check also proves that all n pad bytes are
  	 * actually present in the received MPDU, not merely allocated.
  	 */
@@ -95,7 +105,7 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test_stubs.h b/src/ports/wifi/iwx/iwx_m
 diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_test.c
 --- a/src/ports/wifi/iwx/iwx_mbuf_test.c
 +++ b/src/ports/wifi/iwx/iwx_mbuf_test.c
-@@ -475,6 +475,125 @@
+@@ -475,6 +475,205 @@
  }
  
  /*
@@ -127,91 +137,171 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_te
 +}
 +
 +static void
-+test_shift_right_zero_pad_validates_length(void)
++test_shift_right_p0_null_and_edge_cases(void)
 +{
 +	mblk_t *m = iwx_m_alloc(64);
-+	unsigned char *base;
-+	unsigned char snapshot[16];
-+	unsigned char *saved_rptr, *saved_wptr;
++	dblk_t *saved_datap;
++	unsigned char *base, *saved_base, *saved_limit, *saved_rptr, *saved_wptr;
++	unsigned char snapshot[32];
 +	long frees_before;
 +
-+	CHECK(iwx_m_shift_right(NULL, SIZE_MAX, 0) == B_FALSE,
-+	    "NULL mblk must be rejected for a zero-pad request");
-+	CHECK(m != NULL, "alloc zero-pad length test");
++	CHECK(iwx_m_shift_right(NULL, 1, 1) == B_FALSE,
++	    "NULL mblk must be rejected before dereference");
++	CHECK(m != NULL, "alloc NULL/edge test");
 +	if (m == NULL)
 +		return;
-+
++	saved_datap = m->b_datap;
 +	base = DB_BASE(m);
-+	m->b_rptr = base;
-+	m->b_wptr = base + sizeof (snapshot);
-+	memset(base, 0x5A, sizeof (snapshot));
-+	memcpy(snapshot, base, sizeof (snapshot));
++	saved_base = DB_BASE(m);
++	saved_limit = DB_LIM(m);
 +	saved_rptr = m->b_rptr;
 +	saved_wptr = m->b_wptr;
++	memset(base, 0x5A, sizeof (snapshot));
++	memcpy(snapshot, base, sizeof (snapshot));
 +	frees_before = iwx_test_frees;
 +
-+	CHECK(iwx_m_shift_right(m, sizeof (snapshot), 0) == B_TRUE,
-+	    "zero-pad exact readable length is a valid no-op");
-+	CHECK(iwx_m_shift_right(m, sizeof (snapshot) + 1, 0) == B_FALSE,
-+	    "zero-pad source one byte past the readable window is rejected");
-+	CHECK(iwx_m_shift_right(m, SIZE_MAX, 0) == B_FALSE,
-+	    "zero-pad SIZE_MAX source length is rejected");
-+	CHECK(iwx_m_shift_right(m, 0, 0) == B_TRUE,
-+	    "empty zero-pad request remains a valid no-op");
-+	CHECK(m->b_rptr == saved_rptr && m->b_wptr == saved_wptr,
-+	    "zero-pad validation must preserve the message window");
++	m->b_datap = NULL;
++	CHECK(iwx_m_shift_right(m, 1, 1) == B_FALSE,
++	    "NULL b_datap must be rejected");
++	CHECK(m->b_datap == NULL, "NULL b_datap must remain unchanged on refusal");
++	m->b_datap = saved_datap;
++
++	DB_BASE(m) = NULL;
++	CHECK(iwx_m_shift_right(m, 1, 1) == B_FALSE,
++	    "NULL DB_BASE must be rejected");
++	CHECK(DB_BASE(m) == NULL, "NULL DB_BASE must remain unchanged on refusal");
++	DB_BASE(m) = saved_base;
++
++	DB_LIM(m) = NULL;
++	CHECK(iwx_m_shift_right(m, 1, 1) == B_FALSE,
++	    "NULL DB_LIM must be rejected");
++	CHECK(DB_LIM(m) == NULL, "NULL DB_LIM must remain unchanged on refusal");
++	DB_LIM(m) = saved_limit;
++
++	m->b_rptr = NULL;
++	CHECK(iwx_m_shift_right(m, 1, 1) == B_FALSE,
++	    "NULL b_rptr must be rejected");
++	CHECK(m->b_rptr == NULL, "NULL b_rptr must remain unchanged on refusal");
++	m->b_rptr = saved_rptr;
++
++	m->b_wptr = NULL;
++	CHECK(iwx_m_shift_right(m, 1, 1) == B_FALSE,
++	    "NULL b_wptr must be rejected");
++	CHECK(m->b_wptr == NULL, "NULL b_wptr must remain unchanged on refusal");
++	m->b_wptr = saved_wptr;
++
 +	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0,
-+	    "zero-pad validation must preserve backing bytes");
++	    "NULL metadata refusals must preserve backing bytes");
 +	CHECK(iwx_test_frees == frees_before,
-+	    "zero-pad validation must preserve caller ownership");
++	    "NULL metadata refusals must preserve caller ownership");
++
++	/* Exact fit: header plus pad fills the available destination window. */
++	DB_LIM(m) = base + 26;
++	m->b_rptr = base;
++	m->b_wptr = base + 26;
++	for (size_t i = 0; i < 26; i++)
++		base[i] = (unsigned char)(i + 1);
++	CHECK(iwx_m_shift_right(m, 24, 2) == B_TRUE,
++	    "exact-fit header and pad must be accepted");
++	CHECK(m->b_wptr == base + 26,
++	    "exact-fit shift must not extend the received window");
++	CHECK(base[2] == 1 && base[25] == 24,
++	    "exact-fit shift must preserve all header bytes");
++
++	/* One byte short in capacity and in the readable window are distinct. */
++	DB_LIM(m) = base + 25;
++	m->b_rptr = base;
++	m->b_wptr = base + 25;
++	memset(base, 0x6B, sizeof (snapshot));
++	memcpy(snapshot, base, sizeof (snapshot));
++	CHECK(iwx_m_shift_right(m, 24, 2) == B_FALSE,
++	    "one-byte-short capacity must be rejected");
++	CHECK(DB_LIM(m) == base + 25 && m->b_rptr == base &&
++	    m->b_wptr == base + 25,
++	    "capacity refusal must preserve metadata");
++	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0,
++	    "capacity refusal must preserve bytes");
++
++	DB_LIM(m) = base + 26;
++	m->b_rptr = base;
++	m->b_wptr = base + 25;
++	memcpy(snapshot, base, sizeof (snapshot));
++	CHECK(iwx_m_shift_right(m, 24, 2) == B_FALSE,
++	    "one-byte-short readable pad must be rejected");
++	CHECK(m->b_rptr == base && m->b_wptr == base + 25,
++	    "readable-window refusal must preserve metadata");
++	CHECK(memcmp(base, snapshot, sizeof (snapshot)) == 0,
++	    "readable-window refusal must preserve bytes");
++
++	m->b_wptr = base + 26;
++	CHECK(iwx_m_shift_right(m, SIZE_MAX, 1) == B_FALSE,
++	    "SIZE_MAX source length must be rejected");
++	CHECK(iwx_m_shift_right(m, 1, SIZE_MAX) == B_FALSE,
++	    "SIZE_MAX padding must be rejected without addition overflow");
++	CHECK(iwx_m_shift_right(m, SIZE_MAX - 1, SIZE_MAX) == B_FALSE,
++	    "combined extreme lengths must be rejected without overflow");
++
++	m->b_wptr = base + 8;
++	CHECK(iwx_m_shift_right(m, 8, 0) == B_TRUE,
++	    "zero padding with exact readable length is a valid no-op");
++	CHECK(iwx_m_shift_right(m, 9, 0) == B_FALSE,
++	    "zero padding must still reject a too-long source");
++	CHECK(iwx_m_shift_right(m, SIZE_MAX, 0) == B_FALSE,
++	    "zero padding must reject SIZE_MAX source length");
++
++	CHECK(iwx_test_frees == frees_before,
++	    "rejected edge cases must preserve caller ownership");
++	m->b_datap = saved_datap;
++	DB_BASE(m) = saved_base;
++	DB_LIM(m) = saved_limit;
++	m->b_rptr = saved_rptr;
++	m->b_wptr = saved_wptr;
 +	iwx_m_free(m);
++	CHECK(iwx_test_frees == frees_before + 1,
++	    "metadata must be restored before exactly one caller free");
 +}
 +
++/*
++ * Exercise malformed windows with real pointers from the same allocation.
++ * No integer-derived or out-of-object pointer is ever manufactured.
++ */
 +static void
-+test_shift_right_rejects_malformed_window(void)
++test_shift_right_p0_malformed_windows(void)
 +{
 +	mblk_t *m = iwx_m_alloc(64);
-+	uintptr_t base_addr, limit_addr;
-+	unsigned char *saved_limit;
++	unsigned char *base, *saved_base, *saved_limit;
 +
-+	CHECK(m != NULL, "alloc");
++	CHECK(m != NULL, "alloc malformed-window test");
 +	if (m == NULL)
 +		return;
-+
-+	base_addr = (uintptr_t)DB_BASE(m);
-+	limit_addr = (uintptr_t)DB_LIM(m);
-+	CHECK(base_addr != 0 && limit_addr != UINTPTR_MAX &&
-+	    limit_addr > base_addr && limit_addr - base_addr >= 32,
-+	    "test allocation addresses must permit adjacent invalid sentinels");
-+	if (base_addr == 0 || limit_addr == UINTPTR_MAX ||
-+	    limit_addr <= base_addr || limit_addr - base_addr < 32) {
-+		iwx_m_free(m);
-+		return;
-+	}
-+	memset(DB_BASE(m), 0xA5, 16);
-+
-+	check_shift_rejects_bad_window(m,
-+	    (unsigned char *)(base_addr - 1),
-+	    (unsigned char *)(base_addr + 8),
-+	    "read pointer below db_base must be rejected");
-+	check_shift_rejects_bad_window(m,
-+	    (unsigned char *)(limit_addr + 1),
-+	    (unsigned char *)(limit_addr + 1),
-+	    "read pointer above db_lim must be rejected");
-+	check_shift_rejects_bad_window(m,
-+	    (unsigned char *)(base_addr + 16),
-+	    (unsigned char *)(base_addr + 8),
-+	    "write pointer before read pointer must be rejected");
-+	check_shift_rejects_bad_window(m,
-+	    (unsigned char *)base_addr,
-+	    (unsigned char *)(limit_addr + 1),
-+	    "write pointer beyond db_lim must be rejected");
-+
++	base = DB_BASE(m);
++	saved_base = DB_BASE(m);
 +	saved_limit = DB_LIM(m);
-+	DB_LIM(m) = (unsigned char *)(base_addr - 1);
-+	check_shift_rejects_bad_window(m, DB_BASE(m),
-+	    (unsigned char *)(base_addr + 8),
-+	    "db_lim below db_base must be rejected");
++	memset(base, 0xA5, 16);
++
++	DB_BASE(m) = base + 1;
++	check_shift_rejects_bad_window(m,
++	    base, base + 8, "read pointer below db_base must be rejected");
++	DB_BASE(m) = saved_base;
++
++	DB_LIM(m) = base + 16;
++	check_shift_rejects_bad_window(m,
++	    base + 17, base + 17, "read pointer above db_lim must be rejected");
++	DB_LIM(m) = saved_limit;
++
++	check_shift_rejects_bad_window(m,
++	    base + 16, base + 8, "write pointer before read pointer must be rejected");
++
++	DB_LIM(m) = base + 16;
++	check_shift_rejects_bad_window(m,
++	    base, base + 17, "write pointer beyond db_lim must be rejected");
++	DB_LIM(m) = saved_limit;
++
++	DB_BASE(m) = base + 16;
++	DB_LIM(m) = base + 8;
++	check_shift_rejects_bad_window(m,
++	    base + 16, base + 16, "db_lim below db_base must be rejected");
++	DB_BASE(m) = saved_base;
 +	DB_LIM(m) = saved_limit;
 +
 +	iwx_m_free(m);
@@ -221,12 +311,12 @@ diff --git a/src/ports/wifi/iwx/iwx_mbuf_test.c b/src/ports/wifi/iwx/iwx_mbuf_te
   * if_iwx.c:10882 / :10927 -- "(struct iwx_rx_packet *)(m0->m_data + offset)"
   * walks several firmware responses packed into one RX buffer, where offset
   * advances by a length the device reported.
-@@ -535,6 +654,8 @@
+@@ -535,6 +734,8 @@
  	test_free_honours_refcount();
  	test_shift_right_moves_header_and_length();
  	test_shift_right_rejects_overflow();
-+	test_shift_right_rejects_malformed_window();
-+	test_shift_right_zero_pad_validates_length();
++	test_shift_right_p0_malformed_windows();
++	test_shift_right_p0_null_and_edge_cases();
  	test_at_bounds_checks_offset();
  	test_no_leaks();
  
@@ -240,7 +330,7 @@ diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-
 -	'	if (n > (size_t)(m->b_wptr - src) - len)
 +	'	if (n > readable - len)
  		return (B_FALSE);' \
-@@ -211,6 +211,22 @@
+@@ -211,6 +211,41 @@
  	'	if (0)
  		return (B_FALSE);'
  
@@ -260,10 +350,29 @@ diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-
 +	'	if (0)
 +		return (B_FALSE);'
 +
++# (m) Removing the mblk NULL guard must be caught by the NULL-mblk case.
++sabotage shift_skips_null_mblk_guard \
++	'	if (m == NULL)
++		return (B_FALSE);' \
++	'	if (0)
++		return (B_FALSE);'
++# (n) Removing the dblk NULL guard must be caught by the NULL-b_datap case.
++sabotage shift_skips_null_datap_guard \
++	'	if (m->b_datap == NULL)
++		return (B_FALSE);' \
++	'	if (0)
++		return (B_FALSE);'
++# (o) A NULL db_base can pass address ordering unless its guard is explicit.
++sabotage shift_skips_null_db_base_guard \
++	'	if (DB_BASE(m) == NULL)
++		return (B_FALSE);' \
++	'	if (0)
++		return (B_FALSE);'
++
  # --- mbuf_list negative controls. Header-only, so the sabotage patches the
  # --- header into the per-case directory and that copy shadows the real one.
  mlist_sabotage() {
-@@ -275,23 +291,23 @@
+@@ -275,23 +310,23 @@
  	fi
  }
  
@@ -291,7 +400,7 @@ diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-
  #     without going through iwx_m_take_cookie, so it must clear b_prev itself or
  #     freemsg() gets a message the kernel ASSERTs against
  #     (uts/common/io/stream.c:659) -- a DEBUG panic and a SILENT non-DEBUG bug.
-@@ -305,7 +321,7 @@
+@@ -305,7 +340,7 @@
  	'		freemsg(m);	/* frees this' \
  	iwx_mcookie_test.c
  

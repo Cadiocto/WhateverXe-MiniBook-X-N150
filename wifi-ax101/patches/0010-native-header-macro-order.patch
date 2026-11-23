@@ -1,0 +1,53 @@
+diff --git a/src/ports/wifi/iwx/compat/netinet/if_ether.h b/src/ports/wifi/iwx/compat/netinet/if_ether.h
+--- a/src/ports/wifi/iwx/compat/netinet/if_ether.h
++++ b/src/ports/wifi/iwx/compat/netinet/if_ether.h
+@@ -19,14 +19,22 @@
+ #include <sys/types.h>
+ #include <net/if.h>
+-
++#include <sys/ethernet.h>
++
+ #ifndef ETHER_ADDR_LEN
+ #define ETHER_ADDR_LEN	6
+ #endif
++#ifndef ETHER_HDR_LEN
+ #define ETHER_HDR_LEN	14
++#endif
++#ifndef ETHER_CRC_LEN
+ #define ETHER_CRC_LEN	4
++#endif
++#ifndef ETHER_MIN_LEN
+ #define ETHER_MIN_LEN	64
++#endif
++#ifndef ETHER_MAX_LEN
+ #define ETHER_MAX_LEN	1518
++#endif
++#ifndef ETHERMTU
+ #define ETHERMTU	1500
+-
+-/* illumos sys/ethernet.h already defines struct ether_header identically. */
+-#include <sys/ethernet.h>
++#endif
+@@ -47,4 +55,12 @@
++#ifndef ETHERTYPE_IP
+ #define ETHERTYPE_IP	0x0800
++#endif
++#ifndef ETHERTYPE_ARP
+ #define ETHERTYPE_ARP	0x0806
++#endif
++#ifndef ETHERTYPE_IPV6
+ #define ETHERTYPE_IPV6	0x86dd
++#endif
++#ifndef ETHERTYPE_PAE
+ #define ETHERTYPE_PAE	0x888e
++#endif
+diff --git a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h b/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
+--- a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
++++ b/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
+@@ -31,5 +31,6 @@
+ #include <sys/types.h>
+ #include <sys/param.h>
++#include <sys/sysmacros.h>
+ #include <sys/ddi.h>
+ #include <sys/sunddi.h>
+ #include <sys/ksynch.h>

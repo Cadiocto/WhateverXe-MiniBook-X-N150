@@ -162,6 +162,16 @@ jobs:
             echo "mbuf_window_patch=0008-mbuf-window-pointer-validation.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$MBUF_WINDOW_PATCH" > "$ART/mbuf-window-pointer-patch.sha256"
 
+            # Use target Ethernet constants before fallback definitions and make
+            # roundup resolve to the target sysmacros declaration.
+            HEADER_MACRO_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0010-native-header-macro-order.patch"
+            test -s "$HEADER_MACRO_PATCH"
+            git -C "$SRC" apply --check "$HEADER_MACRO_PATCH"
+            git -C "$SRC" apply "$HEADER_MACRO_PATCH"
+            git -C "$SRC" diff --check
+            echo "native_header_macro_patch=0010-native-header-macro-order.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$HEADER_MACRO_PATCH" > "$ART/native-header-macro-patch.sha256"
+
             # Unit-test the exact helper included by n80211_kcompat.c.
             "$CC" -std=c99 -Wall -Wextra -Werror \
               -I"$SRC/src/ports/wifi/net80211/compat" \
@@ -291,8 +301,51 @@ jobs:
               exit 1
             fi
             echo "N80211_IOCTL_MACRO_REDEFINITION_WARNING=PASS"
+            if grep -Eq 'warning: "(ETHERMTU|ETHERTYPE_IP|ETHERTYPE_ARP|ETHERTYPE_IPV6|roundup)" redefined' "$ART/build.log"; then
+              echo "ERROR: Ethernet/roundup compatibility macro redefinition warnings remain" >&2
+              exit 1
+            fi
+            echo "NATIVE_ETHERNET_AND_ROUNDUP_MACROS=PASS"
             test -s iwx
             cp iwx "$ART/iwx"
+
+            # Reconcile every undefined reference against target exports, then
+            # ask this OpenIndiana kernel's krtld to load the ET_REL object.
+            nm -u "$ART/iwx" > "$ART/iwx.undefined.txt"
+            KERNEL_IMAGE=
+            for candidate in /platform/i86pc/kernel/amd64/unix /kernel/amd64/unix /kernel/unix; do
+              if [ -s "$candidate" ]; then
+                KERNEL_IMAGE="$candidate"
+                break
+              fi
+            done
+            test -n "$KERNEL_IMAGE"
+            echo "TARGET_KERNEL_IMAGE=$KERNEL_IMAGE" > "$ART/target-kernel-image.txt"
+            nm -g -p "$KERNEL_IMAGE" > "$ART/kernel-unix-symbols.txt"
+            MAC_MODULE=/kernel/misc/mac
+            if [ ! -s "$MAC_MODULE" ]; then
+              MAC_MODULE=/usr/kernel/misc/mac
+            fi
+            test -s "$MAC_MODULE"
+            nm -g -p "$MAC_MODULE" > "$ART/mac-module-symbols.txt"
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-elf-exports.py" \
+              "$ART/iwx.undefined.txt" "$ART/kernel-unix-symbols.txt" \
+              "$ART/mac-module-symbols.txt" | tee "$ART/elf-symbol-reconciliation.txt"
+            elfdump -d "$ART/iwx" > "$ART/iwx.dynamic-acceptance.txt"
+            elfdump -r "$ART/iwx" > "$ART/iwx.relocations.txt"
+            grep -Eq 'NEEDED.*misc/mac' "$ART/iwx.dynamic-acceptance.txt"
+            echo "ELF_NEEDED_MISC_MAC=PASS"
+            if grep -q 'TEXTREL' "$ART/iwx.dynamic-acceptance.txt"; then
+              echo "ELF_TEXTREL_PRESENT=YES" | tee "$ART/elf-relocation-policy.txt"
+            else
+              echo "ELF_TEXTREL_PRESENT=NO" | tee "$ART/elf-relocation-policy.txt"
+            fi
+            modload "$ART/iwx" > "$ART/iwx-krtld-modload.txt" 2>&1 || {
+              cat "$ART/iwx-krtld-modload.txt"
+              echo "ERROR: target OpenIndiana krtld rejected the AX101 module" >&2
+              exit 1
+            }
+            echo "KRTLD_RELOCATION_AND_SYMBOL_RESOLUTION=PASS" | tee -a "$ART/elf-relocation-policy.txt"
             cp Makefile.illumos "$ART/"
             cp STATUS.md "$ART/upstream-iwx-STATUS.md"
             cp PROVENANCE.md "$ART/upstream-iwx-PROVENANCE.md"
