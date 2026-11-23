@@ -253,7 +253,7 @@ diff --git a/src/ports/wifi/iwx/run-mbuf-tests.sh b/src/ports/wifi/iwx/run-mbuf-
 +		return (B_FALSE);' \
 +	'	if (0)
 +		return (B_FALSE);'
-++# (l) Skip source-length validation; zero-pad requests must still reject bad len.
++# (l) Skip source-length validation; zero-pad requests must still reject bad len.
 +sabotage shift_skips_zero_pad_length_validation \
 +	'	if (len > capacity || len > readable)
 +		return (B_FALSE);' \
