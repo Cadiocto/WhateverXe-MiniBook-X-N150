@@ -428,18 +428,59 @@ jobs:
 
             # With no matching PCI device in this VM, no instance is attached;
             # _fini/mod_remove must therefore permit a clean unload.
+            if command -v dmesg >/dev/null 2>&1; then
+              dmesg > "$ART/dmesg-before-modunload.txt" 2>&1
+            else
+              echo "ERROR: dmesg unavailable; cannot retain unload diagnostics" >&2
+              exit 1
+            fi
             set +e
             modunload -i "$iwx_modid" > "$ART/iwx-modunload.txt" 2>&1
             modunload_rc=$?
             set -e
-            printf 'modunload_exit=%s\n' "$modunload_rc" > "$ART/iwx-modunload-status.txt"
+            printf 'modunload_exit=%s\\n' "$modunload_rc" > "$ART/iwx-modunload-status.txt"
             if [ "$modunload_rc" -ne 0 ]; then
               cat "$ART/iwx-modunload.txt"
               echo "ERROR: iwx module failed controlled unload" >&2
               exit "$modunload_rc"
             fi
-            modinfo -c > "$ART/modinfo-after-modunload.txt" 2>&1 || true
-            if awk '$3 == "iwx" && $2 ~ /^[0-9]+$/ && $2 > 0 && $4 == "LOADED/INSTALLED" { found=1 } END { exit !found }' "$ART/modinfo-after-modunload.txt"; then
+            if grep -Eiq '(error|fail|warn|unable|cannot)' "$ART/iwx-modunload.txt"; then
+              cat "$ART/iwx-modunload.txt"
+              echo "ERROR: modunload returned zero but emitted failure diagnostics" >&2
+              exit 1
+            fi
+            dmesg > "$ART/dmesg-after-modunload.txt" 2>&1
+            diff -u "$ART/dmesg-before-modunload.txt" "$ART/dmesg-after-modunload.txt" > "$ART/iwx-modunload-dmesg-delta.txt" || true
+            if grep -Eiq '(iwx.*(error|fail|warn|unable|cannot)|(error|fail|warn|unable|cannot).*iwx)' "$ART/iwx-modunload-dmesg-delta.txt"; then
+              cat "$ART/iwx-modunload-dmesg-delta.txt"
+              echo "ERROR: kernel reported an iwx unload failure" >&2
+              exit 1
+            fi
+            set +e
+            modinfo -c > "$ART/modinfo-after-modunload.txt" 2>&1
+            modinfo_after_unload_rc=$?
+            set -e
+            printf 'modinfo_after_modunload_exit=%s\\n' "$modinfo_after_unload_rc" > "$ART/modinfo-after-modunload-status.txt"
+            if [ "$modinfo_after_unload_rc" -ne 0 ]; then
+              cat "$ART/modinfo-after-modunload.txt"
+              echo "ERROR: modinfo -c failed after modunload; unload state is unverified" >&2
+              exit "$modinfo_after_unload_rc"
+            fi
+            awk '
+              NR == 1 && $1 == "Id" && $2 == "Loadcnt" && $3 == "Module" && $4 == "Name" && $5 == "State" { header=1; next }
+              NR > 1 && $1 ~ /^[0-9]+$/ { rows++ }
+              END { if (!header || rows == 0) exit 1 }
+            ' "$ART/modinfo-after-modunload.txt" || {
+              cat "$ART/modinfo-after-modunload.txt"
+              echo "ERROR: modinfo -c output is not a valid non-empty module table" >&2
+              exit 1
+            }
+            if ! awk '$3 == "iwx" && $4 == "UNLOADED/UNINSTALLED" { unloaded=1 } END { exit !unloaded }' "$ART/modinfo-after-modunload.txt"; then
+              echo "ERROR: modinfo does not show iwx in UNLOADED/UNINSTALLED state" >&2
+              cat "$ART/modinfo-after-modunload.txt"
+              exit 1
+            fi
+            if awk '$3 == "iwx" && $4 == "LOADED/INSTALLED" { loaded=1 } END { exit !loaded }' "$ART/modinfo-after-modunload.txt"; then
               echo "ERROR: iwx remains loaded after modunload" >&2
               cat "$ART/modinfo-after-modunload.txt"
               exit 1
