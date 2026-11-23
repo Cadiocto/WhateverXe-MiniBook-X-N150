@@ -389,7 +389,7 @@ diff --git a/src/ports/wifi/iwx/iwx_glue.c b/src/ports/wifi/iwx/iwx_glue.c
 --- a/src/ports/wifi/iwx/iwx_glue.c
 +++ b/src/ports/wifi/iwx/iwx_glue.c
 @@ -258,6 +258,25 @@
- 	s->s_ht = (ni->ni_flags & IEEE80211_NODE_HT) ? 1 : 0;
+ 		s->s_ht = (ni->ni_flags & IEEE80211_NODE_HT) ? 1 : 0;
  	}
  }
  
