@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+from typing import Optional
 
 
 def ssid_bytes(value: str) -> bytes:
@@ -31,7 +32,7 @@ def derive_pmk(passphrase: str, ssid: bytes) -> bytes:
     return hashlib.pbkdf2_hmac("sha1", password, ssid, 4096, dklen=32)
 
 
-def property_value(pmk: bytes, ssid: bytes, bssid: str | None = None) -> str:
+def property_value(pmk: bytes, ssid: bytes, bssid: Optional[str] = None) -> str:
     if len(pmk) != 32:
         raise ValueError("PMK must be exactly 32 bytes")
     pin = "-" if bssid is None else bssid.lower()
