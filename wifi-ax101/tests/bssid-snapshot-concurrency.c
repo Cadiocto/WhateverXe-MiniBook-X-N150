@@ -60,7 +60,7 @@ static void *unsafe_reader(void *unused) {
 
 int main(void) {
     pthread_t w,r; void *wr,*rr; int i;
-    uint64_t a=pack(A), b=pack(B);
+    uint64_t a=pack(A);
     if (((uintptr_t)&snapshot & 7) != 0) {
         fprintf(stderr,"snapshot alignment is not 8 bytes\n"); return 2;
     }
