@@ -322,11 +322,17 @@ jobs:
             test -n "$KERNEL_IMAGE"
             echo "TARGET_KERNEL_IMAGE=$KERNEL_IMAGE" > "$ART/target-kernel-image.txt"
             nm -g -p "$KERNEL_IMAGE" > "$ART/kernel-unix-symbols.txt"
-            MAC_MODULE=/kernel/misc/mac
-            if [ ! -s "$MAC_MODULE" ]; then
-              MAC_MODULE=/usr/kernel/misc/mac
-            fi
-            test -s "$MAC_MODULE"
+            MAC_MODULE=
+            for candidate in /kernel/misc/mac /kernel/misc/amd64/mac \
+              /usr/kernel/misc/mac /usr/kernel/misc/amd64/mac \
+              /platform/i86pc/kernel/misc/amd64/mac; do
+              if [ -s "$candidate" ]; then
+                MAC_MODULE="$candidate"
+                break
+              fi
+            done
+            test -n "$MAC_MODULE"
+            echo "TARGET_MAC_MODULE=$MAC_MODULE" > "$ART/target-mac-module.txt"
             nm -g -p "$MAC_MODULE" > "$ART/mac-module-symbols.txt"
             python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-elf-exports.py" \
               "$ART/iwx.undefined.txt" "$ART/kernel-unix-symbols.txt" \

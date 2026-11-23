@@ -1,12 +1,13 @@
 diff --git a/src/ports/wifi/iwx/compat/netinet/if_ether.h b/src/ports/wifi/iwx/compat/netinet/if_ether.h
+index e1d3cb8..750b75c 100644
 --- a/src/ports/wifi/iwx/compat/netinet/if_ether.h
 +++ b/src/ports/wifi/iwx/compat/netinet/if_ether.h
-@@ -19,14 +19,22 @@
+@@ -18,18 +18,27 @@
+ 
  #include <sys/types.h>
  #include <net/if.h>
--
 +#include <sys/ethernet.h>
-+
+ 
  #ifndef ETHER_ADDR_LEN
  #define ETHER_ADDR_LEN	6
  #endif
@@ -24,11 +25,17 @@ diff --git a/src/ports/wifi/iwx/compat/netinet/if_ether.h b/src/ports/wifi/iwx/c
 +#endif
 +#ifndef ETHERMTU
  #define ETHERMTU	1500
--
++#endif
+ 
 -/* illumos sys/ethernet.h already defines struct ether_header identically. */
 -#include <sys/ethernet.h>
-+#endif
-@@ -47,4 +55,12 @@
+ 
+ /*
+  * OpenBSD layout: struct ifnet FIRST, so the (struct arpcom *)ifp cast at
+@@ -44,9 +53,17 @@ struct arpcom {
+ 	int		ac_multirangecnt;
+ };
+ 
 +#ifndef ETHERTYPE_IP
  #define ETHERTYPE_IP	0x0800
 +#endif
@@ -41,6 +48,8 @@ diff --git a/src/ports/wifi/iwx/compat/netinet/if_ether.h b/src/ports/wifi/iwx/c
 +#ifndef ETHERTYPE_PAE
  #define ETHERTYPE_PAE	0x888e
 +#endif
+ 
+ #endif /* _IWX_COMPAT_NETINET_IF_ETHER_H */
 diff --git a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h b/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
 --- a/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
 +++ b/src/ports/wifi/iwx/compat/sys/iwx_kernel.h
