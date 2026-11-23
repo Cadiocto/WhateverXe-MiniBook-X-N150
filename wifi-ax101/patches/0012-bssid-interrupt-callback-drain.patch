@@ -1,0 +1,327 @@
+diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
+--- a/src/ports/wifi/iwm/iwm_gld.c
++++ b/src/ports/wifi/iwm/iwm_gld.c
+@@ -251,17 +251,40 @@
+ 	    ((uint64_t)bssid[5] << 40));
+ }
+ 
++extern kmutex_t n80211_giant;
++
+ static void
+-iwm_gld_set_bss(void *gp, const uint8_t *bssid)
++iwm_gld_bssid_hook(void *gp, int up)
+ {
+ 	struct iwm_gld *g = gp;
++	struct iwm_il_state st;
+ 
++	/* Called with giant held; publish only the aligned atomic snapshot. */
++	if (!up) {
++		(void) atomic_swap_64(&g->g_bssid_word, 0);
++		return;
++	}
++	iwm_il_getstate(g->g_sc, &st);
++	(void) atomic_swap_64(&g->g_bssid_word, iwm_bssid_pack(st.s_bssid));
++}
++
++static void
++iwm_gld_set_bss(struct iwm_gld *g)
++{
++	struct iwm_il_state st;
++
++	/*
++	 * Serialize GLDv3 wifi_data updates, but acquire giant only to copy
++	 * current state. mac_pdata_update must run without giant held.
++	 */
+ 	mutex_enter(&g->g_bssid_lock);
++	mutex_enter(&n80211_giant);
++	iwm_il_getstate(g->g_sc, &st);
++	mutex_exit(&n80211_giant);
+ 	g->g_wd.wd_secalloc = WIFI_SEC_NONE;
+ 	g->g_wd.wd_opmode = IEEE80211_M_STA;
+ 	g->g_wd.wd_qospad = 0;
+-	bcopy(bssid, g->g_wd.wd_bssid, IEEE80211_ADDR_LEN);
+-	(void) atomic_swap_64(&g->g_bssid_word, iwm_bssid_pack(bssid));
++	bcopy(st.s_bssid, g->g_wd.wd_bssid, IEEE80211_ADDR_LEN);
+ 	(void) mac_pdata_update(g->g_mh, &g->g_wd, sizeof (g->g_wd));
+ 	mac_tx_update(g->g_mh);
+ 	mutex_exit(&g->g_bssid_lock);
+@@ -272,30 +295,20 @@
+  * BSSID under giant and push it to the plugin before mac_link_update.
+  * mac_pdata_update allocates and notifies mac clients, so it runs unlocked.
+  */
+-extern kmutex_t n80211_giant;
+-extern mblk_t *(*n80211_rx_xlate)(void *, mblk_t *);
+-extern void (*n80211_link_hook)(void *, int);
+-extern void *n80211_xlate_arg;
+-extern int servicing_interrupt(void);
++extern void n80211_gld_callbacks_enable(
++    mblk_t *(*)(void *, mblk_t *), void (*)(void *, int),
++    void (*)(void *, int), void *);
++extern void n80211_gld_callbacks_disable(void);
+ 
+ static void
+ iwm_gld_link_hook(void *gp, int up)
+ {
+ 	struct iwm_gld *g = gp;
+-	struct iwm_il_state st;
+ 
+-	/*
+-	 * mac_pdata_update allocates KM_SLEEP. An open network reaches RUN in
+-	 * iwm_newstate_task (a task thread); only the GATED WPA path
+-	 * (ieee80211_pae_input.c:676) raises link up from the RX interrupt,
+-	 * and there the plugin keeps the previous BSSID.
+-	 */
+-	if (!up || servicing_interrupt())
++	if (!up)
+ 		return;
+-	mutex_enter(&n80211_giant);
+-	iwm_il_getstate(g->g_sc, &st);
+-	mutex_exit(&n80211_giant);
+-	iwm_gld_set_bss(g, st.s_bssid);
++	/* Interrupt-originated link changes are deferred by n80211_giant. */
++	iwm_gld_set_bss(g);
+ }
+ 
+ static int
+@@ -828,9 +841,8 @@
+ 		return (err);
+ 	}
+ 	mac_link_update(g->g_mh, LINK_STATE_DOWN);
+-	n80211_xlate_arg = g;
+-	n80211_link_hook = iwm_gld_link_hook;
+-	n80211_rx_xlate = iwm_gld_rx_frame;
++	n80211_gld_callbacks_enable(iwm_gld_rx_frame, iwm_gld_link_hook,
++	    iwm_gld_bssid_hook, g);
+ 	*gp = g;
+ 	return (0);
+ }
+@@ -843,13 +855,14 @@
+ 
+ 	if (g == NULL)
+ 		return (0);
++	n80211_gld_callbacks_disable();
+ 	err = mac_unregister(g->g_mh);
+ 	if (err == 0) {
+-		n80211_rx_xlate = NULL;
+-		n80211_link_hook = NULL;
+-		n80211_xlate_arg = NULL;
+ 		mutex_destroy(&g->g_bssid_lock);
+ 		kmem_free(g, sizeof (*g));
++	} else {
++		n80211_gld_callbacks_enable(iwm_gld_rx_frame, iwm_gld_link_hook,
++		    iwm_gld_bssid_hook, g);
+ 	}
+ 	return (err);
+ }
+diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n80211_giant.c
+--- a/src/ports/wifi/net80211/n80211_giant.c
++++ b/src/ports/wifi/net80211/n80211_giant.c
+@@ -90,6 +90,18 @@
+ 
+ kmutex_t	n80211_giant;
+ static int	n80211_giant_ready;
++static kcondvar_t n80211_dispatch_cv;
++static uint_t n80211_dispatch_refs;
++static int n80211_gld_enabled;
++static int n80211_deferred_link_pending = -1;
++static mac_handle_t n80211_deferred_link_mh;
++static struct obsd_task n80211_link_deferred_task;
++extern struct taskq *systq;
++extern int servicing_interrupt(void);
++int task_add(struct taskq *, struct obsd_task *);
++int task_del(struct taskq *, struct obsd_task *);
++void task_set(struct obsd_task *, void (*)(void *), void *);
++static void n80211_link_deferred(void *);
+ 
+ /* RX chains and link-state changes held until giant is dropped. */
+ static mblk_t		*n80211_rx_head, *n80211_rx_tail;
+@@ -103,6 +115,10 @@
+ 	if (n80211_giant_ready)
+ 		return;
+ 	mutex_init(&n80211_giant, NULL, MUTEX_DRIVER, NULL);
++	cv_init(&n80211_dispatch_cv, NULL, CV_DRIVER, NULL);
++	n80211_dispatch_refs = 0;
++	n80211_gld_enabled = 0;
++	n80211_deferred_link_pending = -1;
+ 	n80211_giant_ready = 1;
+ }
+ 
+@@ -111,6 +127,8 @@
+ {
+ 	if (!n80211_giant_ready)
+ 		return;
++	ASSERT(n80211_dispatch_refs == 0);
++	cv_destroy(&n80211_dispatch_cv);
+ 	mutex_destroy(&n80211_giant);
+ 	n80211_giant_ready = 0;
+ }
+@@ -136,17 +154,19 @@
+  */
+ mblk_t	*(*n80211_rx_xlate)(void *, mblk_t *);
+ void	(*n80211_link_hook)(void *, int);
++void	(*n80211_bssid_hook)(void *, int);
+ void	*n80211_xlate_arg;
+ 
+ static mblk_t *
+-n80211_xlate_chain(mblk_t *chain)
++n80211_xlate_chain(mblk_t *chain, mblk_t *(*xlate)(void *, mblk_t *),
++    void *arg)
+ {
+ 	mblk_t *head = NULL, **tailp = &head, *m, *next;
+ 
+ 	for (m = chain; m != NULL; m = next) {
+ 		next = m->b_next;
+ 		m->b_next = NULL;
+-		if ((m = n80211_rx_xlate(n80211_xlate_arg, m)) != NULL) {
++		if ((m = xlate(arg, m)) != NULL) {
+ 			*tailp = m;
+ 			tailp = &m->b_next;
+ 		}
+@@ -161,20 +181,42 @@
+ 	mac_handle_t rmh = n80211_rx_mh;
+ 	int link = n80211_link_pending;
+ 	mac_handle_t lmh = n80211_link_mh;
++	mblk_t *(*rx_xlate)(void *, mblk_t *) = n80211_rx_xlate;
++	void (*link_hook)(void *, int) = n80211_link_hook;
++	void (*bssid_hook)(void *, int) = n80211_bssid_hook;
++	void *xlate_arg = n80211_xlate_arg;
++	int dispatch = 0;
+ 
+ 	n80211_rx_head = n80211_rx_tail = NULL;
+ 	n80211_link_pending = -1;
++	n80211_link_mh = NULL;
++
++	/* Publish BSSID under giant before RX frames are translated. */
++	if (link != -1 && lmh != NULL && bssid_hook != NULL)
++		bssid_hook(xlate_arg, link == (int)LINK_STATE_UP);
++
++	/* Defer sleeping GLDv3 link metadata updates out of interrupt context. */
++	if (link != -1 && lmh != NULL && servicing_interrupt()) {
++		n80211_deferred_link_pending = link;
++		n80211_deferred_link_mh = lmh;
++		(void) task_add(systq, &n80211_link_deferred_task);
++		link = -1;
++		lmh = NULL;
++	}
++	if ((link != -1 && lmh != NULL) || (chain != NULL && rmh != NULL)) {
++		n80211_dispatch_refs++;
++		dispatch = 1;
++	}
+ 	mutex_exit(&n80211_giant);
+ 
+ 	if (link != -1 && lmh != NULL) {
+-		if (n80211_link_hook != NULL)
+-			n80211_link_hook(n80211_xlate_arg,
+-			    link == (int)LINK_STATE_UP);
++		if (link_hook != NULL)
++			link_hook(xlate_arg, link == (int)LINK_STATE_UP);
+ 		mac_link_update(lmh, (link_state_t)link);
+ 	}
+ 	if (chain != NULL) {
+-		if (rmh != NULL && n80211_rx_xlate != NULL)
+-			chain = n80211_xlate_chain(chain);
++		if (rmh != NULL && rx_xlate != NULL)
++			chain = n80211_xlate_chain(chain, rx_xlate, xlate_arg);
+ 		if (chain == NULL) {
+ 			/* every frame was dropped by the translation */
+ 		} else if (rmh != NULL) {
+@@ -183,6 +225,13 @@
+ 			freemsgchain(chain);
+ 		}
+ 	}
++	if (dispatch) {
++		mutex_enter(&n80211_giant);
++		ASSERT(n80211_dispatch_refs != 0);
++		n80211_dispatch_refs--;
++		cv_broadcast(&n80211_dispatch_cv);
++		mutex_exit(&n80211_giant);
++	}
+ }
+ 
+ int
+@@ -200,6 +249,10 @@
+ 	ASSERT(mutex_owned(&n80211_giant));
+ 	if (chain == NULL)
+ 		return;
++	if (!n80211_gld_enabled) {
++		freemsgchain(chain);
++		return;
++	}
+ 	for (t = chain; t->b_next != NULL; t = t->b_next)
+ 		;
+ 	if (n80211_rx_head == NULL)
+@@ -214,10 +267,52 @@
+ n80211_defer_link(mac_handle_t mh, int up)
+ {
+ 	ASSERT(mutex_owned(&n80211_giant));
++	if (!n80211_gld_enabled)
++		return;
+ 	n80211_link_mh = mh;
+ 	n80211_link_pending = up ? (int)LINK_STATE_UP : (int)LINK_STATE_DOWN;
+ }
+ 
++void
++n80211_gld_callbacks_enable(mblk_t *(*rx)(void *, mblk_t *),
++    void (*link)(void *, int), void (*bssid)(void *, int), void *arg)
++{
++	mutex_enter(&n80211_giant);
++	n80211_rx_xlate = rx;
++	n80211_link_hook = link;
++	n80211_bssid_hook = bssid;
++	n80211_xlate_arg = arg;
++	n80211_gld_enabled = 1;
++	mutex_exit(&n80211_giant);
++}
++
++void
++n80211_gld_callbacks_disable(void)
++{
++	mblk_t *chain;
++
++	mutex_enter(&n80211_giant);
++	n80211_gld_enabled = 0;
++	n80211_rx_xlate = NULL;
++	n80211_link_hook = NULL;
++	n80211_bssid_hook = NULL;
++	n80211_xlate_arg = NULL;
++	n80211_rx_mh = NULL;
++	n80211_link_mh = NULL;
++	n80211_link_pending = -1;
++	n80211_deferred_link_pending = -1;
++	n80211_deferred_link_mh = NULL;
++	(void) task_del(systq, &n80211_link_deferred_task);
++	chain = n80211_rx_head;
++	n80211_rx_head = n80211_rx_tail = NULL;
++	while (n80211_dispatch_refs != 0)
++		cv_wait(&n80211_dispatch_cv, &n80211_giant);
++	mutex_exit(&n80211_giant);
++
++	if (chain != NULL)
++		freemsgchain(chain);
++}
++
+ /*
+  * splassert(IPL_NET): OpenBSD's machine-checked "caller holds the exclusion".
+  * Here the exclusion is giant. Warn once instead of panicking: a missed entry
+@@ -510,10 +605,23 @@
+ 	cv_destroy(&tq->tq_cv);
+ }
+ 
++static void
++n80211_link_deferred(void *arg)
++{
++	(void) arg;
++	if (!n80211_gld_enabled || n80211_deferred_link_pending == -1)
++		return;
++	n80211_link_pending = n80211_deferred_link_pending;
++	n80211_link_mh = n80211_deferred_link_mh;
++	n80211_deferred_link_pending = -1;
++	n80211_deferred_link_mh = NULL;
++}
++
+ void
+ n80211_systq_init(void)
+ {
+ 	n80211_taskq_init(systq, "n80211_systq");
++	task_set(&n80211_link_deferred_task, n80211_link_deferred, NULL);
+ }
