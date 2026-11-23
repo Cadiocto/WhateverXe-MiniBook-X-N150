@@ -343,22 +343,9 @@ jobs:
             elfdump -r "$ART/iwx" > "$ART/iwx.relocations.txt"
             grep -Eq 'NEEDED.*misc/mac' "$ART/iwx.dynamic-acceptance.txt"
             echo "ELF_NEEDED_MISC_MAC=PASS"
-            if ! command -v kldd >/dev/null 2>&1; then
-              echo "kldd is required but unavailable in the OpenIndiana VM" > "$ART/iwx.kldd.txt"
-              cat "$ART/iwx.kldd.txt"
-              exit 1
-            fi
-            if ! kldd -prw "$ART/iwx" > "$ART/iwx.kldd.txt" 2>&1; then
-              cat "$ART/iwx.kldd.txt"
-              echo "ERROR: kldd dependency/symbol analysis failed" >&2
-              exit 1
-            fi
-            if grep -Eiq 'symbol not found:|unresolved symbol' "$ART/iwx.kldd.txt"; then
-              cat "$ART/iwx.kldd.txt"
-              echo "ERROR: kldd reported unresolved kernel symbol references" >&2
-              exit 1
-            fi
-            echo "KLD_DEPENDENCY_AND_SYMBOL_CHECK=PASS"
+            # Do not require kldd: it is not shipped by this OpenIndiana image.
+            # The authoritative target test is the native krtld modload below;
+            # retain all symbol/export snapshots as diagnostic evidence only.
             if grep -q 'TEXTREL' "$ART/iwx.dynamic-acceptance.txt"; then
               echo "ELF_TEXTREL_PRESENT=YES" | tee "$ART/elf-relocation-policy.txt"
             else
@@ -367,19 +354,42 @@ jobs:
             if command -v modinfo >/dev/null 2>&1; then
               modinfo -c > "$ART/modinfo-before-modload.txt" 2>&1 || true
             fi
-            modload "$ART/iwx" > "$ART/iwx-krtld-modload.txt" 2>&1 || {
+            if command -v dmesg >/dev/null 2>&1; then
+              dmesg > "$ART/dmesg-before-modload.txt" 2>&1 || true
+            fi
+            set +e
+            modload "$ART/iwx" > "$ART/iwx-krtld-modload.txt" 2>&1
+            modload_rc=$?
+            set -e
+            printf 'modload_exit=%s\\n' "$modload_rc" > "$ART/iwx-krtld-modload-status.txt"
+            if [ "$modload_rc" -ne 0 ]; then
               cat "$ART/iwx-krtld-modload.txt"
               if command -v modinfo >/dev/null 2>&1; then
                 modinfo -c > "$ART/modinfo-after-modload.txt" 2>&1 || true
               fi
               if command -v dmesg >/dev/null 2>&1; then
-                dmesg | tail -n 200 | grep -Ei 'iwx|krtld|modload|module|symbol|reloc|error|warn' > "$ART/iwx-krtld-dmesg.txt" || true
+                dmesg > "$ART/dmesg-after-modload.txt" 2>&1 || true
+                tail -n 250 "$ART/dmesg-after-modload.txt" | grep -Ei 'iwx|krtld|modload|module|symbol|reloc|error|warn|pci' > "$ART/iwx-krtld-dmesg.txt" || true
                 cat "$ART/iwx-krtld-dmesg.txt" || true
               fi
-              echo "ERROR: target OpenIndiana krtld rejected the AX101 module" >&2
-              exit 1
-            }
+              echo "ERROR: native OpenIndiana modload failed (exit $modload_rc); classify from captured krtld and attach diagnostics" >&2
+              exit "$modload_rc"
+            fi
             echo "KRTLD_RELOCATION_AND_SYMBOL_RESOLUTION=PASS" | tee -a "$ART/elf-relocation-policy.txt"
+            if command -v modinfo >/dev/null 2>&1; then
+              modinfo -c > "$ART/modinfo-after-modload.txt" 2>&1 || true
+              if ! grep -Eiq '[[:space:]]iwx([[:space:]]|$)' "$ART/modinfo-after-modload.txt"; then
+                echo "ERROR: modload returned success but iwx is absent from modinfo -c" >&2
+                exit 1
+              fi
+            else
+              echo "ERROR: modinfo unavailable; cannot verify post-load module registration" >&2
+              exit 1
+            fi
+            if command -v dmesg >/dev/null 2>&1; then
+              dmesg > "$ART/dmesg-after-modload.txt" 2>&1 || true
+            fi
+            echo "KRTLD_LOAD_AND_MODINFO=PASS"
             cp Makefile.illumos "$ART/"
             cp STATUS.md "$ART/upstream-iwx-STATUS.md"
             cp PROVENANCE.md "$ART/upstream-iwx-PROVENANCE.md"
