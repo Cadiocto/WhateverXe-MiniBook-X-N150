@@ -258,7 +258,7 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
  	for (t = chain; t->b_next != NULL; t = t->b_next)
  		;
  	if (n80211_rx_head == NULL)
-@@ -214,11 +267,64 @@
+@@ -214,10 +267,64 @@
  n80211_defer_link(mac_handle_t mh, int up)
  {
  	ASSERT(mutex_owned(&n80211_giant));
@@ -267,7 +267,6 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
  	n80211_link_mh = mh;
  	n80211_link_pending = up ? (int)LINK_STATE_UP : (int)LINK_STATE_DOWN;
  }
- 
 +void
 +n80211_gld_callbacks_enable(mblk_t *(*rx)(void *, mblk_t *),
 +    void (*link)(void *, int), void (*bssid)(void *, int), void *arg)
@@ -319,6 +318,7 @@ diff --git a/src/ports/wifi/net80211/n80211_giant.c b/src/ports/wifi/net80211/n8
 +	n80211_deferred_link_pending = -1;
 +	n80211_deferred_link_mh = NULL;
 +	mutex_exit(&n80211_giant);
++}
  
  /*
   * splassert(IPL_NET): OpenBSD's machine-checked "caller holds the exclusion".
@@ -383,5 +383,34 @@ diff --git a/src/ports/wifi/iwm/iwm_attach.c b/src/ports/wifi/iwm/iwm_attach.c
 +}
 +
  /* Copy the node tree (scan results) into n[0..max). Returns the count. */
+ int
+ iwm_il_nodes(void *arg, struct iwm_il_node *n, int max)
+diff --git a/src/ports/wifi/iwx/iwx_glue.c b/src/ports/wifi/iwx/iwx_glue.c
+--- a/src/ports/wifi/iwx/iwx_glue.c
++++ b/src/ports/wifi/iwx/iwx_glue.c
+@@ -258,6 +258,25 @@
+ 	s->s_ht = (ni->ni_flags & IEEE80211_NODE_HT) ? 1 : 0;
+ 	}
+ }
+ 
++/* Interrupt-safe BSSID snapshot; caller holds n80211_giant. */
++void
++iwm_il_get_bssid(void *arg, uint8_t *bssid)
++{
++	struct iwx_softc *sc = arg;
++	struct ieee80211com *ic = &sc->sc_ic;
++	struct ieee80211_node *ni = ic->ic_bss;
++
++	if (ic->ic_state == IEEE80211_S_INIT ||
++	    ic->ic_state == IEEE80211_S_SCAN || ni == NULL) {
++		if (ic->ic_flags & IEEE80211_F_DESBSSID)
++			IEEE80211_ADDR_COPY(bssid, ic->ic_des_bssid);
++		else
++			bzero(bssid, IEEE80211_ADDR_LEN);
++	} else {
++		IEEE80211_ADDR_COPY(bssid, ni->ni_bssid);
++	}
++}
++
  int
  iwm_il_nodes(void *arg, struct iwm_il_node *n, int max)
