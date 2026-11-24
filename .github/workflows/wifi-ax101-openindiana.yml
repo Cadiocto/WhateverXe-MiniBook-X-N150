@@ -257,6 +257,12 @@ jobs:
             digest -a sha256 "$BSSID_IRQ_PATCH" > "$ART/bssid-interrupt-callback-patch.sha256"
 
             # Serialize all GLDv3 metadata publication on a dedicated worker.
+            # Preserve exact post-0012 target files for patch-context diagnostics.
+            cp "$SRC/src/ports/wifi/iwm/iwm_gld.c" "$ART/iwm_gld.c.after-0012"
+            cp "$SRC/src/ports/wifi/net80211/n80211_giant.c" "$ART/n80211_giant.c.after-0012"
+            digest -a sha256 "$ART/iwm_gld.c.after-0012" > "$ART/iwm-gld-after-0012.sha256"
+            digest -a sha256 "$ART/n80211_giant.c.after-0012" > "$ART/n80211-giant-after-0012.sha256"
+
             PUBLISHER_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0013-bssid-gld-publication.patch"
             test -s "$PUBLISHER_PATCH"
             git -C "$SRC" apply --check "$PUBLISHER_PATCH"
