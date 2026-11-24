@@ -167,7 +167,7 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +		g->g_pub_tid = t->t_did;
 +	}
  	n80211_gld_callbacks_enable(iwm_gld_rx_frame, iwm_gld_link_hook,
-@@ -872,7 +1005,22 @@
+@@ -872,8 +1005,23 @@
  	if (g == NULL)
  		return (0);
  	n80211_gld_callbacks_disable();
@@ -190,7 +190,7 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +		cv_destroy(&g->g_pub_cv);
 +		mutex_destroy(&g->g_pub_lock);
  		mutex_destroy(&g->g_bssid_lock);
-
+ 
 @@ -890,2 +1038,3 @@
  	} else {
 +		iwm_gld_publisher_resume(g);
