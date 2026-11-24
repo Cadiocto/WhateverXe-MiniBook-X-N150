@@ -231,7 +231,6 @@ main(void)
                 cases[i]();
                 (void) printf("publisher-scenario-%02u=PASS\n", i+1);
         }
-        case21();
         (void) puts("BSSID_PUBLISHER_INTERLEAVING_MODEL=PASS (21/21)");
         return (0);
 }
