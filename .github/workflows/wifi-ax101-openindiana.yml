@@ -271,6 +271,21 @@ jobs:
             echo "bssid_publisher_patch=0013-bssid-gld-publication.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$PUBLISHER_PATCH" > "$ART/bssid-publisher-patch.sha256"
 
+            # Fail-closed DMA map ownership: apply the reviewed teardown patch
+            # after the pinned source selection and before native compilation.
+            DMA_TEARDOWN_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0014-safe-dma-interrupt-teardown.patch"
+            test -s "$DMA_TEARDOWN_PATCH"
+            git -C "$SRC" apply --check "$DMA_TEARDOWN_PATCH"
+            git -C "$SRC" apply "$DMA_TEARDOWN_PATCH"
+            git -C "$SRC" diff --check
+            echo "dma_teardown_patch=0014-safe-dma-interrupt-teardown.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$DMA_TEARDOWN_PATCH" > "$ART/dma-teardown-patch.sha256"
+
+            "$CC" -std=c11 -Wall -Wextra -Werror \
+              "$GITHUB_WORKSPACE/wifi-ax101/tests/dma-teardown-contract-model.c" \
+              -o "$ART/dma-teardown-contract-model"
+            "$ART/dma-teardown-contract-model" | tee "$ART/dma-teardown-contract-model.txt"
+
             python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" --self-test | tee "$ART/bssid-checker-self-test.txt"
             python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" \
               "$SRC/src/ports/wifi/iwm/iwm_gld.c" \

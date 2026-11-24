@@ -1,0 +1,133 @@
+diff --git a/src/ports/wifi/iwm/iwm_bus.c b/src/ports/wifi/iwm/iwm_bus.c
+--- a/src/ports/wifi/iwm/iwm_bus.c
++++ b/src/ports/wifi/iwm/iwm_bus.c
+@@ -108,19 +108,23 @@
+ 	return (0);
+ }
+ 
+-void
+-bus_dmamap_destroy(bus_dma_tag_t tag, bus_dmamap_t map)
+-{
+-	(void) tag;
+-	if (map == NULL)
+-		return;
+-	if (map->dm_bound)
+-		(void) ddi_dma_unbind_handle(map->dm_hdl);
+-	if (map->dm_acc != NULL)
+-		ddi_dma_mem_free(&map->dm_acc);
+-	ddi_dma_free_handle(&map->dm_hdl);
+-	kmem_free(map, sizeof (*map));
++int
++bus_dmamap_destroy(bus_dma_tag_t tag, bus_dmamap_t map)
++{
++	(void) tag;
++	if (map == NULL)
++		return (0);
++
++	/* A failed unbind leaves the DDI handle bound; retain every owner. */
++	if (map->dm_bound && bus_dmamap_unload(tag, map) != 0)
++		return (EBUSY);
++	if (map->dm_acc != NULL)
++		ddi_dma_mem_free(&map->dm_acc);
++	if (map->dm_hdl != NULL)
++		ddi_dma_free_handle(&map->dm_hdl);
++	kmem_free(map, sizeof (*map));
++	return (0);
+ }
+ 
+ static int
+ iwm_dma_bind(bus_dmamap_t map, caddr_t va, size_t len, int flags)
+@@ -139,10 +139,17 @@
+ 		return (EFBIG);
+ 	if (r != DDI_DMA_MAPPED)
+ 		return (ENOMEM);
+-	if ((int)nck > map->dm_maxsegs) {
+-		(void) ddi_dma_unbind_handle(map->dm_hdl);
++	if ((int)nck > map->dm_maxsegs) {
++		/* Bind succeeded: record ownership before attempting rollback. */
++		map->dm_bound = B_TRUE;
++		map->dm_mapsize = len;
++		map->dm_nsegs = 0;
++		if (ddi_dma_unbind_handle(map->dm_hdl) != DDI_SUCCESS)
++			return (EIO);
++		map->dm_bound = B_FALSE;
++		map->dm_mapsize = 0;
+ 		return (EFBIG);
+ 	}
+ 	for (i = 0; i < nck; i++) {
+ 		map->dm_segs[i].ds_addr = ck.dmac_laddress;
+ 		map->dm_segs[i].ds_len = ck.dmac_size;
+@@ -202,17 +202,27 @@
+ 	return (iwm_dma_bind(map, (caddr_t)p->b_rptr, total, flags));
+ }
+ 
+-void
+-bus_dmamap_unload(bus_dma_tag_t tag, bus_dmamap_t map)
+-{
+-	(void) tag;
+-	if (map->dm_bound) {
+-		(void) ddi_dma_unbind_handle(map->dm_hdl);
+-		map->dm_bound = B_FALSE;
+-		map->dm_nsegs = 0;
+-		map->dm_mapsize = 0;
+-	}
++int
++bus_dmamap_unload(bus_dma_tag_t tag, bus_dmamap_t map)
++{
++	int err;
++
++	(void) tag;
++	if (map == NULL)
++		return (EINVAL);
++	if (!map->dm_bound)
++		return (0);
++
++	err = ddi_dma_unbind_handle(map->dm_hdl);
++	if (err != DDI_SUCCESS)
++		return (EIO);
++
++	/* Ownership changes only after DDI confirms the mapping is gone. */
++	map->dm_bound = B_FALSE;
++	map->dm_nsegs = 0;
++	map->dm_mapsize = 0;
++	return (0);
+ }
+ 
+ void
+ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t off,
+diff --git a/src/ports/wifi/iwm/compat/machine/bus.h b/src/ports/wifi/iwm/compat/machine/bus.h
+--- a/src/ports/wifi/iwm/compat/machine/bus.h
++++ b/src/ports/wifi/iwm/compat/machine/bus.h
+@@ -113,10 +113,10 @@
+ 
+ extern int bus_dmamap_create(bus_dma_tag_t, bus_size_t, int, bus_size_t,
+     bus_size_t, int, bus_dmamap_t *);
+-extern void bus_dmamap_destroy(bus_dma_tag_t, bus_dmamap_t);
+-extern int bus_dmamap_load(bus_dma_tag_t, bus_dmamap_t, void *, bus_size_t,
+-    void *, int);
+-extern void bus_dmamap_unload(bus_dma_tag_t, bus_dmamap_t);
++extern int bus_dmamap_destroy(bus_dma_tag_t, bus_dmamap_t);
++extern int bus_dmamap_load(bus_dma_tag_t, bus_dmamap_t, void *, bus_size_t,
++    void *, int);
++extern int bus_dmamap_unload(bus_dma_tag_t, bus_dmamap_t);
+ extern void bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, bus_addr_t,
+     bus_size_t, int);
+ extern int bus_dmamem_alloc(bus_dma_tag_t, bus_size_t, bus_size_t, bus_size_t,
+diff --git a/src/ports/wifi/iwx/compat/machine/bus.h b/src/ports/wifi/iwx/compat/machine/bus.h
+--- a/src/ports/wifi/iwx/compat/machine/bus.h
++++ b/src/ports/wifi/iwx/compat/machine/bus.h
+@@ -97,10 +97,10 @@
+ 
+ extern int bus_dmamap_create(bus_dma_tag_t, bus_size_t, int, bus_size_t,
+     bus_size_t, int, bus_dmamap_t *);
+-extern void bus_dmamap_destroy(bus_dma_tag_t, bus_dmamap_t);
+-extern int bus_dmamap_load(bus_dma_tag_t, bus_dmamap_t, void *, bus_size_t,
+-    void *, int);
+-extern void bus_dmamap_unload(bus_dma_tag_t, bus_dmamap_t);
++extern int bus_dmamap_destroy(bus_dma_tag_t, bus_dmamap_t);
++extern int bus_dmamap_load(bus_dma_tag_t, bus_dmamap_t, void *, bus_size_t,
++    void *, int);
++extern int bus_dmamap_unload(bus_dma_tag_t, bus_dmamap_t);
+ extern void bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, bus_addr_t,
+     bus_size_t, int);
+ extern int bus_dmamem_alloc(bus_dma_tag_t, bus_size_t, bus_size_t, bus_size_t,
