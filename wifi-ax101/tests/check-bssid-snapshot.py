@@ -95,6 +95,7 @@ def function_bodies(src):
                     raise ValueError("unbalanced function braces: " + name)
                 result.setdefault(name, []).append((src[start:j - 1], clean[start:j - 1]))
                 i = j
+                depth = 0
                 segment = j
                 continue
             depth = 1
@@ -133,7 +134,7 @@ def scan_calls(functions):
                 if name not in PUB_CALLS | LOCK_ENTER | LOCK_EXIT | GIANT_ENTER | GIANT_EXIT | {
                     "mutex_tryenter", "rw_tryenter", "cv_wait", "cv_timedwait"
                 }:
-                    if re.search(r"(?:lock|mutex|sema|spin)", name, re.I):
+                    if re.search(r"(?:lock|mutex|sema|spin|acquire|hold)", name, re.I):
                         unknown = True
                     continue
                 try:
