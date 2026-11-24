@@ -46,3 +46,15 @@ The 16-case harness is a deterministic interleaving model, not a substitute for 
 - The validation commit was created through the Git data API and the branch ref was advanced with a compare-and-swap lease.
 - No Actions run was created for that ref update; this append-only journal update uses the Contents API to generate a normal branch push event for the same validation workflow.
 - The follow-up commit changes no production code.
+
+### RUN #65 verification addendum
+
+- Initial implementation commit: `38a85595b6f6e38b3cf4bdb9b005a9d6e3d8c1e5`.
+- Checker parser-depth correction commit: `1e59f24642a451a2f194f299ea7afc300f16b7ff`.
+- Publisher generation-overflow/drain correction commit: `2a6c07c595524d677724370815c2eca8d5d7f4fa`.
+- Validation branch HEAD immediately before this addendum: `2a6c07c595524d677724370ac014a5bcd9102bc5`.
+- Primary branch HEAD remained `5b3cdf5eea7d4decbdd655c77ab4c57a73f8f2c3`.
+- Actions query for the validation commits returned zero workflow runs; no active run was present. The available GitHub integration exposes workflow-run reads and reruns but no workflow-dispatch operation. Commits created through this integration did not trigger the push workflow.
+- Therefore patch application, checker execution, C harness execution, OpenIndiana compilation, linking, ELF acceptance, and native module load/unload remain NOT VERIFIED / NOT TESTED.
+- P0 status: IMPLEMENTATION CANDIDATE ONLY — BUILD BLOCKED pending an Actions run on the validation branch.
+- Physical PCI attach and all real network acceptance gates remain NOT TESTED.
