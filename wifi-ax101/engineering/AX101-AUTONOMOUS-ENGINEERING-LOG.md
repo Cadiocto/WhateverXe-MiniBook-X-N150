@@ -40,3 +40,9 @@ Append-only engineering record. Historical entries are not rewritten.
 
 The 16-case harness is a deterministic interleaving model, not a substitute for an actual kernel-thread race test. No P0 closure or BUILD VERIFIED claim is made by this entry. The production overlay must pass the pinned-source OpenIndiana workflow before acceptance.
 
+
+### RUN #65 CI trigger follow-up
+
+- The validation commit was created through the Git data API and the branch ref was advanced with a compare-and-swap lease.
+- No Actions run was created for that ref update; this append-only journal update uses the Contents API to generate a normal branch push event for the same validation workflow.
+- The follow-up commit changes no production code.
