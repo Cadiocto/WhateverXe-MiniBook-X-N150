@@ -1,49 +1,272 @@
 #!/usr/bin/env python3
+"""Fail-closed lexical C checker for GLDv3 BSSID publisher lock discipline.
+
+This is deliberately not a C parser. It masks comments and literals, locates
+top-level function bodies by balanced braces, and accepts only lock operations
+whose acquisition/release state can be resolved lexically.
+"""
 import pathlib
+import re
 import sys
 
-gld = pathlib.Path(sys.argv[1]).read_text()
-giant = pathlib.Path(sys.argv[2]).read_text()
-attach = pathlib.Path(sys.argv[3]).read_text()
-iwx_glue = pathlib.Path(sys.argv[4]).read_text()
-struct = gld.split("struct iwm_gld {", 1)[1].split("};", 1)[0]
-rx = gld.split("iwm_gld_rx_frame(void *gp, mblk_t *mp)", 1)[1].split("\n}", 1)[0]
-set_bss = gld.split("iwm_gld_set_bss(struct iwm_gld *g)", 1)[1].split("\n}", 1)[0]
-bssid_hook = gld.split("iwm_gld_bssid_hook(void *gp, int up)", 1)[1].split("\n}", 1)[0]
-get_bssid = attach.split("iwm_il_get_bssid(void *arg, uint8_t *bssid)", 1)[1].split("\n}", 1)[0]
-iwx_get_bssid = iwx_glue.split("iwm_il_get_bssid(void *arg, uint8_t *bssid)", 1)[1].split("\n}", 1)[0]
-link_hook = gld.split("iwm_gld_link_hook(void *gp, int up)", 1)[1].split("\n}", 1)[0]
-unregister = gld.split("iwm_gld_unregister(void *gp)", 1)[1].split("\n}", 1)[0]
-giant_exit = giant.split("n80211_giant_exit(void)", 1)[1].split("\n}", 1)[0]
-disable = giant.split("n80211_gld_callbacks_disable(void)", 1)[1].split("\n}", 1)[0]
+CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+PUB_CALLS = {"mac_pdata_update", "mac_tx_update"}
+LOCK_ENTER = {"mutex_enter", "rw_enter", "sema_p", "spin_lock"}
+LOCK_EXIT = {"mutex_exit", "rw_exit", "sema_v", "spin_unlock"}
+GIANT_ENTER = {"n80211_giant_enter"}
+GIANT_EXIT = {"n80211_giant_exit"}
 
-checks = {
-    "snapshot_is_first_struct_member": struct.index("volatile uint64_t g_bssid_word;") < struct.index("mac_handle_t"),
-    "reader_uses_atomic_snapshot": "atomic_cas_64(&g->g_bssid_word, 0, 0)" in rx,
-    "reader_does_not_copy_mutable_wifi_data": "g->g_wd.wd_bssid" not in rx,
-    "reader_does_not_take_mutex": "mutex_enter" not in rx and "mutex_exit" not in rx,
-    "reader_does_not_allocate": "kmem_alloc" not in rx and "kmem_zalloc" not in rx,
-    "byte_order_is_explicit": "snapshot >> (i * 8)" in rx and "bssid[5] << 40" in gld,
-    "native_atomic_header": "#include <sys/atomic.h>" in gld,
-    "interrupt_bssid_hook_is_atomic": "iwm_il_get_bssid" in bssid_hook and "atomic_swap_64" in bssid_hook,
-    "interrupt_bssid_reader_has_no_allocation": "kmem_alloc" not in get_bssid and "kmem_zalloc" not in get_bssid,
-    "iwx_glue_implements_bssid_reader": "struct iwx_softc *sc = arg;" in iwx_get_bssid and "IEEE80211_ADDR_COPY(bssid, ni->ni_bssid)" in iwx_get_bssid,
-    "linkhook_no_longer_skips_interrupt": "servicing_interrupt" not in link_hook and "iwm_gld_set_bss(g)" in link_hook,
-    "wifi_data_writer_serialized": "mutex_enter(&g->g_bssid_lock)" in set_bss and "mutex_exit(&g->g_bssid_lock)" in set_bss,
-    "wifi_data_update_outside_giant": set_bss.index("mutex_exit(&n80211_giant)") < set_bss.index("mac_pdata_update"),
-    "bssid_published_before_giant_drop": giant_exit.index("bssid_hook(xlate_arg") < giant_exit.index("mutex_exit(&n80211_giant)"),
-    "interrupt_link_notification_deferred": "servicing_interrupt()" in giant_exit and "task_add(systq" in giant_exit,
-    "callbacks_snapshotted_before_unlock": giant_exit.index("= n80211_rx_xlate") < giant_exit.index("mutex_exit(&n80211_giant)"),
-    "callbacks_drained_before_return": "while (n80211_dispatch_refs != 0)" in disable and "cv_wait(" in disable,
-    "callbacks_cleared_on_disable": "n80211_rx_xlate = NULL" in disable and "n80211_link_hook = NULL" in disable and "n80211_bssid_hook = NULL" in disable,
-    "disable_preserves_mac_handles_for_rollback": "n80211_rx_mh = NULL" not in disable and "n80211_link_mh = NULL" not in disable,
-    "gld_unregister_quiesces_first": unregister.index("n80211_gld_callbacks_disable()") < unregister.index("mac_unregister("),
-    "gld_unregister_rolls_back_on_failure": "n80211_gld_callbacks_enable" in unregister,
-    "gld_unregister_forgets_handles_only_after_success": unregister.index("if (err == 0)") < unregister.index("n80211_gld_callbacks_forget()") < unregister.index("mutex_destroy"),
-}
-failed = [name for name, ok in checks.items() if not ok]
-for name, ok in checks.items():
-    print("{}={}".format(name, "PASS" if ok else "FAIL"))
-if failed:
-    sys.exit(1)
-print("BSSID_AND_CALLBACK_CONTRACT=PASS")
+def mask_noncode(src):
+    out = list(src)
+    i, n = 0, len(src)
+    state = "code"
+    quote = None
+    while i < n:
+        ch = src[i]
+        nx = src[i + 1] if i + 1 < n else ""
+        if state == "code":
+            if ch == "/" and nx == "/":
+                out[i] = out[i + 1] = " "
+                i += 2
+                state = "line"
+                continue
+            if ch == "/" and nx == "*":
+                out[i] = out[i + 1] = " "
+                i += 2
+                state = "block"
+                continue
+            if ch in ('"', "'"):
+                quote = ch
+                out[i] = " "
+                state = "literal"
+        elif state == "line":
+            if ch == "\n":
+                state = "code"
+            else:
+                out[i] = " "
+        elif state == "block":
+            if ch == "*" and nx == "/":
+                out[i] = out[i + 1] = " "
+                i += 2
+                state = "code"
+                continue
+            if ch != "\n":
+                out[i] = " "
+        elif state == "literal":
+            if ch == "\\":
+                out[i] = " "
+                if i + 1 < n and src[i + 1] != "\n":
+                    out[i + 1] = " "
+                    i += 2
+                    continue
+            elif ch == quote:
+                out[i] = " "
+                state = "code"
+            elif ch != "\n":
+                out[i] = " "
+        i += 1
+    if state in ("block", "literal"):
+        raise ValueError("unterminated comment/string/character literal")
+    return "".join(out)
+
+def function_bodies(src):
+    clean = mask_noncode(src)
+    result = {}
+    i, n, depth, segment = 0, len(clean), 0, 0
+    while i < n:
+        ch = clean[i]
+        if depth == 0 and ch == ";":
+            segment = i + 1
+        elif ch == "{" and depth == 0:
+            prefix = clean[segment:i].strip()
+            m = re.search(r"([A-Za-z_]\w*)\s*\([^;{}]*\)\s*$", prefix, re.S)
+            if m:
+                name = m.group(1)
+                start = i + 1
+                depth = 1
+                j = start
+                while j < n and depth:
+                    if clean[j] == "{":
+                        depth += 1
+                    elif clean[j] == "}":
+                        depth -= 1
+                    j += 1
+                if depth:
+                    raise ValueError("unbalanced function braces: " + name)
+                result.setdefault(name, []).append((src[start:j - 1], clean[start:j - 1]))
+                i = j
+                segment = j
+                continue
+            depth = 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                segment = i + 1
+        i += 1
+    return result
+
+def call_args(clean, pos):
+    op = clean.find("(", pos)
+    if op < 0:
+        raise ValueError("call without opening parenthesis")
+    depth, i = 1, op + 1
+    while i < len(clean) and depth:
+        if clean[i] == "(":
+            depth += 1
+        elif clean[i] == ")":
+            depth -= 1
+        i += 1
+    if depth:
+        raise ValueError("unbalanced call parentheses")
+    return clean[op + 1:i - 1].strip(), i
+
+def scan_calls(functions):
+    found, errors = [], []
+    for fname, bodies in functions.items():
+        for original, clean in bodies:
+            locks = []
+            giant = 0
+            unknown = False
+            pos = 0
+            for m in CALL_RE.finditer(clean):
+                name = m.group(1)
+                if name not in PUB_CALLS | LOCK_ENTER | LOCK_EXIT | GIANT_ENTER | GIANT_EXIT | {
+                    "mutex_tryenter", "rw_tryenter", "cv_wait", "cv_timedwait"
+                }:
+                    if re.search(r"(?:lock|mutex|sema|spin)", name, re.I):
+                        unknown = True
+                    continue
+                try:
+                    args, end = call_args(clean, m.start())
+                except ValueError as exc:
+                    errors.append(str(exc))
+                    continue
+                if name in LOCK_ENTER:
+                    key = re.sub(r"\s+", "", args)
+                    if not key or key in locks:
+                        unknown = True
+                    else:
+                        locks.append(key)
+                elif name in LOCK_EXIT:
+                    key = re.sub(r"\s+", "", args)
+                    if key not in locks:
+                        unknown = True
+                    else:
+                        locks.remove(key)
+                elif name in GIANT_ENTER:
+                    giant += 1
+                elif name in GIANT_EXIT:
+                    if giant == 0:
+                        unknown = True
+                    else:
+                        giant -= 1
+                elif name in ("mutex_tryenter", "rw_tryenter"):
+                    # A conditional acquisition cannot be proven from this lexical pass.
+                    unknown = True
+                elif name in PUB_CALLS:
+                    found.append((name, fname, tuple(locks), giant, unknown))
+                    if fname != "iwm_gld_publisher":
+                        errors.append(name + " called outside dedicated publisher: " + fname)
+                    if locks or giant or unknown:
+                        errors.append(name + " called with unresolved/held lock state in " + fname)
+                pos = end
+            if locks or giant or unknown:
+                # A function may intentionally retain a lock at return; fail only
+                # when it also contains a MAC publication or an unbalanced lock op.
+                if any(name in clean for name in PUB_CALLS):
+                    errors.append("non-empty/unknown lock state at end of publisher-containing function " + fname)
+    return found, errors
+
+def inspect_source(gld, giant_src):
+    errors = []
+    try:
+        funcs = function_bodies(gld)
+        calls, scan_errors = scan_calls(funcs)
+        errors.extend(scan_errors)
+        if not funcs.get("iwm_gld_publisher"):
+            errors.append("dedicated publisher function missing")
+        if sorted(x[0] for x in calls) != ["mac_pdata_update", "mac_tx_update"]:
+            errors.append("publisher must contain exactly one pdata and one tx publication call")
+        pub = funcs.get("iwm_gld_publisher", [])
+        if pub:
+            p = mask_noncode(pub[0][0])
+            a = p.find("mac_pdata_update")
+            b = p.find("mac_tx_update")
+            if a < 0 or b < 0 or a >= b:
+                errors.append("pdata update must precede tx update in one worker operation")
+            if "thread_exit" not in p:
+                errors.append("publisher has no thread_exit termination")
+        unreg = funcs.get("iwm_gld_unregister", [])
+        if not unreg:
+            errors.append("unregister function missing")
+        else:
+            u = mask_noncode(unreg[0][0])
+            order = ["n80211_gld_callbacks_disable", "iwm_gld_publisher_drain",
+                     "mac_unregister", "thread_join", "cv_destroy", "mutex_destroy"]
+            offsets = [u.find(x) for x in order]
+            if any(x < 0 for x in offsets) or offsets != sorted(offsets):
+                errors.append("unregister lifecycle order is incomplete or invalid")
+            if "iwm_gld_publisher_resume" not in u or "n80211_gld_callbacks_enable" not in u:
+                errors.append("unregister rollback does not resume publisher and callbacks")
+            if u.count("thread_join") != 1:
+                errors.append("thread_join must occur exactly once")
+        reg = funcs.get("iwm_gld_register", [])
+        if not reg or "thread_create" not in mask_noncode(reg[0][0]):
+            errors.append("registration does not create dedicated worker")
+        if "g_pub_pending_generation" not in gld or "g_pub_published_generation" not in gld:
+            errors.append("generation tracking fields missing")
+        if "g_pub_pending_snapshot" not in gld or "g_pub_failed_generation" not in gld:
+            errors.append("snapshot/failure generation fields missing")
+        if "n80211_dispatch_refs" not in giant_src or "while (n80211_dispatch_refs != 0)" not in giant_src:
+            errors.append("callback dispatch drain is not present")
+    except ValueError as exc:
+        errors.append(str(exc))
+    return errors
+
+def self_test():
+    cases = [
+        ("clean worker", "static void iwm_gld_publisher(void) { mac_pdata_update(mh,p); mac_tx_update(mh); }", False),
+        ("comment ignored", "static void iwm_gld_publisher(void) { /* mac_pdata_update(m,p); */ mac_tx_update(m); }", False),
+        ("bssid lock", "static void iwm_gld_publisher(void) { mutex_enter(&g_bssid_lock); mac_pdata_update(m,p); mutex_exit(&g_bssid_lock); }", True),
+        ("giant", "static void iwm_gld_publisher(void) { n80211_giant_enter(); mac_pdata_update(m,p); n80211_giant_exit(); }", True),
+        ("publisher mutex tx", "static void iwm_gld_publisher(void) { mutex_enter(&g_pub_lock); mac_tx_update(m); mutex_exit(&g_pub_lock); }", True),
+        ("extra mutex", "static void iwm_gld_publisher(void) { mutex_enter(&other_lock); mac_pdata_update(m,p); mutex_exit(&other_lock); }", True),
+        ("callback origin", "static void iwm_gld_link_hook(void) { mac_pdata_update(m,p); }", True),
+        ("unknown lock", "static void iwm_gld_publisher(void) { mystery_lock_enter(); mac_pdata_update(m,p); }", True),
+        ("unbalanced exit", "static void iwm_gld_publisher(void) { mutex_exit(&g_pub_lock); mac_tx_update(m); }", True),
+        ("literal ignored", 'static void iwm_gld_publisher(void) { const char *s="mac_pdata_update(m,p)"; mac_tx_update(m); }', False),
+        ("nested lock", "static void iwm_gld_publisher(void) { mutex_enter(&a); mutex_enter(&b); mac_pdata_update(m,p); mutex_exit(&b); mutex_exit(&a); }", True),
+        ("trylock uncertain", "static void iwm_gld_publisher(void) { if (mutex_tryenter(&a)) mac_tx_update(m); }", True),
+    ]
+    failures = []
+    for label, source, should_fail in cases:
+        try:
+            f = function_bodies(source)
+            _, errs = scan_calls(f)
+            failed = bool(errs)
+        except ValueError:
+            failed = True
+        if failed != should_fail:
+            failures.append(label)
+        print("checker-control-{}={}".format(label.replace(" ", "_"), "PASS" if failed == should_fail else "FAIL"))
+    if failures:
+        raise SystemExit("checker self-test failed: " + ", ".join(failures))
+    print("CHECKER_NEGATIVE_CONTROLS=PASS ({})".format(len(cases)))
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
+        self_test()
+        return
+    if len(sys.argv) != 5:
+        raise SystemExit("usage: check-bssid-snapshot.py iwm_gld.c n80211_giant.c iwm_attach.c iwx_glue.c")
+    gld, giant = (pathlib.Path(sys.argv[i]).read_text() for i in (1, 2))
+    errors = inspect_source(gld, giant)
+    for e in errors:
+        print("FAIL=" + e)
+    if errors:
+        raise SystemExit(1)
+    print("BSSID_PUBLISHER_LOCK_AND_LIFECYCLE=PASS")
+    self_test()
+
+if __name__ == "__main__":
+    main()

@@ -85,6 +85,13 @@ jobs:
             git -C "$SRC" checkout --detach "$PIN"
             test "$(git -C "$SRC" rev-parse HEAD)" = "$PIN"
             echo "solnix_revision=$PIN" > "$ART/source-revision.txt"
+            git -C "$SRC" rev-parse "$PIN^{tree}" > "$ART/solnix-tree-sha.txt"
+            git -C "$SRC" ls-tree -r -l "$PIN" > "$ART/solnix-pinned-tree-manifest.txt"
+            for rel in src/ports/wifi/iwm/iwm_gld.c src/ports/wifi/net80211/n80211_giant.c src/ports/wifi/iwm/iwm_attach.c src/ports/wifi/iwx/iwx_glue.c; do
+              git -C "$SRC" show "$PIN:$rel" > "$ART/$(basename "$rel").pinned"
+              digest -a sha256 "$ART/$(basename "$rel").pinned" >> "$ART/pinned-source-sha256.txt"
+              printf '%s\t%s\n' "$rel" "$(git -C "$SRC" rev-parse "$PIN:$rel")" >> "$ART/pinned-source-blobs.txt"
+            done
 
             # Apply a local compatibility overlay without changing the pinned
             # solnix revision. Keep malloc and mbuf wait flags in one namespace.
