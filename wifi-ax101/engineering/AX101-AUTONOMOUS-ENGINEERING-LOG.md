@@ -58,3 +58,8 @@ The 16-case harness is a deterministic interleaving model, not a substitute for 
 - Therefore patch application, checker execution, C harness execution, OpenIndiana compilation, linking, ELF acceptance, and native module load/unload remain NOT VERIFIED / NOT TESTED.
 - P0 status: IMPLEMENTATION CANDIDATE ONLY — BUILD BLOCKED pending an Actions run on the validation branch.
 - Physical PCI attach and all real network acceptance gates remain NOT TESTED.
+
+### RUN #65 journal correction
+
+- The publisher overflow/drain correction commit SHA in the preceding addendum was mistyped. The correct commit is `2a6c07c595524d677724370ac014a5bcd9102bc5`.
+- Branch HEAD before this correction entry: `bdde9144c1bbb3b9b1a815feec39231d751c39e1`.
