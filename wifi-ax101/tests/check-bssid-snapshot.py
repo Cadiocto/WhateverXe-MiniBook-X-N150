@@ -238,6 +238,8 @@ def self_test():
         ("literal ignored", 'static void iwm_gld_publisher(void) { const char *s="mac_pdata_update(m,p)"; mac_tx_update(m); }', False),
         ("nested lock", "static void iwm_gld_publisher(void) { mutex_enter(&a); mutex_enter(&b); mac_pdata_update(m,p); mutex_exit(&b); mutex_exit(&a); }", True),
         ("trylock uncertain", "static void iwm_gld_publisher(void) { if (mutex_tryenter(&a)) mac_tx_update(m); }", True),
+        ("tx under giant", "static void iwm_gld_publisher(void) { n80211_giant_enter(); mac_tx_update(m); n80211_giant_exit(); }", True),
+        ("semaphore held", "static void iwm_gld_publisher(void) { sema_p(&s); mac_pdata_update(m,p); sema_v(&s); }", True),
     ]
     failures = []
     for label, source, should_fail in cases:
