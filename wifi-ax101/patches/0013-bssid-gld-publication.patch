@@ -1,22 +1,44 @@
 diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
+index 0502090..0af1b97 100644
 --- a/src/ports/wifi/iwm/iwm_gld.c
 +++ b/src/ports/wifi/iwm/iwm_gld.c
-@@ -40,1 +40,5 @@
+@@ -35,6 +35,11 @@
+ #include <sys/strsun.h>
+ #include <sys/policy.h>
  #include <sys/mac_provider.h>
 +#include <sys/proc.h>
 +#include <sys/disp.h>
-+#include <sys/thread.h>
 +#include <sys/condvar.h>
-@@ -55,4 +59,15 @@
++#include <sys/errno.h>
++#include <sys/debug.h>
+ #include <sys/dls.h>		/* DLS_SAP_LLC */
+ #include <sys/atomic.h>
+ #include <sys/mutex.h>
+@@ -50,6 +55,14 @@
+  */
+ extern int mac_header_info(mac_handle_t, mblk_t *, mac_header_info_t *);
+ 
++enum iwm_gld_publisher_state {
++	PUBLISHER_RUNNING = 0,
++	PUBLISHER_QUIESCING,
++	PUBLISHER_DRAINING,
++	PUBLISHER_STOPPING,
++	PUBLISHER_STOPPED
++};
++
  struct iwm_gld {
+ 	/*
+ 	 * One naturally 8-byte-aligned scalar is the RX BSSID snapshot.
+@@ -57,7 +70,17 @@ struct iwm_gld {
+ 	 * struct's uint64_t alignment makes this member 8-byte aligned.
+ 	 */
  	volatile uint64_t g_bssid_word;
 -	kmutex_t	g_bssid_lock;	/* serializes writers and pdata updates */
 +	kmutex_t	g_bssid_lock;	/* serializes wifi_data snapshot writers */
 +	kmutex_t	g_pub_lock;
 +	kcondvar_t	g_pub_cv;
 +	kt_did_t	g_pub_tid;
-+	boolean_t	g_pub_accepting;
-+	boolean_t	g_pub_stop;
++	enum iwm_gld_publisher_state g_pub_state;
 +	boolean_t	g_pub_overflow;
 +	uint64_t	g_pub_pending_generation;
 +	uint64_t	g_pub_published_generation;
@@ -24,21 +46,38 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +	int		g_pub_error;
 +	wifi_data_t	g_pub_pending_snapshot;
  	mac_handle_t	g_mh;
-@@ -278,3 +293,22 @@
+ 	void		*g_sc;
+ 	uint8_t		g_addr[ETHERADDRL];
+@@ -282,10 +305,7 @@ iwm_gld_set_bss(struct iwm_gld *g)
+ {
+ 	struct iwm_il_state st;
+ 
+-	/*
+-	 * Serialize GLDv3 wifi_data updates, but acquire giant only to copy
+-	 * current state. mac_pdata_update must run without giant held.
+-	 */
++	/* Snapshot the OpenBSD state, then enqueue a private wifi_data copy. */
+ 	mutex_enter(&g->g_bssid_lock);
+ 	mutex_enter(&n80211_giant);
+ 	iwm_il_getstate(g->g_sc, &st);
+@@ -294,11 +314,130 @@ iwm_gld_set_bss(struct iwm_gld *g)
+ 	g->g_wd.wd_opmode = IEEE80211_M_STA;
+ 	g->g_wd.wd_qospad = 0;
  	bcopy(st.s_bssid, g->g_wd.wd_bssid, IEEE80211_ADDR_LEN);
 -	(void) mac_pdata_update(g->g_mh, &g->g_wd, sizeof (g->g_wd));
 -	mac_tx_update(g->g_mh);
++
 +	mutex_enter(&g->g_pub_lock);
-+	if (!g->g_pub_accepting || g->g_pub_stop) {
++	if (g->g_pub_state != PUBLISHER_RUNNING) {
 +		mutex_exit(&g->g_pub_lock);
 +		mutex_exit(&g->g_bssid_lock);
 +		return;
 +	}
 +	if (g->g_pub_pending_generation == (uint64_t)-1) {
-+		/* Never wrap: a wrapped generation could falsely satisfy a drain. */
++		/* Keep the last valid generation; never wrap and alias a drain. */
 +		g->g_pub_overflow = B_TRUE;
 +		g->g_pub_error = EOVERFLOW;
-+		g->g_pub_accepting = B_FALSE;
++		g->g_pub_state = PUBLISHER_QUIESCING;
 +		cv_broadcast(&g->g_pub_cv);
 +		mutex_exit(&g->g_pub_lock);
 +		mutex_exit(&g->g_bssid_lock);
@@ -49,15 +88,13 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +	g->g_pub_pending_snapshot = g->g_wd;
 +	cv_signal(&g->g_pub_cv);
 +	mutex_exit(&g->g_pub_lock);
-@@ -282,3 +316,89 @@
  	mutex_exit(&g->g_bssid_lock);
  }
  
 +/*
-+ * One dedicated thread owns all GLDv3 wifi metadata publication.
-+ * It copies the pending snapshot while locked, then drops every lock
-+ * before entering the MAC framework. A failed generation is not marked
-+ * published and is retried after resume or a newer accepted generation.
++ * The dedicated worker is the only caller of the GLDv3 wifi metadata APIs.
++ * mac_pdata_update() returns an error; mac_tx_update() is void in the pinned
++ * illumos ABI. A generation is committed only after both calls have returned.
 + */
 +static void
 +iwm_gld_publisher(void *arg)
@@ -70,32 +107,38 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +		int err;
 +
 +		mutex_enter(&g->g_pub_lock);
-+		while (!g->g_pub_stop &&
++		while (g->g_pub_state != PUBLISHER_STOPPING &&
 +		    (g->g_pub_pending_generation ==
 +		    g->g_pub_published_generation ||
 +		    g->g_pub_failed_generation ==
 +		    g->g_pub_pending_generation))
 +			cv_wait(&g->g_pub_cv, &g->g_pub_lock);
-+		if (g->g_pub_stop &&
++		if (g->g_pub_state == PUBLISHER_STOPPING &&
 +		    g->g_pub_pending_generation ==
 +		    g->g_pub_published_generation) {
++			g->g_pub_state = PUBLISHER_STOPPED;
++			cv_broadcast(&g->g_pub_cv);
 +			mutex_exit(&g->g_pub_lock);
 +			thread_exit();
 +		}
++		/* STOPPING is entered only after a successful publisher drain. */
++		ASSERT(g->g_pub_state != PUBLISHER_STOPPING);
 +		generation = g->g_pub_pending_generation;
 +		snapshot = g->g_pub_pending_snapshot;
 +		mutex_exit(&g->g_pub_lock);
 +
-+		/* No giant, BSSID lock, or publisher lock is held here. */
++		/* No n80211_giant or driver-owned lock is held across MAC calls. */
 +		err = mac_pdata_update(g->g_mh, &snapshot, sizeof (snapshot));
 +		if (err == 0)
 +			mac_tx_update(g->g_mh);
 +
 +		mutex_enter(&g->g_pub_lock);
 +		if (err == 0) {
++			ASSERT(generation >= g->g_pub_published_generation);
 +			g->g_pub_published_generation = generation;
-+			g->g_pub_failed_generation = 0;
-+			if (!g->g_pub_overflow)
++			if (g->g_pub_failed_generation <= generation)
++				g->g_pub_failed_generation = 0;
++			if (generation == g->g_pub_pending_generation)
 +				g->g_pub_error = 0;
 +		} else {
 +			g->g_pub_failed_generation = generation;
@@ -106,7 +149,7 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +	}
 +}
 +
-+/* Caller has disabled and drained all n80211 callbacks. */
++/* Callback dispatch has been disabled and n80211_dispatch_refs drained. */
 +static int
 +iwm_gld_publisher_drain(struct iwm_gld *g)
 +{
@@ -114,10 +157,15 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +	int err;
 +
 +	mutex_enter(&g->g_pub_lock);
-+	g->g_pub_accepting = B_FALSE;
++	if (g->g_pub_state == PUBLISHER_RUNNING)
++		g->g_pub_state = PUBLISHER_QUIESCING;
++	if (g->g_pub_state == PUBLISHER_QUIESCING)
++		g->g_pub_state = PUBLISHER_DRAINING;
++	ASSERT(g->g_pub_state == PUBLISHER_DRAINING);
 +	target = g->g_pub_pending_generation;
++	/* An older failed generation must not abort a newer pending target. */
 +	while (g->g_pub_published_generation < target &&
-+	    g->g_pub_failed_generation != target && g->g_pub_error == 0)
++	    g->g_pub_failed_generation != target)
 +		cv_wait(&g->g_pub_cv, &g->g_pub_lock);
 +	err = (g->g_pub_published_generation >= target) ? 0 :
 +	    (g->g_pub_error != 0 ? g->g_pub_error : EIO);
@@ -129,36 +177,48 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +iwm_gld_publisher_resume(struct iwm_gld *g)
 +{
 +	mutex_enter(&g->g_pub_lock);
-+	if (!g->g_pub_overflow) {
-+		g->g_pub_failed_generation = 0;
-+		g->g_pub_error = 0;
-+		g->g_pub_accepting = B_TRUE;
-+	} else {
-+		g->g_pub_accepting = B_FALSE;
-+	}
++	ASSERT(g->g_pub_state == PUBLISHER_DRAINING ||
++	    g->g_pub_state == PUBLISHER_QUIESCING);
++	g->g_pub_failed_generation = 0;
++	g->g_pub_error = 0;
++	if (g->g_pub_overflow)
++		g->g_pub_state = PUBLISHER_QUIESCING;
++	else
++		g->g_pub_state = PUBLISHER_RUNNING;
 +	cv_broadcast(&g->g_pub_cv);
 +	mutex_exit(&g->g_pub_lock);
 +}
-@@ -818,4 +938,7 @@
++
++
+ /*
+  * n80211_link_hook (n80211_giant.c), giant dropped: on link up, read the
+  * BSSID under giant and push it to the plugin before mac_link_update.
+@@ -823,10 +962,15 @@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
  	g = kmem_zalloc(sizeof (*g), KM_SLEEP);
  	g->g_sc = sc;
  	mutex_init(&g->g_bssid_lock, NULL, MUTEX_DRIVER, NULL);
 +	mutex_init(&g->g_pub_lock, NULL, MUTEX_DRIVER, NULL);
 +	cv_init(&g->g_pub_cv, NULL, CV_DRIVER, NULL);
-+	g->g_pub_accepting = B_TRUE;
++	g->g_pub_state = PUBLISHER_RUNNING;
  	bcopy(addr, g->g_addr, ETHERADDRL);
-@@ -826,3 +949,5 @@
+ 
+ 	macp = mac_alloc(MAC_VERSION);
  	if (macp == NULL) {
 +		cv_destroy(&g->g_pub_cv);
 +		mutex_destroy(&g->g_pub_lock);
  		mutex_destroy(&g->g_bssid_lock);
  		kmem_free(g, sizeof (*g));
-@@ -841,2 +966,4 @@
+ 		return (ENOMEM);
+@@ -846,11 +990,19 @@ iwm_gld_register(dev_info_t *dip, void *sc, const uint8_t *addr, void **gp)
+ 	err = mac_register(macp, &g->g_mh);
+ 	mac_free(macp);
  	if (err != 0) {
 +		cv_destroy(&g->g_pub_cv);
 +		mutex_destroy(&g->g_pub_lock);
  		mutex_destroy(&g->g_bssid_lock);
-@@ -850,2 +977,8 @@
+ 		kmem_free(g, sizeof (*g));
+ 		return (err);
+ 	}
  	mac_link_update(g->g_mh, LINK_STATE_DOWN);
 +	{
 +		kthread_t *t = thread_create(NULL, 0,
@@ -167,9 +227,13 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +		g->g_pub_tid = t->t_did;
 +	}
  	n80211_gld_callbacks_enable(iwm_gld_rx_frame, iwm_gld_link_hook,
-@@ -872,8 +1005,23 @@
+ 	    iwm_gld_bssid_hook, g);
+ 	*gp = g;
+@@ -865,16 +1017,43 @@ iwm_gld_unregister(void *gp)
+ 
  	if (g == NULL)
  		return (0);
++	/* This disables callback admission and waits for dispatch refs to drain. */
  	n80211_gld_callbacks_disable();
 +	err = iwm_gld_publisher_drain(g);
 +	if (err != 0) {
@@ -178,20 +242,39 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +		    iwm_gld_bssid_hook, g);
 +		return (err);
 +	}
++
++	/* mac_unregister() only fails at mac_disable_nowait(), before teardown. */
  	err = mac_unregister(g->g_mh);
- 	if (err == 0) {
- 		n80211_gld_callbacks_forget();
-+		mutex_enter(&g->g_pub_lock);
-+		g->g_pub_stop = B_TRUE;
-+		cv_broadcast(&g->g_pub_cv);
-+		mutex_exit(&g->g_pub_lock);
-+		/* Join outside every lock used by the worker. */
-+		thread_join(g->g_pub_tid);
-+		cv_destroy(&g->g_pub_cv);
-+		mutex_destroy(&g->g_pub_lock);
- 		mutex_destroy(&g->g_bssid_lock);
- 
-@@ -890,2 +1038,3 @@
- 	} else {
+-	if (err == 0) {
+-		n80211_gld_callbacks_forget();
+-		mutex_destroy(&g->g_bssid_lock);
+-		kmem_free(g, sizeof (*g));
+-	} else {
++	if (err != 0) {
 +		iwm_gld_publisher_resume(g);
  		n80211_gld_callbacks_enable(iwm_gld_rx_frame, iwm_gld_link_hook,
+ 		    iwm_gld_bssid_hook, g);
++		return (err);
+ 	}
++
++	/* Successful unregister is irreversible: no further MAC call is allowed. */
++	n80211_gld_callbacks_forget();
++	mutex_enter(&g->g_pub_lock);
++	ASSERT(g->g_pub_pending_generation ==
++	    g->g_pub_published_generation);
++	ASSERT(g->g_pub_state == PUBLISHER_DRAINING);
++	g->g_pub_state = PUBLISHER_STOPPING;
++	cv_broadcast(&g->g_pub_cv);
++	mutex_exit(&g->g_pub_lock);
++	/* thread_join() sleeps; never hold the worker mutex here. */
++	thread_join(g->g_pub_tid);
++	mutex_enter(&g->g_pub_lock);
++	ASSERT(g->g_pub_state == PUBLISHER_STOPPED);
++	mutex_exit(&g->g_pub_lock);
++	cv_destroy(&g->g_pub_cv);
++	mutex_destroy(&g->g_pub_lock);
++	mutex_destroy(&g->g_bssid_lock);
++	kmem_free(g, sizeof (*g));
+ 	return (err);
+ }
+ 
