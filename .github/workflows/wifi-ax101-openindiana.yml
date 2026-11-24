@@ -2,7 +2,7 @@ name: Intel AX101 Wi-Fi driver build (OpenIndiana)
 
 on:
   push:
-    branches: [wifi-ax101-openindiana]
+    branches: [wifi-ax101-openindiana, ax101-run64-validation]
     paths:
       - "wifi-ax101/**"
       - ".github/workflows/wifi-ax101-openindiana.yml"
@@ -169,6 +169,15 @@ jobs:
             echo "mbuf_window_patch=0008-mbuf-window-pointer-validation.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$MBUF_WINDOW_PATCH" > "$ART/mbuf-window-pointer-patch.sha256"
 
+            # Avoid unaligned loads from packed firmware channel-profile arrays.
+            PACKED_ALIGN_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0009-packed-member-alignment.patch"
+            test -s "$PACKED_ALIGN_PATCH"
+            git -C "$SRC" apply --check "$PACKED_ALIGN_PATCH"
+            git -C "$SRC" apply "$PACKED_ALIGN_PATCH"
+            git -C "$SRC" diff --check
+            echo "packed_member_alignment_patch=0009-packed-member-alignment.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$PACKED_ALIGN_PATCH" > "$ART/packed-member-alignment-patch.sha256"
+
             # Use target Ethernet constants before fallback definitions and make
             # roundup resolve to the target sysmacros declaration.
             HEADER_MACRO_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0010-native-header-macro-order.patch"
@@ -255,6 +264,17 @@ jobs:
             git -C "$SRC" diff --check
             echo "bssid_interrupt_callback_patch=0012-bssid-interrupt-callback-drain.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$BSSID_IRQ_PATCH" > "$ART/bssid-interrupt-callback-patch.sha256"
+
+            # Serialize all GLDv3 metadata publication on a dedicated worker.
+            PUBLISHER_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0013-bssid-gld-publication.patch"
+            test -s "$PUBLISHER_PATCH"
+            git -C "$SRC" apply --check "$PUBLISHER_PATCH"
+            git -C "$SRC" apply "$PUBLISHER_PATCH"
+            git -C "$SRC" diff --check
+            echo "bssid_publisher_patch=0013-bssid-gld-publication.patch" >> "$ART/source-revision.txt"
+            digest -a sha256 "$PUBLISHER_PATCH" > "$ART/bssid-publisher-patch.sha256"
+
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" --self-test | tee "$ART/bssid-checker-self-test.txt"
             python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" \
               "$SRC/src/ports/wifi/iwm/iwm_gld.c" \
               "$SRC/src/ports/wifi/net80211/n80211_giant.c" \
@@ -268,6 +288,10 @@ jobs:
               "$GITHUB_WORKSPACE/wifi-ax101/tests/bssid-callback-drain-concurrency.c" \
               -o "$ART/bssid-callback-drain-concurrency"
             "$ART/bssid-callback-drain-concurrency" | tee "$ART/bssid-callback-drain.txt"
+            "$CC" -std=c11 -Wall -Wextra -Werror -pthread \
+              "$GITHUB_WORKSPACE/wifi-ax101/tests/bssid-publisher-concurrency.c" \
+              -o "$ART/bssid-publisher-concurrency"
+            "$ART/bssid-publisher-concurrency" | tee "$ART/bssid-publisher-concurrency.txt"
 
             # Close the native GLDv3 net80211 header dependency chain using exact
             # headers from the pinned illumos-gate revision. Prefer target /usr/include
