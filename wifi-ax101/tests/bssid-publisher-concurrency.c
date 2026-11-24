@@ -45,7 +45,7 @@ enqueue(model_t *m, unsigned char value)
 static int
 begin_publish(model_t *m, uint64_t *generation)
 {
-        if (m->workers != 1 || m->stop || !m->registered ||
+        if (m->workers != 1 || m->stop || !m->registered || m->mac_active != 0 ||
             m->pending == m->published || m->failed == m->pending)
                 return (0);
         assert(m->mac_active == 0);
@@ -187,8 +187,8 @@ static void
 case19(void)
 {
         model_t m; uint64_t g;
-        init(&m); callback_enter(&m); m.accepting = 0; m.callbacks_enabled = 0;
-        callback_exit(&m, 0x42);
+        init(&m); callback_enter(&m); m.callbacks_enabled = 0;
+        callback_exit(&m, 0x42); m.accepting = 0;
         assert(m.callbacks == 0 && m.callbacks_drained && m.pending == 1);
         assert(begin_publish(&m, &g)); finish_publish(&m, g);
         assert(m.published == 1 && model_valid(&m));
