@@ -169,15 +169,6 @@ jobs:
             echo "mbuf_window_patch=0008-mbuf-window-pointer-validation.patch" >> "$ART/source-revision.txt"
             digest -a sha256 "$MBUF_WINDOW_PATCH" > "$ART/mbuf-window-pointer-patch.sha256"
 
-            # Avoid unaligned loads from packed firmware channel-profile arrays.
-            PACKED_ALIGN_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0009-packed-member-alignment.patch"
-            test -s "$PACKED_ALIGN_PATCH"
-            git -C "$SRC" apply --check "$PACKED_ALIGN_PATCH"
-            git -C "$SRC" apply "$PACKED_ALIGN_PATCH"
-            git -C "$SRC" diff --check
-            echo "packed_member_alignment_patch=0009-packed-member-alignment.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$PACKED_ALIGN_PATCH" > "$ART/packed-member-alignment-patch.sha256"
-
             # Use target Ethernet constants before fallback definitions and make
             # roundup resolve to the target sysmacros declaration.
             HEADER_MACRO_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0010-native-header-macro-order.patch"
