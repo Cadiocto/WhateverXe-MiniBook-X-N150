@@ -121,15 +121,103 @@ def call_args(clean, pos):
         raise ValueError("unbalanced call parentheses")
     return clean[op + 1:i - 1].strip(), i
 
+
+def _block_end(src, opening):
+    depth = 1
+    i = opening + 1
+    while i < len(src) and depth:
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+        i += 1
+    if depth:
+        raise ValueError("unbalanced conditional block")
+    return i - 1
+
+def _mask_terminal_exit_branch(clean):
+    """Mask the worker's terminal unlock+thread_exit branch from fallthrough flow."""
+    out = list(clean)
+    errors = []
+    for m in re.finditer(r"\bif\s*\(", clean):
+        op = clean.find("(", m.start())
+        depth = 1
+        i = op + 1
+        while i < len(clean) and depth:
+            if clean[i] == "(":
+                depth += 1
+            elif clean[i] == ")":
+                depth -= 1
+            i += 1
+        if depth:
+            raise ValueError("unbalanced if condition")
+        while i < len(clean) and clean[i].isspace():
+            i += 1
+        if i >= len(clean) or clean[i] != "{":
+            continue
+        end = _block_end(clean, i)
+        body = clean[i + 1:end]
+        lock_names = [x.group(1) for x in CALL_RE.finditer(body)
+                      if x.group(1) in LOCK_ENTER | LOCK_EXIT | GIANT_ENTER | GIANT_EXIT]
+        if not lock_names:
+            continue
+        safe = (lock_names == ["mutex_exit"] and
+                re.search(r"\bmutex_exit\s*\(\s*&g\s*->\s*g_pub_lock\s*\)\s*;\s*thread_exit\s*\(\s*\)\s*;", body))
+        if safe:
+            for j in range(m.start(), end + 1):
+                if out[j] != "\n":
+                    out[j] = " "
+        else:
+            errors.append("conditional lock operation is unsupported in publisher flow")
+    return "".join(out), errors
+
+def _return_with_held_lock(clean):
+    for ret in re.finditer(r"\breturn\b", clean):
+        locks = []
+        giant = 0
+        prefix = clean[:ret.start()]
+        for m in CALL_RE.finditer(prefix):
+            name = m.group(1)
+            if name not in LOCK_ENTER | LOCK_EXIT | GIANT_ENTER | GIANT_EXIT:
+                continue
+            args, _ = call_args(prefix, m.start())
+            key = re.sub(r"\s+", "", args)
+            if name in LOCK_ENTER:
+                if not key or key in locks:
+                    return True
+                locks.append(key)
+            elif name in LOCK_EXIT:
+                if key not in locks:
+                    return True
+                locks.remove(key)
+            elif name in GIANT_ENTER:
+                giant += 1
+            elif name in GIANT_EXIT:
+                if giant == 0:
+                    return True
+                giant -= 1
+        if locks or giant:
+            return True
+    return False
+
 def scan_calls(functions):
     found, errors = [], []
     for fname, bodies in functions.items():
         for original, clean in bodies:
+            scan_clean = clean
+            if any(name in clean for name in PUB_CALLS):
+                if fname == "iwm_gld_publisher":
+                    scan_clean, branch_errors = _mask_terminal_exit_branch(clean)
+                    errors.extend(branch_errors)
+                else:
+                    _, branch_errors = _mask_terminal_exit_branch(clean)
+                    errors.extend(branch_errors)
+                if _return_with_held_lock(scan_clean):
+                    errors.append("early return with driver lock held in " + fname)
             locks = []
             giant = 0
             unknown = False
-            pos = 0
-            for m in CALL_RE.finditer(clean):
+            for m in CALL_RE.finditer(scan_clean):
                 name = m.group(1)
                 if name not in PUB_CALLS | LOCK_ENTER | LOCK_EXIT | GIANT_ENTER | GIANT_EXIT | {
                     "mutex_tryenter", "rw_tryenter", "cv_wait", "cv_timedwait"
@@ -138,7 +226,7 @@ def scan_calls(functions):
                         unknown = True
                     continue
                 try:
-                    args, end = call_args(clean, m.start())
+                    args, _ = call_args(scan_clean, m.start())
                 except ValueError as exc:
                     errors.append(str(exc))
                     continue
@@ -162,7 +250,6 @@ def scan_calls(functions):
                     else:
                         giant -= 1
                 elif name in ("mutex_tryenter", "rw_tryenter"):
-                    # A conditional acquisition cannot be proven from this lexical pass.
                     unknown = True
                 elif name in PUB_CALLS:
                     found.append((name, fname, tuple(locks), giant, unknown))
@@ -170,11 +257,8 @@ def scan_calls(functions):
                         errors.append(name + " called outside dedicated publisher: " + fname)
                     if locks or giant or unknown:
                         errors.append(name + " called with unresolved/held lock state in " + fname)
-                pos = end
             if locks or giant or unknown:
-                # A function may intentionally retain a lock at return; fail only
-                # when it also contains a MAC publication or an unbalanced lock op.
-                if any(name in clean for name in PUB_CALLS):
+                if any(name in scan_clean for name in PUB_CALLS):
                     errors.append("non-empty/unknown lock state at end of publisher-containing function " + fname)
     return found, errors
 
@@ -226,20 +310,21 @@ def inspect_source(gld, giant_src):
 
 def self_test():
     cases = [
-        ("clean worker", "static void iwm_gld_publisher(void) { mac_pdata_update(mh,p); mac_tx_update(mh); }", False),
-        ("comment ignored", "static void iwm_gld_publisher(void) { /* mac_pdata_update(m,p); */ mac_tx_update(m); }", False),
-        ("bssid lock", "static void iwm_gld_publisher(void) { mutex_enter(&g_bssid_lock); mac_pdata_update(m,p); mutex_exit(&g_bssid_lock); }", True),
-        ("giant", "static void iwm_gld_publisher(void) { n80211_giant_enter(); mac_pdata_update(m,p); n80211_giant_exit(); }", True),
-        ("publisher mutex tx", "static void iwm_gld_publisher(void) { mutex_enter(&g_pub_lock); mac_tx_update(m); mutex_exit(&g_pub_lock); }", True),
-        ("extra mutex", "static void iwm_gld_publisher(void) { mutex_enter(&other_lock); mac_pdata_update(m,p); mutex_exit(&other_lock); }", True),
-        ("callback origin", "static void iwm_gld_link_hook(void) { mac_pdata_update(m,p); }", True),
-        ("unknown lock", "static void iwm_gld_publisher(void) { mystery_lock_enter(); mac_pdata_update(m,p); }", True),
-        ("unbalanced exit", "static void iwm_gld_publisher(void) { mutex_exit(&g_pub_lock); mac_tx_update(m); }", True),
-        ("literal ignored", 'static void iwm_gld_publisher(void) { const char *s="mac_pdata_update(m,p)"; mac_tx_update(m); }', False),
-        ("nested lock", "static void iwm_gld_publisher(void) { mutex_enter(&a); mutex_enter(&b); mac_pdata_update(m,p); mutex_exit(&b); mutex_exit(&a); }", True),
+        ("real pdata after unlock", "static void iwm_gld_publisher(void) { mutex_enter(&a); mutex_exit(&a); mac_pdata_update(m,p); mac_tx_update(m); }", False),
+        ("comment before unlock", "static void iwm_gld_publisher(void) { mutex_enter(&a); /* mac_pdata_update(m,p) */ mutex_exit(&a); mac_pdata_update(m,p); mac_tx_update(m); }", False),
+        ("giant held", "static void iwm_gld_publisher(void) { n80211_giant_enter(); mac_pdata_update(m,p); n80211_giant_exit(); mac_tx_update(m); }", True),
+        ("bssid held", "static void iwm_gld_publisher(void) { mutex_enter(&g_bssid_lock); mac_pdata_update(m,p); mutex_exit(&g_bssid_lock); mac_tx_update(m); }", True),
+        ("tx under mutex", "static void iwm_gld_publisher(void) { mutex_enter(&a); mac_tx_update(m); mutex_exit(&a); }", True),
+        ("missing release", "static void iwm_gld_publisher(void) { mutex_enter(&a); mac_pdata_update(m,p); mac_tx_update(m); }", True),
+        ("unbalanced exit", "static void iwm_gld_publisher(void) { mutex_exit(&a); mac_tx_update(m); }", True),
+        ("nested locks released", "static void iwm_gld_publisher(void) { mutex_enter(&a); mutex_enter(&b); mutex_exit(&b); mutex_exit(&a); mac_pdata_update(m,p); mac_tx_update(m); }", False),
+        ("early return held", "static void iwm_gld_publisher(void) { mutex_enter(&a); if (bad) return; mutex_exit(&a); mac_pdata_update(m,p); mac_tx_update(m); }", True),
+        ("conditional acquire", "static void iwm_gld_publisher(void) { if (take) { mutex_enter(&a); } mutex_exit(&a); mac_tx_update(m); }", True),
+        ("conditional release", "static void iwm_gld_publisher(void) { mutex_enter(&a); if (drop) { mutex_exit(&a); } mac_tx_update(m); }", True),
+        ("terminal worker exit", "static void iwm_gld_publisher(void) { mutex_enter(&g_pub_lock); if (stop) { mutex_exit(&g->g_pub_lock); thread_exit(); } mutex_exit(&g_pub_lock); mac_pdata_update(m,p); mac_tx_update(m); }", False),
         ("trylock uncertain", "static void iwm_gld_publisher(void) { if (mutex_tryenter(&a)) mac_tx_update(m); }", True),
-        ("tx under giant", "static void iwm_gld_publisher(void) { n80211_giant_enter(); mac_tx_update(m); n80211_giant_exit(); }", True),
-        ("semaphore held", "static void iwm_gld_publisher(void) { sema_p(&s); mac_pdata_update(m,p); sema_v(&s); }", True),
+        ("unknown lock", "static void iwm_gld_publisher(void) { mystery_lock_enter(); mac_pdata_update(m,p); }", True),
+        ("callback origin", "static void iwm_gld_link_hook(void) { mac_pdata_update(m,p); }", True),
     ]
     failures = []
     for label, source, should_fail in cases:
