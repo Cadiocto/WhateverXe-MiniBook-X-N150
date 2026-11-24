@@ -11,7 +11,8 @@
 typedef struct model {
         uint64_t pending, published, failed;
         int accepting, callbacks_enabled, stop, registered, freed;
-        unsigned callbacks, workers, mac_active, pdata_calls, tx_calls;
+        unsigned callbacks, workers, mac_active, max_mac_active, pdata_calls, tx_calls;
+        int callbacks_drained, overflow;
         int pdata_error, unregister_error;
         unsigned char pending_value, published_value, active_value;
 } model_t;
@@ -20,7 +21,8 @@ static void
 init(model_t *m)
 {
         memset(m, 0, sizeof (*m));
-        m->accepting = 1;\n        m->callbacks_enabled = 1;
+        m->accepting = 1;
+        m->callbacks_enabled = 1;
         m->registered = 1;
         m->workers = 1;
 }
@@ -28,8 +30,13 @@ init(model_t *m)
 static int
 enqueue(model_t *m, unsigned char value)
 {
-        if (!m->accepting || m->stop || m->pending == UINT64_MAX)
+        if (!m->accepting || m->stop)
                 return (0);
+        if (m->pending == UINT64_MAX) {
+                m->overflow = 1;
+                m->accepting = 0;
+                return (0);
+        }
         m->pending++;
         m->pending_value = value;
         return (1);
@@ -38,11 +45,13 @@ enqueue(model_t *m, unsigned char value)
 static int
 begin_publish(model_t *m, uint64_t *generation)
 {
-        if (m->workers != 1 || m->stop ||
+        if (m->workers != 1 || m->stop || !m->registered ||
             m->pending == m->published || m->failed == m->pending)
                 return (0);
         assert(m->mac_active == 0);
         m->mac_active++;
+        if (m->mac_active > m->max_mac_active)
+                m->max_mac_active = m->mac_active;
         m->active_value = m->pending_value;
         *generation = m->pending;
         m->pdata_calls++;
@@ -78,13 +87,17 @@ callback_exit(model_t *m, unsigned char value)
         assert(m->callbacks != 0);
         (void) enqueue(m, value);
         m->callbacks--;
+        if (!m->callbacks_enabled && m->callbacks == 0)
+                m->callbacks_drained = 1;
 }
 
 static void
 disable_callbacks(model_t *m)
 {
         m->accepting = 0;
+        m->callbacks_enabled = 0;
         assert(m->callbacks == 0);
+        m->callbacks_drained = 1;
 }
 
 static void
@@ -130,15 +143,95 @@ case15(void) { model_t m; uint64_t g; init(&m); enqueue(&m,1); begin_publish(&m,
 static void
 case16(void) { model_t m; uint64_t g; init(&m); enqueue(&m,1); begin_publish(&m,&g); finish_publish(&m,g); disable_callbacks(&m); assert(m.published==m.pending); m.registered=0; stop_and_join(&m); assert(!m.registered && m.workers==0 && m.stop); m.freed=1; assert(m.freed); }
 
+
+static int
+model_valid(const model_t *m)
+{
+        if (m->mac_active > 1 || m->max_mac_active > 1)
+                return (0);
+        if (m->freed && m->workers != 0)
+                return (0);
+        if (m->callbacks_drained && m->callbacks != 0)
+                return (0);
+        if (!m->registered && m->mac_active != 0)
+                return (0);
+        if (m->stop && m->pending != m->published)
+                return (0);
+        if (m->overflow && m->accepting)
+                return (0);
+        return (1);
+}
+
+static void
+case17(void)
+{
+        model_t m; uint64_t g;
+        init(&m); m.pending = UINT64_MAX; m.published = UINT64_MAX - 1;
+        assert(!enqueue(&m, 0xaa));
+        assert(m.overflow && !m.accepting && m.pending == UINT64_MAX);
+        assert(begin_publish(&m, &g)); finish_publish(&m, g);
+        assert(m.published == UINT64_MAX && model_valid(&m));
+}
+
+static void
+case18(void)
+{
+        model_t m; uint64_t g;
+        init(&m); assert(enqueue(&m, 1)); assert(begin_publish(&m, &g));
+        assert(!begin_publish(&m, &g)); /* duplicate wakeup cannot start a second publisher */
+        finish_publish(&m, 1);
+        assert(m.max_mac_active == 1 && !begin_publish(&m, &g));
+}
+
+static void
+case19(void)
+{
+        model_t m; uint64_t g;
+        init(&m); callback_enter(&m); m.accepting = 0; m.callbacks_enabled = 0;
+        callback_exit(&m, 0x42);
+        assert(m.callbacks == 0 && m.callbacks_drained && m.pending == 1);
+        assert(begin_publish(&m, &g)); finish_publish(&m, g);
+        assert(m.published == 1 && model_valid(&m));
+}
+
+static void
+case20(void)
+{
+        model_t m; uint64_t g;
+        init(&m); assert(enqueue(&m, 1)); assert(begin_publish(&m, &g));
+        finish_publish(&m, g);
+        m.registered = 0;
+        assert(!begin_publish(&m, &g));
+        assert(model_valid(&m));
+}
+
+static void
+case21(void)
+{
+        model_t m; init(&m);
+        m.callbacks_enabled = 0; m.callbacks_drained = 1; m.callbacks = 1;
+        assert(!model_valid(&m)); /* injected callback-after-drain defect */
+        init(&m); m.mac_active = 2;
+        assert(!model_valid(&m)); /* injected concurrent-publisher defect */
+        init(&m); m.registered = 0; m.mac_active = 1;
+        assert(!model_valid(&m)); /* injected publication-after-unregister defect */
+        init(&m); m.freed = 1;
+        assert(!model_valid(&m)); /* injected free-before-join defect */
+        init(&m); m.stop = 1; m.pending = 2; m.published = 1;
+        assert(!model_valid(&m)); /* injected lost-final-generation defect */
+        (void) puts("publisher-negative-controls=PASS (5/5)");
+}
+
 int
 main(void)
 {
         void (*cases[])(void) = { case1,case2,case3,case4,case5,case6,case7,case8,
-            case9,case10,case11,case12,case13,case14,case15,case16 };
+            case9,case10,case11,case12,case13,case14,case15,case16,case17,case18,case19,case20,case21 };
         for (unsigned i=0; i<sizeof (cases)/sizeof (cases[0]); i++) {
                 cases[i]();
                 (void) printf("publisher-scenario-%02u=PASS\n", i+1);
         }
-        (void) puts("BSSID_PUBLISHER_INTERLEAVING_MODEL=PASS (16/16)");
+        case21();
+        (void) puts("BSSID_PUBLISHER_INTERLEAVING_MODEL=PASS (21/21)");
         return (0);
 }
