@@ -321,7 +321,7 @@ def self_test():
         ("early return held", "static void iwm_gld_publisher(void) { mutex_enter(&a); if (bad) return; mutex_exit(&a); mac_pdata_update(m,p); mac_tx_update(m); }", True),
         ("conditional acquire", "static void iwm_gld_publisher(void) { if (take) { mutex_enter(&a); } mutex_exit(&a); mac_tx_update(m); }", True),
         ("conditional release", "static void iwm_gld_publisher(void) { mutex_enter(&a); if (drop) { mutex_exit(&a); } mac_tx_update(m); }", True),
-        ("terminal worker exit", "static void iwm_gld_publisher(void) { mutex_enter(&g_pub_lock); if (stop) { mutex_exit(&g->g_pub_lock); thread_exit(); } mutex_exit(&g_pub_lock); mac_pdata_update(m,p); mac_tx_update(m); }", False),
+        ("terminal worker exit", "static void iwm_gld_publisher(void) { mutex_enter(&g->g_pub_lock); if (stop) { mutex_exit(&g->g_pub_lock); thread_exit(); } mutex_exit(&g->g_pub_lock); mac_pdata_update(m,p); mac_tx_update(m); }", False),
         ("trylock uncertain", "static void iwm_gld_publisher(void) { if (mutex_tryenter(&a)) mac_tx_update(m); }", True),
         ("unknown lock", "static void iwm_gld_publisher(void) { mystery_lock_enter(); mac_pdata_update(m,p); }", True),
         ("callback origin", "static void iwm_gld_link_hook(void) { mac_pdata_update(m,p); }", True),
