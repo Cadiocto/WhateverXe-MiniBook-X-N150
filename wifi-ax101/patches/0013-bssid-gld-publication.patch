@@ -119,8 +119,8 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +	while (g->g_pub_published_generation < target &&
 +	    g->g_pub_failed_generation != target && g->g_pub_error == 0)
 +		cv_wait(&g->g_pub_cv, &g->g_pub_lock);
-+	err = (g->g_pub_error != 0) ? g->g_pub_error :
-+	    (g->g_pub_published_generation >= target ? 0 : EIO);
++	err = (g->g_pub_published_generation >= target) ? 0 :
++	    (g->g_pub_error != 0 ? g->g_pub_error : EIO);
 +	mutex_exit(&g->g_pub_lock);
 +	return (err);
 +}
@@ -132,8 +132,10 @@ diff --git a/src/ports/wifi/iwm/iwm_gld.c b/src/ports/wifi/iwm/iwm_gld.c
 +	if (!g->g_pub_overflow) {
 +		g->g_pub_failed_generation = 0;
 +		g->g_pub_error = 0;
++		g->g_pub_accepting = B_TRUE;
++	} else {
++		g->g_pub_accepting = B_FALSE;
 +	}
-+	g->g_pub_accepting = B_TRUE;
 +	cv_broadcast(&g->g_pub_cv);
 +	mutex_exit(&g->g_pub_lock);
 +}
