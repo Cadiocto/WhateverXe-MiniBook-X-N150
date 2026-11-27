@@ -346,9 +346,14 @@ def main() -> None:
                              "diagnose-ax101.sh", "rollback.sh", "SHA256SUMS",
                              "manifest.json", "build-provenance.txt"):
                 require(required in names, "bundle entry missing after zip: " + required)
+            operational_scripts = {
+                "verify-bundle.sh", "preflight.sh", "install-manual.sh",
+                "register-driver.sh", "diagnose-ax101.sh", "rollback.sh",
+                "connect-wifi.py"
+            }
             for zi in zf.infolist():
                 mode = (zi.external_attr >> 16) & 0o777
-                if zi.filename.endswith(".sh") or zi.filename == "connect-wifi.py":
+                if zi.filename in operational_scripts:
                     require(mode & 0o111, "executable bit missing in ZIP: " + zi.filename)
         (art / "RUN106-ARTIFACT-SHA256SUMS.txt").write_text(
             "MODULE_SHA256=" + sha256(module) + "\n" +
