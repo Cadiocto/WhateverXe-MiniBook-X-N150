@@ -5,6 +5,7 @@ on:
     branches: [ax101-r5-integration-validation]
     paths:
       - "r5-integration-transfer/**"
+      - "wifi-ax101/ci/**"
       - ".github/workflows/wifi-ax101-openindiana.yml"
   workflow_dispatch:
 
