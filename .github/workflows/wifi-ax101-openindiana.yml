@@ -434,6 +434,50 @@ jobs:
             test "$replay_rc" -eq 0
             test -s "$ART/r5-integration-replay/final-result.txt"
             grep -Fq 'RUN80_R5_INTEGRATION_REPLAY=PASS' "$ART/r5-integration-replay/final-result.txt"
+
+            # RUN87: apply the exact-count post-generation adapter after replay.
+            ax101_diag_stage RUN87_ADAPTATION
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/ci/apply-run87-illumos-adaptation.py" --source-root "$SRC"
+            ax101_diag_pass RUN87_ADAPTATION
+
+            ax101_diag_stage GENERATOR_REPLAY
+            cd "$SRC/src/ports/wifi/iwx"
+            bash ./gen-illumos-src.sh --update
+            digest -a sha256 patches/if_iwx.illumos.patch > "$ART/run87-canonical-iwx-patch.sha256"
+            bash ./gen-illumos-src.sh
+            digest -a sha256 build/if_iwx_illumos.c > "$ART/run87-generated-iwx-source-first.sha256"
+            bash ./gen-illumos-src.sh
+            digest -a sha256 build/if_iwx_illumos.c > "$ART/run87-generated-iwx-source-second.sha256"
+            cmp -s "$ART/run87-generated-iwx-source-first.sha256" "$ART/run87-generated-iwx-source-second.sha256"
+            cp patches/if_iwx.illumos.patch "$ART/run87-if_iwx.illumos.patch"
+            cp build/if_iwx_illumos.c "$ART/run87-if_iwx_illumos.c"
+            digest -a sha256 "$ART/run87-if_iwx.illumos.patch" > "$ART/run87-if_iwx.illumos.patch.sha256"
+            digest -a sha256 "$ART/run87-if_iwx_illumos.c" > "$ART/run87-if_iwx_illumos.c.sha256"
+            cd "$SRC"
+            ax101_diag_pass GENERATOR_REPLAY
+
+            ax101_diag_stage RUN87_SOURCE_STATIC
+            python3 "$GITHUB_WORKSPACE/wifi-ax101/ci/check-run87-illumos-adaptation.py" --source-root "$SRC" --self-test
+            test -s /usr/include/sys/callo.h
+            grep -Eq '^[[:space:]]*#define[[:space:]]+CALLOUT_FLAG_ABSOLUTE[[:space:]]+0x2' /usr/include/sys/callo.h
+            grep -q 'cv_timedwait_hires' /usr/include/sys/condvar.h
+            ax101_diag_pass RUN87_SOURCE_STATIC
+
+            ax101_diag_stage RUN87_HOST_REGRESSION
+            cd "$SRC/src/ports/wifi/iwx"
+            set +e
+            ax101_diag_command run87-mbuf-regression env CC="$CC" bash ./run-mbuf-tests.sh 2>&1 | tee "$ART/run87-mbuf-regression.log"
+            run87_mbuf_rc=${PIPESTATUS[0]}
+            set -e
+            test "$run87_mbuf_rc" -eq 0
+            set +e
+            ax101_diag_command run87-dma-regression env CC="$CC" bash ../iwm/run-dma-tests.sh 2>&1 | tee "$ART/run87-dma-regression.log"
+            run87_dma_rc=${PIPESTATUS[0]}
+            set -e
+            test "$run87_dma_rc" -eq 0
+            cd "$SRC"
+            ax101_diag_pass RUN87_HOST_REGRESSION
+
             echo "CI_SOURCE_IDENTITY_VERIFIED=PASS"
             echo "PRODUCTION_SOURCE_ROOT=$SRC/src/ports/wifi/iwx"
             echo "PRODUCTION_SOURCE_ROOT=$SRC/src/ports/wifi/iwx" > "$ART/production-source-root.txt"

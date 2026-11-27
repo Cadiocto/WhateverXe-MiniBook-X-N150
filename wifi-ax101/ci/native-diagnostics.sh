@@ -10,7 +10,9 @@ ax101_diag_init() {
     AX101_STAGE=VM_ENVIRONMENT_INITIALIZATION
     AX101_LAST_COMMAND='<none>'
     AX101_LAST_RC=0
-    for s in VM_ENVIRONMENT_INITIALIZATION PINNED_UPSTREAM_CHECKOUT CANDIDATE_TRANSFER_VERIFICATION PATCH_STACK_APPLICATION INTEGRATION_REPLAY_VALIDATION SOURCE_STATIC_TESTS HOST_MODEL_TESTS NATIVE_BUILD_PREPARATION EXACT_NATIVE_GMAKE NATIVE_COMPILATION NATIVE_LINKING ELF_MODULE_INSPECTION ARTIFACT_PACKAGING; do
+    printf '%s\n' '<none>' > "$AX101_ART/last-command.txt"
+    printf '0\n' > "$AX101_ART/last-command-exit-code.txt"
+    for s in VM_ENVIRONMENT_INITIALIZATION PINNED_UPSTREAM_CHECKOUT CANDIDATE_TRANSFER_VERIFICATION PATCH_STACK_APPLICATION INTEGRATION_REPLAY_VALIDATION RUN87_ADAPTATION GENERATOR_REPLAY RUN87_SOURCE_STATIC RUN87_HOST_REGRESSION SOURCE_STATIC_TESTS HOST_MODEL_TESTS NATIVE_BUILD_PREPARATION EXACT_NATIVE_GMAKE NATIVE_COMPILATION NATIVE_LINKING ELF_MODULE_INSPECTION ARTIFACT_PACKAGING; do
         printf '%s\tNOT_RUN\t%s\n' "$s" "$(date -u +%FT%TZ)" >> "$AX101_ART/stage-status.tsv"
     done
     exec > >(tee -a "$AX101_ART/native-openindiana-build.log" "$AX101_ART/native-stdout.log") 2> >(tee -a "$AX101_ART/native-openindiana-build.log" "$AX101_ART/native-stderr.log" >&2)
@@ -26,6 +28,8 @@ ax101_diag_stage() {
     AX101_STAGE=$1
     AX101_LAST_COMMAND='<none>'
     AX101_LAST_RC=0
+    printf '%s\n' '<none>' > "$AX101_ART/last-command.txt"
+    printf '0\n' > "$AX101_ART/last-command-exit-code.txt"
     printf '%s\tRUNNING\t%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" >> "$AX101_ART/stage-status.tsv"
     printf 'AX101_STAGE=%s STATUS=RUNNING UTC=%s PWD=%s PID=%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" "$PWD" "$"
 }
@@ -36,16 +40,29 @@ ax101_diag_pass() {
 ax101_diag_command() {
     label=$1; shift
     AX101_LAST_COMMAND="$label: $(printf '%q ' "$@")"
+    printf '%s\n' "$AX101_LAST_COMMAND" > "$AX101_ART/last-command.txt"
+    printf '0\n' > "$AX101_ART/last-command-exit-code.txt"
     start=$(date +%s)
     printf 'COMMAND_BEGIN utc=%s stage=%s cwd=%s pid=%s command=%s\n' "$(date -u +%FT%TZ)" "$AX101_STAGE" "$PWD" "$$" "$AX101_LAST_COMMAND"
     if "$@"; then rc=0; else rc=$?; fi
     elapsed=$(($(date +%s) - start))
     AX101_LAST_RC=$rc
+    printf '%s\n' "$AX101_LAST_COMMAND" > "$AX101_ART/last-command.txt"
+    printf '%s\n' "$rc" > "$AX101_ART/last-command-exit-code.txt"
     printf 'COMMAND_END utc=%s stage=%s command=%s exit_code=%s elapsed_seconds=%s status=%s\n' "$(date -u +%FT%TZ)" "$AX101_STAGE" "$label" "$rc" "$elapsed" "$([ "$rc" -eq 0 ] && echo PASS || echo FAIL)"
     return "$rc"
 }
+ax101_diag_sync_command_state() {
+    if [ -s "$AX101_ART/last-command.txt" ]; then
+        IFS= read -r AX101_LAST_COMMAND < "$AX101_ART/last-command.txt"
+    fi
+    if [ -s "$AX101_ART/last-command-exit-code.txt" ]; then
+        IFS= read -r AX101_LAST_RC < "$AX101_ART/last-command-exit-code.txt"
+    fi
+}
 ax101_diag_on_error() {
     rc=$1; cmd=$2
+    ax101_diag_sync_command_state
     # Preserve the wrapped command/exit code when a tee in the outer pipeline
     # is the shell's BASH_COMMAND at ERR-trap time.
     if [ "${AX101_LAST_RC:-0}" -eq 0 ] || [ -z "${AX101_LAST_COMMAND:-}" ] || [ "$AX101_LAST_COMMAND" = '<none>' ]; then
@@ -61,6 +78,7 @@ ax101_diag_on_error() {
 }
 ax101_diag_finish() {
     rc=$1
+    ax101_diag_sync_command_state
     set +e
     trap - ERR
     if [ "$rc" -eq 0 ]; then ax101_diag_pass "$AX101_STAGE"; else printf '%s\tFAIL\t%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" >> "$AX101_ART/stage-status.tsv"; fi
