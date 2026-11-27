@@ -1,0 +1,10 @@
+--- a/wifi-ax101/tests/run77-contract-model.py
++++ b/wifi-ax101/tests/run77-contract-model.py
+@@ -1,6 +1,8 @@
+ #!/usr/bin/env python3
+ """Host-side lifecycle model for RUN #77; this is not an illumos DDI test."""
+ 
++from __future__ import annotations
++
+ from dataclasses import dataclass, field
+ import unittest

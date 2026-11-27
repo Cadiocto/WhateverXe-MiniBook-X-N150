@@ -191,6 +191,56 @@ jobs:
             echo "CI_REPLAY_ORDER_OVERLAY=PASS"
           } | tee "$ART/ci-replay-order-overlay.txt"
 
+          # OpenIndiana Hipster's supported python3 is 3.9. Preserve postponed
+          # annotation evaluation in the RUN77 host model; this is test-only.
+          PY39_PATCH="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0003-run77-model-python39-annotations.patch"
+          RUN77_MODEL="$INPUTS/wifi-ax101/tests/run77-contract-model.py"
+          EXPECTED_PY39_PATCH_SHA="105db51b3ef4540275cffeaec4babfdf42df8639b20ac0c8d65f0fa333fbc766"
+          EXPECTED_RUN77_BEFORE="1bc1ea95393f6969c2f03a7dd8b0be69fa235e9173970506aacec5dc76d95791"
+          EXPECTED_RUN77_AFTER="c7d68a2bbf612b84b4f16cfaa4f45d05d9faf894e28f12ee495a0b71efe7a94b"
+          test -s "$PY39_PATCH"
+          printf '%s  %s\n' "$EXPECTED_PY39_PATCH_SHA" "$PY39_PATCH" | sha256sum -c -
+          test "$(sha256sum "$RUN77_MODEL" | awk '{print $1}')" = "$EXPECTED_RUN77_BEFORE"
+          patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$PY39_PATCH"
+          patch --batch --forward --fuzz=0 -d "$INPUTS" -p1 < "$PY39_PATCH"
+          test "$(sha256sum "$RUN77_MODEL" | awk '{print $1}')" = "$EXPECTED_RUN77_AFTER"
+          python3 - "$RUN77_MODEL" <<'PY'
+          import ast, sys
+          from pathlib import Path
+          model = Path(sys.argv[1])
+          source = model.read_text()
+          tree = ast.parse(source, filename=str(model))
+          has_future = any(
+              isinstance(node, ast.ImportFrom)
+              and node.module == "__future__"
+              and any(alias.name == "annotations" for alias in node.names)
+              for node in tree.body
+          )
+          has_union_annotation = any(
+              isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr)
+              for node in ast.walk(tree)
+          )
+          if not has_future or not has_union_annotation:
+              raise SystemExit("RUN77 Python 3.9 annotation compatibility gate failed")
+          print("RUN77_MODEL_FUTURE_ANNOTATIONS=PASS")
+          print("RUN77_MODEL_PEP604_ANNOTATION_PRESENT=PASS")
+          if sys.version_info < (3, 10):
+              mutant = source.replace("from __future__ import annotations\\n", "", 1)
+              try:
+                  exec(compile(mutant, str(model) + ".mutant", "exec"),
+                       {"__name__": "__run77_python39_mutant__"})
+              except TypeError:
+                  print("RUN77_PY39_NEGATIVE_CONTROL=CAUGHT")
+              else:
+                  raise SystemExit("RUN77 Python 3.9 negative control was not caught")
+          PY
+          {
+            echo "CI_ONLY_PYTHON39_OVERLAY=0003-run77-model-python39-annotations.patch"
+            echo "CI_PYTHON39_PATCH_SHA256=$EXPECTED_PY39_PATCH_SHA"
+            echo "RUN77_MODEL_SHA256=$EXPECTED_RUN77_AFTER"
+            echo "CI_RUN77_PYTHON39_COMPAT=PASS"
+          } | tee "$ART/ci-python39-compatibility.txt"
+
           CANDIDATE_MANIFEST="$INPUTS/INTEGRATION-CANDIDATE-MANIFEST.tsv"
           test -s "$CANDIDATE_MANIFEST"
           test "$(wc -l < "$CANDIDATE_MANIFEST" | tr -d ' ')" = "4503"
@@ -352,6 +402,8 @@ jobs:
             digest -a sha256 "$DLS_DST" > "$ART/dls-shim.sha256"
 
             python3 "$INPUTS/wifi-ax101/tests/test-connect-wifi.py" 2>&1 | tee "$ART/connect-wifi-tests.txt"
+            python3 --version | tee "$ART/target-python-version.txt"
+            echo "RUN77_MODEL_PYTHON39_COMPAT=PRECHECKED_BY_TRANSFER_STEP"
             echo "NATIVE_SOURCE_ROOT_CONFIRMED=$SRC/src/ports/wifi/iwx"
             cd "$SRC/src/ports/wifi/iwx"
             gmake -f Makefile.illumos clean
