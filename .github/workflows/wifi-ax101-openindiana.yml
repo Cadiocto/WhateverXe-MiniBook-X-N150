@@ -285,7 +285,7 @@ jobs:
               "net/wpa.h": "82c4fd468a5f623411a98a814c40ba3d9ac4c87b",
           }
           for rel, want in expected.items():
-              data = (root / rel).read_bytes().replace(b"\\r\\n", b"\\n")
+              data = (root / rel).read_bytes().replace(bytes([13, 10]), bytes([10]))
               blob = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\\0" + data).hexdigest()
               if blob != want:
                   raise SystemExit(f"pinned illumos header mismatch: {rel}: {blob} != {want}")
