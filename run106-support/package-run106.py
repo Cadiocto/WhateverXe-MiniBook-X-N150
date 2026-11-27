@@ -52,6 +52,13 @@ def main() -> None:
             "October 30 ISO checksum does not match the official sidecar")
     require(args.builder_commit == "25a7144f849eec4c6c31303b41dfd2593ef59cfd",
             "OpenIndiana builder revision is not the reviewed pin")
+    builder_prep = art / "builder-preparation.txt"
+    require(builder_prep.is_file(), "builder preparation provenance is missing")
+    builder_prep_text = read(builder_prep)
+    require("POSTBUILD_ORIGINAL_GIT_BLOB=557c8e0217e5dc69612022d5b1e6c57cb13ca6ec" in builder_prep_text,
+            "postBuild hook base blob did not match the reviewed builder")
+    require("POSTBUILD_MODIFIED_SHA256=" in builder_prep_text and "PKG_UPDATE=SKIPPED" in builder_prep_text,
+            "postBuild kernel-preserving change is not recorded")
 
     guest_tar = art / "guest-artifacts.tar.gz"
     require(guest_tar.is_file(), "guest-artifacts.tar.gz was not received")
@@ -173,6 +180,8 @@ def main() -> None:
                 shutil.copy2(src, package / "evidence" / name)
         shutil.copy2(preflight_upload, package / "evidence/target-kernel-preflight-received.txt")
         shutil.copy2(art / "runner-host-kernel.txt", package / "evidence/runner-host-kernel.txt")
+        shutil.copy2(builder_prep, package / "evidence/builder-preparation.txt")
+        shutil.copy2(evidence("BUILD-IDENTITY.txt"), package / "evidence/BUILD-IDENTITY.txt")
 
         compiler = read(guest / "runner-environment.txt")
         provenance = [
