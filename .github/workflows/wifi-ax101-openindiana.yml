@@ -248,14 +248,16 @@ jobs:
           TREE_CHECKER="$INPUTS/wifi-ax101/tests/verify-integration-tree.py"
           TREE_CHECKER_TEST="$INPUTS/wifi-ax101/tests/test-verify-integration-tree.py"
           INTEGRATION_WRAPPER="$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh"
-          EXPECTED_TREE_PATCH_SHA="ed0f5c4668de6ba227cea9564ed4755a49b13f611650e0a07e93063381d6eaa1"
+          EXPECTED_TREE_PATCH_BLOB="6a5f6e61e2f618e357f85e391752819c389df5d5"
           EXPECTED_TREE_CHECKER_BEFORE="2755a378ec9c002164b5c9e2a7e7ebffbe05bb28c08019a99862f6021405442f"
           EXPECTED_TREE_CHECKER_AFTER="e19c973bbaf229118d0674cf894e0fcf716e323d4c8bb86cb2c287ffad5834b0"
           EXPECTED_TREE_TEST_SHA="09fa2c2218bc75cbfd66e77eeba1f66aa398261dacb95d1eeb1a7d0df3c8a37a"
           EXPECTED_WRAPPER_BEFORE="d1c7d6d205b4c2268c1a987822d97c6ea1562d76d15f0972b10c83e907679dbd"
           EXPECTED_WRAPPER_AFTER="b2edd590caf9aef817cfb2bf7e07bf107ba6c221f648c534e4c26613ee2d0690"
           test -s "$TREE_PATCH"
-          printf '%s  %s\n' "$EXPECTED_TREE_PATCH_SHA" "$TREE_PATCH" | sha256sum -c -
+          ACTUAL_TREE_PATCH_BLOB=$(git -C "$GITHUB_WORKSPACE" rev-parse "$GITHUB_SHA:r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch")
+          test "$ACTUAL_TREE_PATCH_BLOB" = "$EXPECTED_TREE_PATCH_BLOB"
+          sha256sum "$TREE_PATCH" | tee "$ART/exact-tree-overlay.sha256"
           test "$(sha256sum "$TREE_CHECKER" | awk '{print $1}')" = "$EXPECTED_TREE_CHECKER_BEFORE"
           test "$(sha256sum "$INTEGRATION_WRAPPER" | awk '{print $1}')" = "$EXPECTED_WRAPPER_BEFORE"
           patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$TREE_PATCH"
