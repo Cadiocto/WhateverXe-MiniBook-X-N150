@@ -1,0 +1,22 @@
+--- a/wifi-ax101/tests/compile-n80211-taskq-wait.py
++++ b/wifi-ax101/tests/compile-n80211-taskq-wait.py
+@@ -101,9 +101,17 @@
+         if r.returncode:
+             print(r.stderr)
+             raise SystemExit('private symbol compile fixture failed')
+-        syms = subprocess.run([nm, '--defined-only', str(obj)], text=True,
++        # POSIX nm portable output is supported by both illumos /usr/bin/nm
++        # and GNU nm. GNU-only --defined-only is not accepted by illumos nm.
++        syms = subprocess.run([nm, '-P', str(obj)], text=True,
+                               capture_output=True, check=True).stdout
+-        if 'n80211_taskq_destroy' not in syms or re.search(r'\btaskq_destroy$', syms, re.M):
++        defined = set()
++        for line in syms.splitlines():
++            fields = line.split()
++            # POSIX output is: name type value [size]. U denotes undefined.
++            if len(fields) >= 2 and fields[1].upper() != 'U':
++                defined.add(fields[0])
++        if 'n80211_taskq_destroy' not in defined or 'taskq_destroy' in defined:
+             print(syms)
+             raise SystemExit('private custom destroy symbol not produced')
+     print('PASS actual n80211_symrename.h produces n80211_taskq_destroy symbol')

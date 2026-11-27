@@ -143,6 +143,28 @@ jobs:
           print("TRANSFER_MANIFEST=PASS")
           PY
 
+          # CI-only tool portability overlay: the R5 fixture must use POSIX nm -P
+          # on OpenIndiana instead of GNU-only --defined-only. The immutable
+          # transfer bundle is fully verified above before this separate overlay.
+          OVERLAY="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0001-nm-posix-portability.patch"
+          ORIGINAL_HELPER="$INPUTS/wifi-ax101/tests/compile-n80211-taskq-wait.py"
+          EXPECTED_OVERLAY_SHA="6e0d638baa1531e87b5813c084e06d4d08ba27802420d869e8acd38112f2fb9c"
+          EXPECTED_HELPER_SHA="51176a485cb9b09efe4ca98c4eb3a14476b4e926fd6dc730e199a77b6bcd05a9"
+          EXPECTED_ORIGINAL_HELPER_SHA="5c20e790ef2d4f0a03862bd8f357d90395e8f79751ba4377980ba6788fae5b97"
+          test -s "$OVERLAY"
+          printf '%s  %s\n' "$EXPECTED_OVERLAY_SHA" "$OVERLAY" | sha256sum -c -
+          test "$(sha256sum "$ORIGINAL_HELPER" | awk '{print $1}')" = "$EXPECTED_ORIGINAL_HELPER_SHA"
+          patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$OVERLAY"
+          patch --batch --forward --fuzz=0 -d "$INPUTS" -p1 < "$OVERLAY"
+          test "$(sha256sum "$ORIGINAL_HELPER" | awk '{print $1}')" = "$EXPECTED_HELPER_SHA"
+          {
+            echo "CI_ONLY_TEST_HARNESS_OVERLAY=0001-nm-posix-portability.patch"
+            echo "CI_OVERLAY_SHA256=$EXPECTED_OVERLAY_SHA"
+            echo "ORIGINAL_HARNESS_SHA256=$EXPECTED_ORIGINAL_HELPER_SHA"
+            echo "PATCHED_HARNESS_SHA256=$EXPECTED_HELPER_SHA"
+            echo "CI_TEST_HARNESS_OVERLAY=PASS"
+          } | tee "$ART/ci-portability-overlay.txt"
+
           CANDIDATE_MANIFEST="$INPUTS/INTEGRATION-CANDIDATE-MANIFEST.tsv"
           test -s "$CANDIDATE_MANIFEST"
           test "$(wc -l < "$CANDIDATE_MANIFEST" | tr -d ' ')" = "4503"
