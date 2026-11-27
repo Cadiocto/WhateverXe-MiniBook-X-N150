@@ -149,6 +149,15 @@ def main() -> None:
                 "scan-fix negative controls are not 10/10 PASS")
         require("SCANFIX_PATCH_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80" in scan_identity,
                 "scan-fix patch identity mismatch")
+        require("TARGET_KERNEL=illumos-c893fd03ad" in scan_identity,
+                "scan-fix source evidence does not name the exact target kernel")
+
+        mbuf_run107 = read(evidence("run107-mbuf-regression.log"))
+        dma_run107 = read(evidence("run107-dma-regression.log"))
+        require("sabotages caught: 20/20" in mbuf_run107,
+                "post-scanfix mblk negative controls did not all pass")
+        require("sabotages caught: 3/3" in dma_run107,
+                "post-scanfix DMA negative controls did not all pass")
 
         module = evidence("iwx")
         firmware = evidence("iwx-so-a0-hr-b0-77")
