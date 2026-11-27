@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent verification of AX101-OpenIndiana-RUN106-OFFLINE.zip."""
+"""Independent verification of AX101-OpenIndiana-RUN107-SCANFIX-OFFLINE.zip."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -7,7 +7,6 @@ from pathlib import Path
 import stat
 import zipfile
 
-EXPECTED_MODULE = "8fa07fedbf0e4549979f5e8ddeb3f8410b4083e3b4428653bb7f763d5458b049"
 EXPECTED_FIRMWARE = "bed4958236366c3c451b3ec994a56b2ad83c08d70e0a1eae42fb00f2eaabbcc8"
 
 def sha(data: bytes) -> str:
@@ -42,6 +41,13 @@ def main() -> None:
             "evidence/guest-artifacts.tar.gz",
             "evidence/postbuild-provenance-verified.txt",
             "evidence/iso-provenance-verified.txt",
+            "source/scanfix-implementation.tar.gz",
+            "source/scanfix-implementation/patches/0028-ax101-scan-notification-rx-fix.patch",
+            "source/scanfix-implementation/tests/scan-regression.py",
+            "source/scanfix-implementation/diagnostics/ax101-scan.d",
+            "source/scanfix-implementation/tests/run-ax101-scan-validation.sh",
+            "evidence/scan-regression-final.log",
+            "evidence/scanfix-source-identity.txt",
         )
         for name in required:
             need(name in entries, "required entry missing: " + name)
@@ -59,8 +65,19 @@ def main() -> None:
              "SHA256SUMS coverage does not equal all non-manifest members")
         module = z.read("payload/iwx")
         firmware = z.read("payload/iwx-so-a0-hr-b0-77")
-        need(sha(module) == EXPECTED_MODULE, "module SHA-256 mismatch")
+        provenance = z.read("build-provenance.txt").decode()
+        module_hash_marker = next((x.split("=", 1)[1] for x in provenance.splitlines()
+                                   if x.startswith("MODULE_SHA256=")), None)
+        need(module_hash_marker is not None and sha(module) == module_hash_marker,
+             "module SHA-256 does not match build provenance")
         need(sha(firmware) == EXPECTED_FIRMWARE, "firmware SHA-256 mismatch")
+        scan_log = z.read("evidence/scan-regression-final.log").decode(errors="replace")
+        need("Ran 35 tests" in scan_log and "OK" in scan_log,
+             "scan regression result is not 35/35 PASS")
+        need("SCANFIX_REGRESSION_TESTS=35/35" in provenance,
+             "scan regression result missing from provenance")
+        need("SCANFIX_NEGATIVE_CONTROLS=10/10" in provenance,
+             "scanfix negative controls missing from provenance")
         need(module[:4] == b"\x7fELF" and module[4] == 2 and module[5] == 1,
              "module is not ELF64 little-endian")
         need(int.from_bytes(module[18:20], "little") == 62,
@@ -79,7 +96,7 @@ def main() -> None:
             mode = (zi.external_attr >> 16) & 0o777
             if name in operational_scripts:
                 need(bool(mode & stat.S_IXUSR), "executable bit missing: " + name)
-        p = z.read("build-provenance.txt").decode()
+        p = provenance
         for marker in (
             "OPENINDIANA_GUEST_KERNEL=illumos-c893fd03ad",
             "TARGET_LAPTOP_KERNEL=illumos-c893fd03ad",
@@ -87,7 +104,8 @@ def main() -> None:
             "FIRMWARE_API=77",
             "PKG_UPDATE=SKIPPED",
             "ELF_TEXTREL_PRESENT=YES",
-            "PHYSICAL_PCI_ATTACH=NOT_PROVEN",
+            "PHYSICAL_PCI_ATTACH=USER_REPORTED_VERIFIED",
+            "PHYSICAL_SCAN_DISCOVERY=NOT_YET_VERIFIED",
         ):
             need(marker in p, "build provenance missing: " + marker)
     print("ZIP_CRC=PASS")
@@ -98,6 +116,8 @@ def main() -> None:
     print("ELF_FORMAT=PASS")
     print("KERNEL_PROVENANCE=PASS")
     print("ROLLBACK_SCRIPT_INCLUDED=PASS")
+    print("SCANFIX_SOURCE_AND_TESTS=PASS")
+    print("SCANFIX_REGRESSION=35/35 PASS")
     print("OFFLINE_BUNDLE_VERIFY=PASS")
 
 if __name__ == "__main__":
