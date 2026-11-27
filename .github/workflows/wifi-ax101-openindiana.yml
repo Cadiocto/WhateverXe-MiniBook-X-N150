@@ -176,7 +176,7 @@ jobs:
           EXPECTED_BASE_AFTER="e5c494cba7a6108c676f67f6eb6cba8ee3eb193dc6b15454985771f201288266"
           EXPECTED_INTEGRATION_AFTER="d53e37168f7a44c3ec2e5d63d45f985458be9615fecfdff57ec91384feff97f9"
           test -s "$ORDER_PATCH"
-          printf '%s  %s\\n' "$EXPECTED_ORDER_PATCH_SHA" "$ORDER_PATCH" | sha256sum -c -
+          printf '%s  %s\n' "$EXPECTED_ORDER_PATCH_SHA" "$ORDER_PATCH" | sha256sum -c -
           test "$(sha256sum "$BASE_REPLAY_SCRIPT" | awk '{print $1}')" = "$EXPECTED_BASE_BEFORE"
           test "$(sha256sum "$INTEGRATION_REPLAY_SCRIPT" | awk '{print $1}')" = "$EXPECTED_INTEGRATION_BEFORE"
           patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$ORDER_PATCH"
