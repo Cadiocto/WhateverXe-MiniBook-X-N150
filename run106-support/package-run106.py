@@ -57,8 +57,24 @@ def main() -> None:
     builder_prep_text = read(builder_prep)
     require("POSTBUILD_ORIGINAL_GIT_BLOB=557c8e0217e5dc69612022d5b1e6c57cb13ca6ec" in builder_prep_text,
             "postBuild hook base blob did not match the reviewed builder")
-    require("POSTBUILD_MODIFIED_SHA256=" in builder_prep_text and "PKG_UPDATE=SKIPPED" in builder_prep_text,
-            "postBuild kernel-preserving change is not recorded")
+    require("POSTBUILD_MODIFIED_SHA256=f014902780cae2a5c00f3309ed728c802cc664257d7a025e28432bcc000e4c26" in builder_prep_text,
+            "postBuild modified SHA-256 does not match the pinned transformation")
+    postbuild_proof = art / "postbuild-provenance-verified.txt"
+    iso_proof = art / "iso-provenance-verified.txt"
+    require(postbuild_proof.is_file() and iso_proof.is_file(),
+            "verified postBuild/ISO provenance handoff is missing")
+    postbuild_text = read(postbuild_proof)
+    iso_text = read(iso_proof)
+    for marker in ("POSTBUILD_HOOK_INVOKED=PASS", "POSTBUILD_HOOK_EXECUTED=PASS",
+                   "PKG_UPDATE=SKIPPED",
+                   "POSTBUILD_ORIGINAL_GIT_BLOB=557c8e0217e5dc69612022d5b1e6c57cb13ca6ec",
+                   "POSTBUILD_MODIFIED_SHA256=f014902780cae2a5c00f3309ed728c802cc664257d7a025e28432bcc000e4c26"):
+        require(marker in postbuild_text, "verified postBuild proof is missing: " + marker)
+    for marker in ("ISO_PROVENANCE_STATUS=VERIFIED_FROM_RUN_LOG",
+                   "OPENINDIANA_ISO_VERIFICATION=PASS",
+                   "ISO_CHECKSUM_COMMAND_RESULT=build/openindiana.iso.download: OK",
+                   "PKG_UPDATE=SKIPPED"):
+        require(marker in iso_text, "verified ISO provenance is missing: " + marker)
 
     guest_tar = art / "guest-artifacts.tar.gz"
     require(guest_tar.is_file(), "guest-artifacts.tar.gz was not received")
@@ -127,6 +143,8 @@ def main() -> None:
         module = evidence("iwx")
         firmware = evidence("iwx-so-a0-hr-b0-77")
         license_file = evidence("iwx-license")
+        require(sha256(module) == "8fa07fedbf0e4549979f5e8ddeb3f8410b4083e3b4428653bb7f763d5458b049",
+                "native module SHA-256 differs from the verified RUN106 module")
         require(sha256(firmware) == FIRMWARE_SHA,
                 "firmware image hash differs from the fixed API-77 image")
         require("redistribution" in read(license_file).lower(),
@@ -181,7 +199,13 @@ def main() -> None:
         shutil.copy2(preflight_upload, package / "evidence/target-kernel-preflight-received.txt")
         shutil.copy2(art / "runner-host-kernel.txt", package / "evidence/runner-host-kernel.txt")
         shutil.copy2(builder_prep, package / "evidence/builder-preparation.txt")
+        shutil.copy2(postbuild_proof, package / "evidence/postbuild-provenance-verified.txt")
+        shutil.copy2(iso_proof, package / "evidence/iso-provenance-verified.txt")
+        shutil.copy2(art / "evidence/job-log-provenance-excerpt.txt", package / "evidence/job-log-provenance-excerpt.txt")
+        shutil.copy2(art / "evidence/vm_postBuild.original.sh", package / "evidence/vm_postBuild.original.sh")
+        shutil.copy2(art / "evidence/vm_postBuild.modified.sh", package / "evidence/vm_postBuild.modified.sh")
         shutil.copy2(evidence("BUILD-IDENTITY.txt"), package / "evidence/BUILD-IDENTITY.txt")
+        shutil.copy2(guest_tar, package / "evidence/guest-artifacts.tar.gz")
 
         compiler = read(guest / "runner-environment.txt")
         provenance = [
@@ -193,6 +217,13 @@ def main() -> None:
             "PINNED_SOLNIX_COMMIT=" + SOLNIX,
             "PINNED_ILLUMOS_GATE_COMMIT=" + ILLUMOS,
             "OPENINDIANA_BUILDER_COMMIT=" + args.builder_commit,
+            "SOURCE_GITHUB_ARTIFACT_ID=15229533467",
+            "SOURCE_GITHUB_ARTIFACT_SHA256=107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11",
+            "POSTBUILD_HOOK_EXECUTED=PASS",
+            "PKG_UPDATE=SKIPPED",
+            "POSTBUILD_MODIFIED_SHA256=f014902780cae2a5c00f3309ed728c802cc664257d7a025e28432bcc000e4c26",
+            "OPENINDIANA_ISO_VERIFICATION=PASS",
+            "OPENINDIANA_ISO_SHA256=" + args.iso_sha256,
             "OPENINDIANA_INSTALL_MEDIA=OI-hipster-text-20261030.iso",
             "OPENINDIANA_INSTALL_MEDIA_SHA256=" + args.iso_sha256,
             "RUNNER_HOST_KERNEL=" + args.runner_kernel.replace("\n", " "),
@@ -249,6 +280,11 @@ def main() -> None:
             "hardware": {"vendor_device": "8086:54F0", "subsystem": "8086:0244"},
             "firmware": {"api": 77, "filename": "iwx-so-a0-hr-b0-77", "sha256": FIRMWARE_SHA},
             "module": {"sha256": sha256(module), "elf_class": "ELF64", "machine": "EM_X86_64"},
+            "source_github_artifact_id": 15229533467,
+            "source_github_artifact_sha256": "107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11",
+            "postbuild_kernel_preservation_verified": True,
+            "iso_sha256_verified_in_original_job_log": True,
+            "guest_evidence_archive_sha256": sha256(guest_tar),
             "source_commit": args.commit,
             "run_id": args.run_id,
             "textrel_present": textrel_present,
