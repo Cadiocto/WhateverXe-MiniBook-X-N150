@@ -31,7 +31,7 @@ ax101_diag_stage() {
     printf '%s\n' '<none>' > "$AX101_ART/last-command.txt"
     printf '0\n' > "$AX101_ART/last-command-exit-code.txt"
     printf '%s\tRUNNING\t%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" >> "$AX101_ART/stage-status.tsv"
-    printf 'AX101_STAGE=%s STATUS=RUNNING UTC=%s PWD=%s PID=%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" "$PWD" "$"
+    printf 'AX101_STAGE=%s STATUS=RUNNING UTC=%s PWD=%s PID=%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" "$PWD" "$$"
 }
 ax101_diag_pass() {
     printf '%s\tPASS\t%s\n' "$1" "$(date -u +%FT%TZ)" >> "$AX101_ART/stage-status.tsv"
