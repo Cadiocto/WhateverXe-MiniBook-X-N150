@@ -207,6 +207,19 @@ def main() -> None:
         shutil.copy2(evidence("BUILD-IDENTITY.txt"), package / "evidence/BUILD-IDENTITY.txt")
         shutil.copy2(guest_tar, package / "evidence/guest-artifacts.tar.gz")
 
+        mbuf_log = read(evidence("run87-mbuf-regression.log"))
+        dma_log = read(evidence("run87-dma-regression.log"))
+        wifi_log = read(evidence("connect-wifi-tests.txt"))
+        replay_log = read(evidence("r5-integration-replay/final-result.txt"))
+        require("exit_code=0" in mbuf_log and "sabotages caught: 20/20" in mbuf_log,
+                "mbuf regression evidence is not PASS")
+        require("exit_code=0" in dma_log and "sabotages caught: 3/3" in dma_log,
+                "DMA regression evidence is not PASS")
+        require("Ran 6 tests" in wifi_log and "OK" in wifi_log,
+                "connect-wifi test evidence is not 6/6 PASS")
+        require("RUN80_R5_INTEGRATION_REPLAY=PASS" in replay_log,
+                "R5 integration replay evidence is not PASS")
+
         compiler = read(guest / "runner-environment.txt")
         provenance = [
             "AX101_RUN=RUN106",
@@ -221,6 +234,8 @@ def main() -> None:
             "SOURCE_GITHUB_ARTIFACT_SHA256=107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11",
             "POSTBUILD_HOOK_EXECUTED=PASS",
             "PKG_UPDATE=SKIPPED",
+            "RUN106_PACKAGE_RECOVERY=PACKAGING_ONLY",
+            "PHYSICAL_PCI_ATTACH=NOT_PROVEN",
             "POSTBUILD_MODIFIED_SHA256=f014902780cae2a5c00f3309ed728c802cc664257d7a025e28432bcc000e4c26",
             "OPENINDIANA_ISO_VERIFICATION=PASS",
             "OPENINDIANA_ISO_SHA256=" + args.iso_sha256,
