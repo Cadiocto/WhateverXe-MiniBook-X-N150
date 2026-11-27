@@ -10,7 +10,7 @@ case "$BACKUP_DIR" in
 esac
 MODULE_DST="/kernel/drv/amd64/iwx"
 FW_DST="/kernel/firmware/iwx/iwx-so-a0-hr-b0-77"
-MODID=$(modinfo -c 2>/dev/null | awk '$3 == "iwx" && $4 == "LOADED/INSTALLED" {print $2; exit}')
+MODID=$(modinfo -c 2>/dev/null | awk '$3 == "iwx" && $4 == "LOADED/INSTALLED" {print $1; exit}')
 if [ -n "$MODID" ]; then
     echo "Attempting controlled modunload of iwx module id $MODID"
     modunload -i "$MODID" || {
