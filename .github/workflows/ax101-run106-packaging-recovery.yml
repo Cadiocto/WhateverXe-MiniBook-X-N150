@@ -44,15 +44,24 @@ jobs:
           echo "107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11  source-run106-original.zip" | sha256sum -c -
           unzip -q source-run106-original.zip -d source-run106
 
-          curl -fLsS --retry 3 --retry-delay 2 \
+          curl --compressed -fLsS --retry 3 --retry-delay 2 \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/140711432302/logs" \
-            -o source-run106-logs/original-job-logs.zip
-          unzip -q source-run106-logs/original-job-logs.zip -d source-run106-logs/unpacked
-          LOG_FILE="$(find source-run106-logs/unpacked -type f -print -quit)"
-          test -n "$LOG_FILE"
-          cp "$LOG_FILE" source-run106/original-run106-job.log
+            -o source-run106-logs/original-job-logs.download
+          if unzip -tq source-run106-logs/original-job-logs.download >/dev/null 2>&1; then
+            unzip -q source-run106-logs/original-job-logs.download -d source-run106-logs/unpacked
+            LOG_FILE="$(find source-run106-logs/unpacked -type f -print -quit)"
+            test -n "$LOG_FILE"
+            cp "$LOG_FILE" source-run106/original-run106-job.log
+            echo "SOURCE_JOB_LOG_FORMAT=ZIP"
+          elif gzip -t source-run106-logs/original-job-logs.download >/dev/null 2>&1; then
+            gzip -dc source-run106-logs/original-job-logs.download > source-run106/original-run106-job.log
+            echo "SOURCE_JOB_LOG_FORMAT=GZIP"
+          else
+            cp source-run106-logs/original-job-logs.download source-run106/original-run106-job.log
+            echo "SOURCE_JOB_LOG_FORMAT=RAW_TEXT_OR_HTTP_DECOMPRESSED"
+          fi
 
           grep -Fq "hooks/vm_postBuild.sh" source-run106/original-run106-job.log
           grep -Fq "RUN106: pkg update intentionally skipped to preserve the verified October 30 kernel" source-run106/original-run106-job.log
