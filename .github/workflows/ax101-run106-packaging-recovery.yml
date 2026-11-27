@@ -1,0 +1,101 @@
+name: AX101 RUN106 — packaging-only recovery
+
+on:
+  push:
+    branches: [ax101-r5-integration-validation]
+    paths:
+      - ".github/workflows/ax101-run106-packaging-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+# Take over the same global RUN106 slot, cancelling any accidental native-build
+# retry that was queued by intermediate commits. This workflow itself contains
+# no OpenIndiana, QEMU or native-build steps.
+concurrency:
+  group: ax101-run106-exact-october30-openindiana-global
+  cancel-in-progress: true
+
+jobs:
+  package-run106:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout packaging-only recovery tools
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download and verify the immutable source artifact and original job log
+        shell: bash
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p source-run106 source-run106-logs
+          curl -fLsS --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/15229533467/zip" \
+            -o source-run106-original.zip
+          echo "107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11  source-run106-original.zip" | sha256sum -c -
+          unzip -q source-run106-original.zip -d source-run106
+
+          curl -fLsS --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/140711432302/logs" \
+            -o source-run106-logs/original-job-logs.zip
+          unzip -q source-run106-logs/original-job-logs.zip -d source-run106-logs/unpacked
+          LOG_FILE="$(find source-run106-logs/unpacked -type f -print -quit)"
+          test -n "$LOG_FILE"
+          cp "$LOG_FILE" source-run106/original-run106-job.log
+
+          grep -Fq "hooks/vm_postBuild.sh" source-run106/original-run106-job.log
+          grep -Fq "RUN106: pkg update intentionally skipped to preserve the verified October 30 kernel" source-run106/original-run106-job.log
+          echo "SOURCE_RUN106_ARTIFACT=VERIFIED"
+          echo "SOURCE_RUN106_JOB_LOG=RETRIEVED"
+
+      - name: Verify original provenance and run packaging only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile \
+            run106-support/verify-run106-provenance.py \
+            run106-support/package-run106.py \
+            run106-support/verify-offline-bundle.py
+
+          python3 run106-support/verify-run106-provenance.py \
+            --artifact-dir "$GITHUB_WORKSPACE/source-run106" \
+            --job-log "$GITHUB_WORKSPACE/source-run106/original-run106-job.log" \
+            --evidence-dir "$GITHUB_WORKSPACE/source-run106/evidence"
+
+          python3 run106-support/package-run106.py \
+            --repo "$GITHUB_WORKSPACE" \
+            --artifacts "$GITHUB_WORKSPACE/source-run106" \
+            --run-id "46059925320" \
+            --commit "dc295a86d786f3b693e944a5e61b6b2a4c9e8f37" \
+            --branch "ax101-r5-integration-validation" \
+            --runner-kernel "$(cat "$GITHUB_WORKSPACE/source-run106/runner-host-kernel.txt")" \
+            --builder-commit "25a7144f849eec4c6c31303b41dfd2593ef59cfd" \
+            --iso-sha256 "c5cd9572219f49975c333ac8339b18989e5477ab2e81844b0b84c3ae776a6e1a"
+
+          python3 run106-support/verify-offline-bundle.py \
+            "$GITHUB_WORKSPACE/source-run106/AX101-OpenIndiana-RUN106-OFFLINE.zip"
+          cat "$GITHUB_WORKSPACE/source-run106/RUN106-ARTIFACT-SHA256SUMS.txt"
+
+      - name: Upload the recovered RUN106 offline bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: AX101-OpenIndiana-RUN106-OFFLINE
+          path: |
+            source-run106/AX101-OpenIndiana-RUN106-OFFLINE.zip
+            source-run106/RUN106-ARTIFACT-SHA256SUMS.txt
+            source-run106/builder-preparation.txt
+            source-run106/postbuild-provenance-verified.txt
+            source-run106/iso-provenance-verified.txt
+          if-no-files-found: error
+          retention-days: 90
