@@ -26,13 +26,13 @@ jobs:
       - name: Checkout packaging-only recovery tools
         uses: actions/checkout@v4
         with:
-          ref: \${{ github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download and verify the immutable source artifact and original job log
         shell: bash
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -Eeuo pipefail
           mkdir -p source-run106 source-run106-logs
