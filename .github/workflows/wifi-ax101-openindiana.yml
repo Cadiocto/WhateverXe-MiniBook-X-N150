@@ -270,6 +270,29 @@ jobs:
             echo "CI_EXACT_TREE_CHECKER=PASS"
           } | tee "$ART/ci-exact-tree-checker.txt"
 
+          # The runner bundle preserves CRLF for these vendored illumos headers.
+          # Validate their canonical LF-normalized Git blobs against the pinned illumos-gate tree.
+          python3 - "$INPUTS" <<'PY'
+          import hashlib, sys
+          from pathlib import Path
+          root = Path(sys.argv[1]) / "wifi-ax101/compat"
+          expected = {
+              "sys/net80211_proto.h": "4fe7d40604615e3ffd1adb80d6e061fd4859c546",
+              "sys/net80211.h": "be6b65fe905fabd6ebfd31cf74d7048357510e12",
+              "sys/net80211_crypto.h": "72ef3ebec3c9ccc599ba29823d3561198d953252",
+              "sys/net80211_ht.h": "449726aa0feae79d6bcea0f73e0625a7078a150e",
+              "sys/net80211_amrr.h": "36bd2fcd0eacd88c7b2c307c32a4db32bff5ffa0",
+              "net/wpa.h": "82c4fd468a5f623411a98a814c40ba3d9ac4c87b",
+          }
+          for rel, want in expected.items():
+              data = (root / rel).read_bytes().replace(b"\\r\\n", b"\\n")
+              blob = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\\0" + data).hexdigest()
+              if blob != want:
+                  raise SystemExit(f"pinned illumos header mismatch: {rel}: {blob} != {want}")
+              print(f"PINNED_HEADER_LF_BLOB=PASS {rel} {blob}")
+          print("PINNED_ILLUMOS_HEADER_NORMALIZATION=PASS 6/6")
+          PY
+
           CANDIDATE_MANIFEST="$INPUTS/INTEGRATION-CANDIDATE-MANIFEST.tsv"
           test -s "$CANDIDATE_MANIFEST"
           test "$(wc -l < "$CANDIDATE_MANIFEST" | tr -d ' ')" = "4503"
@@ -434,7 +457,9 @@ jobs:
               esac
               src="$INPUTS/wifi-ax101/compat/$rel"
               test -s "$src"
-              actual_blob=$(git -C "$GITHUB_WORKSPACE" hash-object "$src")
+              raw_blob=$(git -C "$GITHUB_WORKSPACE" hash-object "$src")
+              actual_blob=$(tr -d '\\r' < "$src" | git -C "$GITHUB_WORKSPACE" hash-object --stdin)
+              printf '%s\\t%s\\t%s\\n' "$rel" "$raw_blob" "$actual_blob" >> "$ART/compat-header-blob-normalization.txt"
               test "$actual_blob" = "$expected_blob"
               native="/usr/include/$rel"
               dst="$SRC/src/ports/wifi/iwm/compat-illumos/$rel"
@@ -445,9 +470,9 @@ jobs:
                 printf '%s\t%s\tnative\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
               else
                 mkdir -p "$(dirname "$dst")"
-                cp "$src" "$dst"
+                tr -d '\\r' < "$src" > "$dst"
                 chmod 0644 "$dst"
-                cmp -s "$src" "$dst"
+                tr -d '\\r' < "$src" | cmp -s - "$dst"
                 digest -a sha256 "$dst" > "$ART/header-$safe.sha256"
                 printf '%s\t%s\tstaged-pinned-illumos-gate\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
               fi
