@@ -30,3 +30,6 @@
 +            if directory.is_dir() and not directory.is_symlink():
 +                os.chmod(directory, int(mode, 8))
 +    got=actual(source_root)
+     missing=sorted(set(expected)-set(got)); extra=sorted(set(got)-set(expected)); diff=sorted(k for k in set(got)&set(expected) if got[k]!=expected[k])
+     print(f'EXPECTED_OBJECTS={len(expected)} ACTUAL_OBJECTS={len(got)} MISSING={len(missing)} EXTRA={len(extra)} DIFFERENT={len(diff)}')
+     for k in missing[:20]: print('MISSING',k)
