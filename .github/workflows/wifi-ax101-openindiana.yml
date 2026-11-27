@@ -246,7 +246,7 @@ jobs:
           # metadata; restore candidate directory modes and exclude only root .git.
           TREE_PATCH="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch"
           TREE_CHECKER="$INPUTS/wifi-ax101/tests/verify-integration-tree.py"
-          EXPECTED_TREE_PATCH_BLOB="bf219286720cbcce5fca6155ca96f7943b44d070"
+          EXPECTED_TREE_PATCH_BLOB="bcd42907ef0d67b9440b2b8b4be6cf0c7b683d6c"
           if [ ! -s "$TREE_PATCH" ]; then
             echo "ERROR: exact-tree overlay missing: $TREE_PATCH"
             find "$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays" -maxdepth 1 -type f -print
