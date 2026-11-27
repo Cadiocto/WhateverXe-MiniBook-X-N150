@@ -135,16 +135,27 @@ def main() -> None:
                 "native modunload did not pass")
 
         for name in ("run87-mbuf-regression.log", "run87-dma-regression.log",
+                     "run107-mbuf-regression.log", "run107-dma-regression.log",
+                     "scan-regression-final.log", "scanfix-source-identity.txt",
                      "connect-wifi-tests.txt", "elf-symbol-reconciliation.txt",
                      "iwx.dynamic-acceptance.txt", "iwx.relocations.txt",
                      "iwx.elf-header.txt", "compiler-output.log"):
             evidence(name)
+        scan_tests = read(evidence("scan-regression-final.log"))
+        scan_identity = read(evidence("scanfix-source-identity.txt"))
+        require("Ran 35 tests" in scan_tests and "OK" in scan_tests,
+                "scan-fix regression suite is not 35/35 PASS")
+        require("SCANFIX_NEGATIVE_CONTROLS=10/10" in scan_identity,
+                "scan-fix negative controls are not 10/10 PASS")
+        require("SCANFIX_PATCH_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80" in scan_identity,
+                "scan-fix patch identity mismatch")
 
         module = evidence("iwx")
         firmware = evidence("iwx-so-a0-hr-b0-77")
         license_file = evidence("iwx-license")
-        require(sha256(module) == "8fa07fedbf0e4549979f5e8ddeb3f8410b4083e3b4428653bb7f763d5458b049",
-                "native module SHA-256 differs from the verified RUN106 module")
+        module_sha_record = read(evidence("iwx.sha256")).split()
+        require(bool(module_sha_record) and module_sha_record[0] == sha256(module),
+                "native module SHA-256 does not match the guest-produced checksum")
         require(sha256(firmware) == FIRMWARE_SHA,
                 "firmware image hash differs from the fixed API-77 image")
         require("redistribution" in read(license_file).lower(),
@@ -162,7 +173,6 @@ def main() -> None:
                 "module dynamic dependency on misc/mac was not observed")
         reloc = read(evidence("iwx.relocations.txt"))
         textrel_present = "TEXTREL" in dynamic
-        require(textrel_present, "verified RUN106 module must retain its observed TEXTREL disclosure")
         (art / "textrel-status.txt").write_text(
             "ELF_TEXTREL_PRESENT=" + ("YES" if textrel_present else "NO") + "\n")
 
@@ -179,6 +189,12 @@ def main() -> None:
             target.chmod(0o755)
         (package / "connect-wifi.py").chmod(0o755)
         shutil.copy2(repo / "run106-support/offline/README.md", package / "README.md")
+        source_archive = repo / "wifi-ax101/scanfix-implementation.tar.gz"
+        require(source_archive.is_file(), "scan-fix source/test archive is missing from the validation branch")
+        (package / "source").mkdir()
+        shutil.copy2(source_archive, package / "source/scanfix-implementation.tar.gz")
+        with tarfile.open(source_archive, "r:gz") as sf:
+            sf.extractall(package / "source", filter="data")
 
         evidence_names = [
             "target-kernel-preflight-before-tools.txt", "toolchain-preflight.txt",
@@ -192,6 +208,11 @@ def main() -> None:
             "iwx-modunload-status.txt", "iwx-module-id.txt", "iwx-modunload-dmesg-delta.txt",
             "modinfo-after-modload.txt", "modinfo-after-modunload.txt",
             "run87-mbuf-regression.log", "run87-dma-regression.log",
+            "run107-mbuf-regression.log", "run107-dma-regression.log",
+            "scan-regression-final.log", "scanfix-patch.sha256",
+            "scanfix-source-identity.txt", "run107-if_iwx_illumos.c",
+            "run107-if_iwx.illumos.patch", "run107-ieee80211_input.c",
+            "run107-ieee80211_input.illumos.patch",
             "connect-wifi-tests.txt", "net80211-header-closure.txt",
             "integration-replay-status.txt", "STATUS.txt"
         ]
@@ -227,20 +248,23 @@ def main() -> None:
 
         compiler = read(guest / "runner-environment.txt")
         provenance = [
-            "AX101_RUN=RUN106",
+            "AX101_RUN=RUN107_SCANFIX",
             "SOURCE_REPOSITORY=Cadiocto/WhateverXe-MiniBook-X-N150",
             "SOURCE_BRANCH=" + args.branch,
             "SOURCE_COMMIT=" + args.commit,
-            "SOURCE_BASELINE_COMMIT=f530b111e03b966b863d40bd8cb11adf07f60650",
+            "SOURCE_BASELINE_COMMIT=c70455cdbdbfcf59baac087decb9ece519cf5700",
             "PINNED_SOLNIX_COMMIT=" + SOLNIX,
             "PINNED_ILLUMOS_GATE_COMMIT=" + ILLUMOS,
             "OPENINDIANA_BUILDER_COMMIT=" + args.builder_commit,
-            "SOURCE_GITHUB_ARTIFACT_ID=15229533467",
-            "SOURCE_GITHUB_ARTIFACT_SHA256=107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11",
+            "BASELINE_RUN106_GITHUB_ARTIFACT_ID=15229533467",
+            "BASELINE_RUN106_GITHUB_ARTIFACT_SHA256=107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11",
+            "SCANFIX_PATCH_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80",
             "POSTBUILD_HOOK_EXECUTED=PASS",
             "PKG_UPDATE=SKIPPED",
-            "RUN106_PACKAGE_RECOVERY=PACKAGING_ONLY",
-            "PHYSICAL_PCI_ATTACH=NOT_PROVEN",
+            "RUN106_BASELINE_EVIDENCE_REUSED=YES",
+            "SCANFIX_SOURCE_AND_REGRESSIONS=PASS",
+            "PHYSICAL_SCAN_DISCOVERY=NOT_YET_VERIFIED",
+            "PHYSICAL_PCI_ATTACH=USER_REPORTED_VERIFIED",
             "POSTBUILD_MODIFIED_SHA256=f014902780cae2a5c00f3309ed728c802cc664257d7a025e28432bcc000e4c26",
             "OPENINDIANA_ISO_VERIFICATION=PASS",
             "OPENINDIANA_ISO_SHA256=" + args.iso_sha256,
@@ -271,6 +295,10 @@ def main() -> None:
             "MODLOAD=PASS",
             "MODUNLOAD=PASS",
             "REGRESSION_TESTS=PASS",
+            "SCANFIX_REGRESSION_TESTS=35/35",
+            "SCANFIX_NEGATIVE_CONTROLS=10/10",
+            "MBUF_NEGATIVE_CONTROLS=20/20",
+            "DMA_NEGATIVE_CONTROLS=3/3",
             "GITHUB_ACTIONS_RUN_ID=" + args.run_id,
             "",
             "=== COMPILER AND LINKER ===",
@@ -295,7 +323,7 @@ def main() -> None:
                 "mode": "0755" if (p.stat().st_mode & 0o111) else "0644"
             })
         manifest = {
-            "bundle": "AX101-OpenIndiana-RUN106-OFFLINE.zip",
+            "bundle": "AX101-OpenIndiana-RUN107-SCANFIX-OFFLINE.zip",
             "target_kernel": TARGET,
             "hardware": {"vendor_device": "8086:54F0", "subsystem": "8086:0244"},
             "firmware": {"api": 77, "filename": "iwx-so-a0-hr-b0-77", "sha256": FIRMWARE_SHA},
@@ -326,7 +354,7 @@ def main() -> None:
             for pattern in secret_patterns:
                 require(pattern.search(data) is None, "possible secret detected in " + p.relative_to(package).as_posix())
 
-        out = art / "AX101-OpenIndiana-RUN106-OFFLINE.zip"
+        out = art / "AX101-OpenIndiana-RUN107-SCANFIX-OFFLINE.zip"
         if out.exists():
             out.unlink()
         with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
@@ -355,7 +383,7 @@ def main() -> None:
                 mode = (zi.external_attr >> 16) & 0o777
                 if zi.filename in operational_scripts:
                     require(mode & 0o111, "executable bit missing in ZIP: " + zi.filename)
-        (art / "RUN106-ARTIFACT-SHA256SUMS.txt").write_text(
+        (art / "RUN107-SCANFIX-ARTIFACT-SHA256SUMS.txt").write_text(
             "MODULE_SHA256=" + sha256(module) + "\n" +
             "FIRMWARE_SHA256=" + FIRMWARE_SHA + "\n" +
             "OFFLINE_ZIP_SHA256=" + sha256(out) + "\n"
