@@ -7,7 +7,6 @@ ART="/tmp/ax101-run106-artifacts"
 mkdir -p "$ART"
 PREFLIGHT="$ART/target-kernel-preflight-before-tools.txt"
 {
-    echo "RUNNER_HOST_KERNEL=recorded-on-GitHub-runner"
     echo "OPENINDIANA_GUEST_KERNEL=$(uname -v)"
     echo "TARGET_LAPTOP_KERNEL=$TARGET_KERNEL"
     uname -a
@@ -16,16 +15,17 @@ PREFLIGHT="$ART/target-kernel-preflight-before-tools.txt"
     pkg list -Hv entire 2>&1 || true
     pkg list -Hv consolidation/osnet/osnet-incorporation 2>&1 || true
 } > "$PREFLIGHT"
-cat "$PREFLIGHT"
 GUEST_KERNEL=$(uname -v)
 if [ "$GUEST_KERNEL" != "$TARGET_KERNEL" ]; then
-    echo "KERNEL_MATCH=FAIL"
+    echo "KERNEL_MATCH=FAIL" >> "$PREFLIGHT"
+    cat "$PREFLIGHT"
     if command -v curl >/dev/null 2>&1; then
         curl -f --max-time 10 -X POST --data-binary @"$PREFLIGHT" http://192.168.122.1:18081/preflight || true
     fi
     exit 86
 fi
-echo "KERNEL_MATCH=PASS"
+echo "KERNEL_MATCH=PASS" >> "$PREFLIGHT"
+cat "$PREFLIGHT"
 if [ -z "${ANYVM_PKGS:-}" ]; then
     echo "ERROR: ANYVM_PKGS was not supplied by the pinned builder config" >&2
     exit 87
