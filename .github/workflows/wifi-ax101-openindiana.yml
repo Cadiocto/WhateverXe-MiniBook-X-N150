@@ -17,7 +17,8 @@ permissions:
 # One global build slot for this workflow; never cancel an active native VM build.
 concurrency:
   group: ax101-run106-exact-october30-openindiana-global
-  cancel-in-progress: false
+  # Packaging-only recovery may take over a queued accidental rebuild; normal builds remain non-cancelling.
+  cancel-in-progress: ${{ contains(github.event.head_commit.message || '', '[packaging-only]') }}
 
 jobs:
   build-iwx:
