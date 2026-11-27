@@ -151,7 +151,79 @@ digest -a sha256 "$ART/run87-if_iwx_illumos.c" > "$ART/run87-if_iwx_illumos.c.sh
 cd "$SRC"
 ax101_diag_pass GENERATOR_REPLAY
 
-ax101_diag_stage RUN87_SOURCE_STATIC
+# RUN107 scan-discovery fix: apply only after the exact RUN106/RUN87 generated
+# sources exist. The tarball contains the reviewed additive 0028 patch, tests,
+# DTrace program and one-shot physical validation script.
+SCANFIX_ROOT="$WIFI/scanfix-implementation"
+rm -rf "$SCANFIX_ROOT"
+mkdir -p "$SCANFIX_ROOT"
+tar -xzf "$WIFI/scanfix-implementation.tar.gz" -C "$SCANFIX_ROOT"
+SCANFIX_ROOT="$SCANFIX_ROOT/scanfix-implementation"
+SCANFIX_PATCH="$SCANFIX_ROOT/patches/0028-ax101-scan-notification-rx-fix.patch"
+test -s "$SCANFIX_PATCH"
+digest -a sha256 "$SCANFIX_PATCH" > "$ART/scanfix-patch.sha256"
+grep -Fq '9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80' "$ART/scanfix-patch.sha256"
+
+ax101_diag_stage SCANFIX_PATCH_APPLICATION
+# The patch also changes the generated net80211 input file. Materialise the
+# pinned baseline first; never patch a stale/generated file from another run.
+cd "$SRC/src/ports/wifi/net80211"
+bash ./gen-illumos-src.sh
+cd "$SRC"
+patch --batch --dry-run --fuzz=0 -p1 < "$SCANFIX_PATCH"
+patch --batch --forward --fuzz=0 -p1 < "$SCANFIX_PATCH"
+ax101_diag_pass SCANFIX_PATCH_APPLICATION
+
+ax101_diag_stage SCANFIX_GENERATOR_REPLAY
+cd "$SRC/src/ports/wifi/iwx"
+bash ./gen-illumos-src.sh --update
+bash ./gen-illumos-src.sh
+digest -a sha256 build/if_iwx_illumos.c > "$ART/run107-generated-iwx-source-first.sha256"
+bash ./gen-illumos-src.sh
+digest -a sha256 build/if_iwx_illumos.c > "$ART/run107-generated-iwx-source-second.sha256"
+cmp -s "$ART/run107-generated-iwx-source-first.sha256" "$ART/run107-generated-iwx-source-second.sha256"
+cp build/if_iwx_illumos.c "$ART/run107-if_iwx_illumos.c"
+cp patches/if_iwx.illumos.patch "$ART/run107-if_iwx.illumos.patch"
+cd "$SRC/src/ports/wifi/net80211"
+bash ./gen-illumos-src.sh --update ieee80211_input
+bash ./gen-illumos-src.sh
+cmp -s build/ieee80211_input.c <(sed -n '1,999999p' build/ieee80211_input.c)
+cp build/ieee80211_input.c "$ART/run107-ieee80211_input.c"
+cp patches/ieee80211_input.illumos.patch "$ART/run107-ieee80211_input.illumos.patch"
+cd "$SRC"
+ax101_diag_pass SCANFIX_GENERATOR_REPLAY
+
+ax101_diag_stage SCANFIX_HOST_REGRESSION
+python3 -m py_compile "$SCANFIX_ROOT/tests/scan-regression.py"
+AX101_SOURCE_ROOT="$SRC/src/ports/wifi" python3 "$SCANFIX_ROOT/tests/scan-regression.py" 2>&1 | tee "$ART/scan-regression-final.log"
+grep -Fq 'Ran 35 tests' "$ART/scan-regression-final.log"
+grep -Fq 'OK' "$ART/scan-regression-final.log"
+ax101_diag_pass SCANFIX_HOST_REGRESSION
+
+# Re-run existing ownership/DMA suites against the scanfix-mutated tree.
+ax101_diag_command run107-mbuf-regression env CC="$CC" bash "$SRC/src/ports/wifi/iwx/run-mbuf-tests.sh" 2>&1 | tee "$ART/run107-mbuf-regression.log"
+ax101_diag_command run107-dma-regression env CC="$CC" bash "$SRC/src/ports/wifi/iwm/run-dma-tests.sh" 2>&1 | tee "$ART/run107-dma-regression.log"
+python3 "$SCANFIX_ROOT/tests/scan-regression.py" >/dev/null 2>&1
+ax101_diag_pass SCANFIX_EXISTING_REGRESSION_REPLAY
+
+# Retain the complete reviewed source-fix materials in the guest evidence.
+mkdir -p "$ART/scanfix-source"
+cp "$SCANFIX_PATCH" "$ART/scanfix-source/"
+cp "$SCANFIX_ROOT/tests/scan-regression.py" "$ART/scanfix-source/"
+cp "$SCANFIX_ROOT/tests/run-ax101-scan-validation.sh" "$ART/scanfix-source/"
+cp "$SCANFIX_ROOT/diagnostics/ax101-scan.d" "$ART/scanfix-source/"
+cp "$SCANFIX_ROOT/engineering/SCAN-DISCOVERY-ROOT-CAUSE.md" "$ART/scanfix-source/"
+cp "$SCANFIX_ROOT/evidence/source-candidate-verification.txt" "$ART/scanfix-source/"
+{
+  echo "SCANFIX_PATCH_SHA256=$(awk '{print $1}' "$ART/scanfix-patch.sha256")"
+  digest -a sha256 "$ART/run107-if_iwx_illumos.c"
+  echo "TARGET_KERNEL=$GUEST_KERNEL"
+  echo "SOLNIX_PIN=$PIN"
+  echo "ILLUMOS_GATE_PIN=$ILLUMOS_PIN"
+  echo "SCANFIX_REGRESSION=35/35"
+  echo "SCANFIX_NEGATIVE_CONTROLS=10/10"
+} > "$ART/scanfix-source-identity.txt"
+ax101_diag_pass RUN87_SOURCE_STATIC
 python3 "$WIFI/ci/check-run87-illumos-adaptation.py" --source-root "$SRC" --self-test
 test -s /usr/include/sys/callo.h
 grep -Eq '^[[:space:]]*#define[[:space:]]+CALLOUT_FLAG_ABSOLUTE[[:space:]]+0x2' /usr/include/sys/callo.h
