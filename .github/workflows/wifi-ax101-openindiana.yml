@@ -195,7 +195,7 @@ jobs:
           # annotation evaluation in the RUN77 host model; this is test-only.
           PY39_PATCH="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0003-run77-model-python39-annotations.patch"
           RUN77_MODEL="$INPUTS/wifi-ax101/tests/run77-contract-model.py"
-          EXPECTED_PY39_PATCH_SHA="105db51b3ef4540275cffeaec4babfdf42df8639b20ac0c8d65f0fa333fbc766"
+          EXPECTED_PY39_PATCH_SHA="f2146e7f09d4e40232593fef827c7baad4057e1f550bd028f10036b00940e6e6"
           EXPECTED_RUN77_BEFORE="1bc1ea95393f6969c2f03a7dd8b0be69fa235e9173970506aacec5dc76d95791"
           EXPECTED_RUN77_AFTER="c7d68a2bbf612b84b4f16cfaa4f45d05d9faf894e28f12ee495a0b71efe7a94b"
           test -s "$PY39_PATCH"
@@ -225,7 +225,7 @@ jobs:
           print("RUN77_MODEL_FUTURE_ANNOTATIONS=PASS")
           print("RUN77_MODEL_PEP604_ANNOTATION_PRESENT=PASS")
           if sys.version_info < (3, 10):
-              mutant = source.replace("from __future__ import annotations\\n", "", 1)
+              mutant = source.replace("from __future__ import annotations" + chr(10), "", 1)
               try:
                   exec(compile(mutant, str(model) + ".mutant", "exec"),
                        {"__name__": "__run77_python39_mutant__"})
