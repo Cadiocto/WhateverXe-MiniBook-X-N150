@@ -1,0 +1,138 @@
+--- a/wifi-ax101/tests/verify-integration-tree.py
++++ b/wifi-ax101/tests/verify-integration-tree.py
+@@ -1,33 +1,109 @@
+ #!/usr/bin/env python3
+ from __future__ import annotations
+-import argparse, hashlib, os, stat, sys
+-from pathlib import Path
++
++import argparse
++import hashlib
++import os
++import stat
++from pathlib import Path, PurePosixPath
++
++HEADER = 'type\tmode\tsize\tsha256_or_target\tpath'
++
++
++def read_manifest(path: Path):
++    expected = {}
++    lines = path.read_text().splitlines()
++    if not lines or lines[0] != HEADER:
++        raise SystemExit('bad manifest header')
++    for line_no, line in enumerate(lines[1:], 2):
++        fields = line.split('\t', 4)
++        if len(fields) != 5:
++            raise SystemExit(f'malformed manifest line {line_no}')
++        typ, mode, size, digest, rel = fields
++        pp = PurePosixPath(rel)
++        if pp.is_absolute() or '..' in pp.parts or rel in ('', '.', '.git') or rel.startswith('.git/'):
++            raise SystemExit(f'unsafe or administrative manifest path at line {line_no}: {rel}')
++        if rel in expected:
++            raise SystemExit(f'duplicate manifest path at line {line_no}: {rel}')
++        if typ not in ('dir', 'file', 'link'):
++            raise SystemExit(f'unknown manifest type at line {line_no}: {typ}')
++        if len(mode) != 4 or any(ch not in '01234567' for ch in mode):
++            raise SystemExit(f'invalid mode at line {line_no}: {mode}')
++        expected[rel] = (typ, mode, size, digest)
++    return expected
++
++
++def restore_directory_modes(root: Path, expected):
++    """Git trees do not encode directory modes; restore them from the source manifest."""
++    restored = 0
++    for rel, record in expected.items():
++        typ, mode, _size, _digest = record
++        if typ != 'dir':
++            continue
++        target = root.joinpath(*PurePosixPath(rel).parts)
++        try:
++            st = target.lstat()
++        except FileNotFoundError:
++            continue  # Reported by the normal missing-path comparison below.
++        if not stat.S_ISDIR(st.st_mode):
++            continue  # Reported as a type/content difference below.
++        os.chmod(target, int(mode, 8))
++        actual_mode = f'{stat.S_IMODE(target.lstat().st_mode):04o}'
++        if actual_mode != mode:
++            raise RuntimeError(f'cannot restore directory mode {rel}: expected {mode}, got {actual_mode}')
++        restored += 1
++    return restored
++
+ 
+ def actual(root: Path):
+     out = {}
+     for p in root.rglob('*'):
+-        rel = p.relative_to(root).as_posix(); st = p.lstat(); mode = f'{stat.S_IMODE(st.st_mode):04o}'
+-        if stat.S_ISDIR(st.st_mode): out[rel] = ('dir', mode, '0', '-')
++        rel = p.relative_to(root).as_posix()
++        # The source checkout has one root-level .git administrative directory.
++        # It is not a candidate source path and must not affect source equivalence.
++        if rel == '.git' or rel.startswith('.git/'):
++            continue
++        st = p.lstat()
++        mode = f'{stat.S_IMODE(st.st_mode):04o}'
++        if stat.S_ISDIR(st.st_mode):
++            out[rel] = ('dir', mode, '0', '-')
+         elif stat.S_ISLNK(st.st_mode):
+-            target = os.readlink(p); out[rel] = ('link', mode, str(len(target.encode())), target)
++            target = os.readlink(p)
++            out[rel] = ('link', mode, str(len(target.encode())), target)
+         elif stat.S_ISREG(st.st_mode):
+-            b = p.read_bytes(); out[rel] = ('file', mode, str(len(b)), hashlib.sha256(b).hexdigest())
+-        else: raise RuntimeError(f'special file: {p}')
++            data = p.read_bytes()
++            out[rel] = ('file', mode, str(len(data)), hashlib.sha256(data).hexdigest())
++        else:
++            raise RuntimeError(f'special file: {p}')
+     return out
+ 
++
+ def main():
+-    ap=argparse.ArgumentParser(); ap.add_argument('--source-root', required=True, type=Path); ap.add_argument('--manifest', required=True, type=Path); a=ap.parse_args()
+-    expected={}
+-    lines=a.manifest.read_text().splitlines()
+-    if not lines or lines[0] != 'type\tmode\tsize\tsha256_or_target\tpath': raise SystemExit('bad manifest header')
+-    for line in lines[1:]:
+-        typ, mode, size, digest, path=line.split('\t',4); expected[path]=(typ,mode,size,digest)
+-    got=actual(a.source_root.resolve())
+-    missing=sorted(set(expected)-set(got)); extra=sorted(set(got)-set(expected)); diff=sorted(k for k in set(got)&set(expected) if got[k]!=expected[k])
++    ap = argparse.ArgumentParser()
++    ap.add_argument('--source-root', required=True, type=Path)
++    ap.add_argument('--manifest', required=True, type=Path)
++    args = ap.parse_args()
++    root = args.source_root.resolve()
++    expected = read_manifest(args.manifest)
++    restored = restore_directory_modes(root, expected)
++    got = actual(root)
++    missing = sorted(set(expected) - set(got))
++    extra = sorted(set(got) - set(expected))
++    diff = sorted(k for k in set(got) & set(expected) if got[k] != expected[k])
+     print(f'EXPECTED_OBJECTS={len(expected)} ACTUAL_OBJECTS={len(got)} MISSING={len(missing)} EXTRA={len(extra)} DIFFERENT={len(diff)}')
+-    for k in missing[:20]: print('MISSING',k)
+-    for k in extra[:20]: print('EXTRA',k)
+-    for k in diff[:20]: print('DIFFERENT',k,'expected=',expected[k],'actual=',got[k])
+-    if missing or extra or diff: return 1
+-    print('INTEGRATION_TREE_EXACT=PASS'); return 0
+-if __name__=='__main__': raise SystemExit(main())
++    print(f'NORMALIZED_DIRECTORY_MODES={restored}')
++    print('ROOT_GIT_METADATA=EXCLUDED')
++    for rel in missing[:20]:
++        print('MISSING', rel)
++    for rel in extra[:20]:
++        print('EXTRA', rel)
++    for rel in diff[:20]:
++        print('DIFFERENT', rel, 'expected=', expected[rel], 'actual=', got[rel])
++    if missing or extra or diff:
++        return 1
++    print('INTEGRATION_TREE_EXACT=PASS')
++    return 0
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+--- /dev/null
++++ b/wifi-ax101/tests/test-verify-integration-tree.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python3
++Î

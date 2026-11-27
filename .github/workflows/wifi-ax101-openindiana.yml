@@ -241,6 +241,38 @@ jobs:
             echo "CI_RUN77_PYTHON39_COMPAT=PASS"
           } | tee "$ART/ci-python39-compatibility.txt"
 
+          # The pinned source snapshot is checked out through Git. Git trees do
+          # not store directory mode bits, and the checkout has root .git admin
+          # metadata; restore candidate directory modes and exclude only root .git.
+          TREE_PATCH="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch"
+          TREE_CHECKER="$INPUTS/wifi-ax101/tests/verify-integration-tree.py"
+          TREE_CHECKER_TEST="$INPUTS/wifi-ax101/tests/test-verify-integration-tree.py"
+          INTEGRATION_WRAPPER="$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh"
+          EXPECTED_TREE_PATCH_SHA="c60df82fce18bdeb03871cb7963a0c64ec49e66949da5b899ed56e95fd570149"
+          EXPECTED_TREE_CHECKER_BEFORE="2755a378ec9c002164b5c9e2a7e7ebffbe05bb28c08019a99862f6021405442f"
+          EXPECTED_TREE_CHECKER_AFTER="e19c973bbaf229118d0674cf894e0fcf716e323d4c8bb86cb2c287ffad5834b0"
+          EXPECTED_TREE_TEST_SHA="09fa2c2218bc75cbfd66e77eeba1f66aa398261dacb95d1eeb1a7d0df3c8a37a"
+          EXPECTED_WRAPPER_BEFORE="d1c7d6d205b4c2268c1a987822d97c6ea1562d76d15f0972b10c83e907679dbd"
+          EXPECTED_WRAPPER_AFTER="b2edd590caf9aef817cfb2bf7e07bf107ba6c221f648c534e4c26613ee2d0690"
+          test -s "$TREE_PATCH"
+          printf '%s  %s\n' "$EXPECTED_TREE_PATCH_SHA" "$TREE_PATCH" | sha256sum -c -
+          test "$(sha256sum "$TREE_CHECKER" | awk '{print $1}')" = "$EXPECTED_TREE_CHECKER_BEFORE"
+          test "$(sha256sum "$INTEGRATION_WRAPPER" | awk '{print $1}')" = "$EXPECTED_WRAPPER_BEFORE"
+          patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$TREE_PATCH"
+          patch --batch --forward --fuzz=0 -d "$INPUTS" -p1 < "$TREE_PATCH"
+          test "$(sha256sum "$TREE_CHECKER" | awk '{print $1}')" = "$EXPECTED_TREE_CHECKER_AFTER"
+          test "$(sha256sum "$TREE_CHECKER_TEST" | awk '{print $1}')" = "$EXPECTED_TREE_TEST_SHA"
+          test "$(sha256sum "$INTEGRATION_WRAPPER" | awk '{print $1}')" = "$EXPECTED_WRAPPER_AFTER"
+          python3 "$TREE_CHECKER_TEST" "$TREE_CHECKER" | tee "$ART/exact-tree-checker-tests-runner.log"
+          {
+            echo "CI_ONLY_EXACT_TREE_OVERLAY=0004-exact-tree-ignore-git-and-restore-dir-modes.patch"
+            echo "CI_EXACT_TREE_PATCH_SHA256=$EXPECTED_TREE_PATCH_SHA"
+            echo "EXACT_TREE_CHECKER_SHA256=$EXPECTED_TREE_CHECKER_AFTER"
+            echo "EXACT_TREE_CHECKER_TEST_SHA256=$EXPECTED_TREE_TEST_SHA"
+            echo "INTEGRATION_WRAPPER_SHA256=$EXPECTED_WRAPPER_AFTER"
+            echo "CI_EXACT_TREE_CHECKER=PASS"
+          } | tee "$ART/ci-exact-tree-checker.txt"
+
           CANDIDATE_MANIFEST="$INPUTS/INTEGRATION-CANDIDATE-MANIFEST.tsv"
           test -s "$CANDIDATE_MANIFEST"
           test "$(wc -l < "$CANDIDATE_MANIFEST" | tr -d ' ')" = "4503"
