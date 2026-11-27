@@ -24,8 +24,10 @@ ax101_diag_init() {
 }
 ax101_diag_stage() {
     AX101_STAGE=$1
+    AX101_LAST_COMMAND='<none>'
+    AX101_LAST_RC=0
     printf '%s\tRUNNING\t%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" >> "$AX101_ART/stage-status.tsv"
-    printf 'AX101_STAGE=%s STATUS=RUNNING UTC=%s PWD=%s PID=%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" "$PWD" "$$"
+    printf 'AX101_STAGE=%s STATUS=RUNNING UTC=%s PWD=%s PID=%s\n' "$AX101_STAGE" "$(date -u +%FT%TZ)" "$PWD" "$"
 }
 ax101_diag_pass() {
     printf '%s\tPASS\t%s\n' "$1" "$(date -u +%FT%TZ)" >> "$AX101_ART/stage-status.tsv"
@@ -44,9 +46,14 @@ ax101_diag_command() {
 }
 ax101_diag_on_error() {
     rc=$1; cmd=$2
-    AX101_LAST_RC=$rc; AX101_LAST_COMMAND=$cmd
+    # Preserve the wrapped command/exit code when a tee in the outer pipeline
+    # is the shell's BASH_COMMAND at ERR-trap time.
+    if [ "${AX101_LAST_RC:-0}" -eq 0 ] || [ -z "${AX101_LAST_COMMAND:-}" ] || [ "$AX101_LAST_COMMAND" = '<none>' ]; then
+        AX101_LAST_RC=$rc
+        AX101_LAST_COMMAND=$cmd
+    fi
     {
-        printf 'failure_utc=%s\nstage=%s\nexit_code=%s\nlast_command=%s\ncwd=%s\npid=%s\n' "$(date -u +%FT%TZ)" "$AX101_STAGE" "$rc" "$cmd" "$PWD" "$$"
+        printf 'failure_utc=%s\nstage=%s\nexit_code=%s\nlast_command=%s\ncwd=%s\npid=%s\n' "$(date -u +%FT%TZ)" "$AX101_STAGE" "$AX101_LAST_RC" "$AX101_LAST_COMMAND" "$PWD" "$$"
         printf '%s\n' '--- stdout tail ---'; tail -n 80 "$AX101_ART/native-stdout.log" 2>/dev/null || true
         printf '%s\n' '--- stderr tail ---'; tail -n 80 "$AX101_ART/native-stderr.log" 2>/dev/null || true
     } > "$AX101_ART/failure-summary.txt" 2>&1 || true
