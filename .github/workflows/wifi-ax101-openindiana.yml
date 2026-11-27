@@ -248,7 +248,7 @@ jobs:
           TREE_CHECKER="$INPUTS/wifi-ax101/tests/verify-integration-tree.py"
           TREE_CHECKER_TEST="$INPUTS/wifi-ax101/tests/test-verify-integration-tree.py"
           INTEGRATION_WRAPPER="$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh"
-          EXPECTED_TREE_PATCH_SHA="c60df82fce18bdeb03871cb7963a0c64ec49e66949da5b899ed56e95fd570149"
+          EXPECTED_TREE_PATCH_SHA="ac3e1895975af9f553612d7bbc6abef06a9fb099df5a1b3855ab8f479c7a8260"
           EXPECTED_TREE_CHECKER_BEFORE="2755a378ec9c002164b5c9e2a7e7ebffbe05bb28c08019a99862f6021405442f"
           EXPECTED_TREE_CHECKER_AFTER="e19c973bbaf229118d0674cf894e0fcf716e323d4c8bb86cb2c287ffad5834b0"
           EXPECTED_TREE_TEST_SHA="09fa2c2218bc75cbfd66e77eeba1f66aa398261dacb95d1eeb1a7d0df3c8a37a"
