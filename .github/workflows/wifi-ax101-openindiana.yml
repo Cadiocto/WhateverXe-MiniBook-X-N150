@@ -247,8 +247,17 @@ jobs:
           TREE_PATCH="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch"
           TREE_CHECKER="$INPUTS/wifi-ax101/tests/verify-integration-tree.py"
           EXPECTED_TREE_PATCH_BLOB="bf219286720cbcce5fca6155ca96f7943b44d070"
-          test -s "$TREE_PATCH"
-          ACTUAL_TREE_PATCH_BLOB=$(git -C "$GITHUB_WORKSPACE" rev-parse "$GITHUB_SHA:r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch")
+          if [ ! -s "$TREE_PATCH" ]; then
+            echo "ERROR: exact-tree overlay missing: $TREE_PATCH"
+            find "$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays" -maxdepth 1 -type f -print
+            exit 1
+          fi
+          ACTUAL_TREE_PATCH_BLOB=$(git -C "$GITHUB_WORKSPACE" ls-tree "$GITHUB_SHA" -- r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch | awk '{print $3}')
+          echo "TREE_PATCH_PATH=$TREE_PATCH"
+          echo "TREE_PATCH_EXPECTED_GIT_BLOB=$EXPECTED_TREE_PATCH_BLOB"
+          echo "TREE_PATCH_ACTUAL_GIT_BLOB=$ACTUAL_TREE_PATCH_BLOB"
+          ls -l "$TREE_PATCH"
+          sha256sum "$TREE_PATCH" | tee "$ART/exact-tree-overlay.sha256"
           test "$ACTUAL_TREE_PATCH_BLOB" = "$EXPECTED_TREE_PATCH_BLOB"
           patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$TREE_PATCH"
           patch --batch --forward --fuzz=0 -d "$INPUTS" -p1 < "$TREE_PATCH"
