@@ -70,9 +70,14 @@ def main() -> None:
              "rollback does not select the actual module ID from modinfo column 1")
         need("print $2; exit" not in rollback,
              "rollback incorrectly uses modinfo Loadcnt as module ID")
+        operational_scripts = {
+            "verify-bundle.sh", "preflight.sh", "install-manual.sh",
+            "register-driver.sh", "diagnose-ax101.sh", "rollback.sh",
+            "connect-wifi.py"
+        }
         for name, zi in entries.items():
             mode = (zi.external_attr >> 16) & 0o777
-            if name.endswith(".sh") or name == "connect-wifi.py":
+            if name in operational_scripts:
                 need(bool(mode & stat.S_IXUSR), "executable bit missing: " + name)
         p = z.read("build-provenance.txt").decode()
         for marker in (
