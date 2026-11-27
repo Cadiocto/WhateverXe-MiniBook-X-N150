@@ -65,6 +65,11 @@ def main() -> None:
              "module is not ELF64 little-endian")
         need(int.from_bytes(module[18:20], "little") == 62,
              "module is not EM_X86_64")
+        rollback = z.read("rollback.sh").decode()
+        need("print $1; exit" in rollback,
+             "rollback does not select the actual module ID from modinfo column 1")
+        need("print $2; exit" not in rollback,
+             "rollback incorrectly uses modinfo Loadcnt as module ID")
         for name, zi in entries.items():
             mode = (zi.external_attr >> 16) & 0o777
             if name.endswith(".sh") or name == "connect-wifi.py":
