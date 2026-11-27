@@ -60,8 +60,8 @@ def main() -> None:
     preflight_text = read(preflight_upload)
     require("illumos-c893fd03ad" in preflight_text,
             "pre-tool guest preflight does not identify the target kernel")
-    require("SunOS" in preflight_text and "/etc/release" not in preflight_text,
-            "pre-tool guest preflight is missing uname evidence")
+    require("SunOS" in preflight_text and "OpenIndiana" in preflight_text,
+            "pre-tool guest preflight is missing uname or release evidence")
 
     with tempfile.TemporaryDirectory(prefix="ax101-run106-package-") as td:
         tmp = Path(td)
@@ -128,8 +128,8 @@ def main() -> None:
             hdr = f.read(64)
         require(len(hdr) >= 20 and hdr[:4] == b"\x7fELF",
                 "module is not ELF")
-        require(hdr[4] == 2 and hdr[5] == 2,
-                "module is not ELF64 big-endian? expected ELF64 little-endian")
+        require(hdr[4] == 2 and hdr[5] == 1,
+                "module is not ELF64 little-endian")
         machine = int.from_bytes(hdr[18:20], "little")
         require(machine == 62, "module ELF machine is not EM_X86_64")
         dynamic = read(evidence("iwx.dynamic-acceptance.txt"))
