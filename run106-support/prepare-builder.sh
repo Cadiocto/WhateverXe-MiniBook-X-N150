@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_ROOT=\${1:?repository root required}
-RUNNER_INPUTS=\${2:?verified R5 runner inputs directory required}
-ARTIFACTS=\${3:?artifact output directory required}
-SOURCE_COMMIT=\${4:?source commit required}
-RUN_ID=\${5:?GitHub run id required}
-RUNNER_KERNEL=\${6:?runner host kernel required}
+REPO_ROOT=${1:?repository root required}
+RUNNER_INPUTS=${2:?verified R5 runner inputs directory required}
+ARTIFACTS=${3:?artifact output directory required}
+SOURCE_COMMIT=${4:?source commit required}
+RUN_ID=${5:?GitHub run id required}
+RUNNER_KERNEL=${6:?runner host kernel required}
 
 BUILDER_COMMIT=25a7144f849eec4c6c31303b41dfd2593ef59cfd
 ISO_URL=https://dlc.openindiana.org/isos/hipster/20261030/OI-hipster-text-20261030.iso
@@ -49,7 +49,7 @@ ISO_URL="$ISO_URL"
 EXPECTED_SHA256="$ISO_SHA256"
 mkdir -p build
 curl -fL --retry 4 --retry-delay 3 "\$ISO_URL" -o build/openindiana.iso.download
-printf '%s  %s\\n' "\$EXPECTED_SHA256" build/openindiana.iso.download | sha256sum -c -
+echo "\$EXPECTED_SHA256  build/openindiana.iso.download" | sha256sum -c -
 mv -f build/openindiana.iso.download build/openindiana.iso
 {
   echo "OPENINDIANA_ISO_URL=\$ISO_URL"
