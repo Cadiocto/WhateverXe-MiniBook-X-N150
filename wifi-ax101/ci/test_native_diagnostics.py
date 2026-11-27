@@ -20,6 +20,8 @@ run_case('ax101_diag_stage NONZERO; ax101_diag_command nonzero sh -c "echo compi
 print("PASS nonzero command and stderr diagnostics preserve exit code")
 run_case('ax101_diag_stage PIPEFAIL; false | tee /dev/null', 1, lambda a,o: "exit_code=1" in (a/"native-build-status.txt").read_text())
 print("PASS pipefail propagates upstream failure")
+run_case('ax101_diag_stage GMAKE; ax101_diag_command native-gmake sh -c "echo gcc-error >&2; exit 2" 2>&1 | tee /dev/null', 2, lambda a,o: ("last_command=native-gmake:" in (a/"native-build-status.txt").read_text() and "last_command_exit_code=2" in (a/"native-build-status.txt").read_text()) or (_ for _ in ()).throw(SystemExit("tee masked native-gmake command/exit code")))
+print("PASS native-gmake command identity survives tee pipeline")
 run_case('ax101_diag_stage SSH; ax101_diag_command ssh sh -c "echo ssh-failed >&2; exit 255"', 255, lambda a,o: "exit_code=255" in (a/"native-build-status.txt").read_text())
 print("PASS SSH failure exit code is preserved")
 run_case('ax101_diag_stage REMOTE_LOG_MISSING; rm -f "$AX101_ART/native-openindiana-build.log"; ax101_diag_command failed sh -c "exit 19"', 19, lambda a,o: "exit_code=19" in (a/"native-build-status.txt").read_text())
