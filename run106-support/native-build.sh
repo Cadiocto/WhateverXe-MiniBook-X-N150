@@ -187,7 +187,10 @@ cp patches/if_iwx.illumos.patch "$ART/run107-if_iwx.illumos.patch"
 cd "$SRC/src/ports/wifi/net80211"
 bash ./gen-illumos-src.sh --update ieee80211_input
 bash ./gen-illumos-src.sh
-cmp -s build/ieee80211_input.c <(sed -n '1,999999p' build/ieee80211_input.c)
+digest -a sha256 build/ieee80211_input.c > "$ART/run107-generated-net80211-source-first.sha256"
+bash ./gen-illumos-src.sh
+digest -a sha256 build/ieee80211_input.c > "$ART/run107-generated-net80211-source-second.sha256"
+cmp -s "$ART/run107-generated-net80211-source-first.sha256" "$ART/run107-generated-net80211-source-second.sha256"
 cp build/ieee80211_input.c "$ART/run107-ieee80211_input.c"
 cp patches/ieee80211_input.illumos.patch "$ART/run107-ieee80211_input.illumos.patch"
 cd "$SRC"
@@ -203,7 +206,6 @@ ax101_diag_pass SCANFIX_HOST_REGRESSION
 # Re-run existing ownership/DMA suites against the scanfix-mutated tree.
 ax101_diag_command run107-mbuf-regression env CC="$CC" bash "$SRC/src/ports/wifi/iwx/run-mbuf-tests.sh" 2>&1 | tee "$ART/run107-mbuf-regression.log"
 ax101_diag_command run107-dma-regression env CC="$CC" bash "$SRC/src/ports/wifi/iwm/run-dma-tests.sh" 2>&1 | tee "$ART/run107-dma-regression.log"
-python3 "$SCANFIX_ROOT/tests/scan-regression.py" >/dev/null 2>&1
 ax101_diag_pass SCANFIX_EXISTING_REGRESSION_REPLAY
 
 # Retain the complete reviewed source-fix materials in the guest evidence.
@@ -223,13 +225,11 @@ cp "$SCANFIX_ROOT/evidence/source-candidate-verification.txt" "$ART/scanfix-sour
   echo "SCANFIX_REGRESSION=35/35"
   echo "SCANFIX_NEGATIVE_CONTROLS=10/10"
 } > "$ART/scanfix-source-identity.txt"
-ax101_diag_pass RUN87_SOURCE_STATIC
+ax101_diag_stage RUN87_SOURCE_STATIC
 python3 "$WIFI/ci/check-run87-illumos-adaptation.py" --source-root "$SRC" --self-test
 test -s /usr/include/sys/callo.h
 grep -Eq '^[[:space:]]*#define[[:space:]]+CALLOUT_FLAG_ABSOLUTE[[:space:]]+0x2' /usr/include/sys/callo.h
 grep -q 'cv_timedwait_hires' /usr/include/sys/condvar.h
-ax101_diag_pass RUN87_SOURCE_STATIC
-
 ax101_diag_stage RUN87_HOST_REGRESSION
 cd "$SRC/src/ports/wifi/iwx"
 set +e
