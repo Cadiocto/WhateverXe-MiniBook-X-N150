@@ -308,7 +308,16 @@ jobs:
           } | tee "$ART/source-transfer-validation.txt"
           echo "candidate_inputs=$INPUTS" | tee -a "$ART/source-transfer-validation.txt"
 
+      - name: Test CI diagnostics and exact replay checker harness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n wifi-ax101/ci/native-diagnostics.sh
+          python3 wifi-ax101/ci/test_native_diagnostics.py
+          python3 wifi-ax101/ci/test_verify_integration_tree.py "$GITHUB_WORKSPACE/r5-runner-inputs/wifi-ax101/tests/verify-integration-tree.py"
+
       - name: Build exact R5 Integration tree in OpenIndiana Hipster 2026.10
+        id: native-build
         uses: vmactions/openindiana-vm@v1
         with:
           release: "202610-build"
@@ -325,12 +334,12 @@ jobs:
             PIN=1cee7021091f3df92b7816ece2902ff59b37f1be
             ILLUMOS_PIN=098e95820891f8a83fae679daece7fcf58b7b3a4
             mkdir -p "$ART"
-            exec > >(tee "$ART/native-openindiana-build.log") 2>&1
+            . "$GITHUB_WORKSPACE/wifi-ax101/ci/native-diagnostics.sh"
+            ax101_diag_init "$ART"
             finish() {
-              rc=$?
-              trap - EXIT
-              printf 'exit_code=%s\n' "$rc" > "$ART/native-build-status.txt"
-              printf 'completed_utc=%s\n' "$(date -u +%FT%TZ)" >> "$ART/native-build-status.txt"
+              local finish_rc=$?
+              trap - EXIT ERR
+              set +e
               if [ -s "$ART/iwx" ]; then
                 digest -a sha256 "$ART/iwx" > "$ART/iwx.sha256"
                 file "$ART/iwx" > "$ART/iwx.file.txt"
@@ -339,9 +348,11 @@ jobs:
                 elfdump -r "$ART/iwx" > "$ART/iwx.relocations.txt" 2>&1 || true
                 nm -p "$ART/iwx" > "$ART/iwx.symbols.txt" 2>&1 || true
               fi
-              exit "$rc"
+              ax101_diag_finish "$finish_rc"
+              exit "$finish_rc"
             }
             trap finish EXIT
+            ax101_diag_stage VM_ENVIRONMENT_INITIALIZATION
 
             echo "GITHUB_REF=$GITHUB_REF"
             echo "GITHUB_SHA=$GITHUB_SHA"
@@ -365,6 +376,19 @@ jobs:
             "$CC" --version | head -1
             gmake --version | head -1
             test -d /usr/include/sys
+            {
+              echo "uname=$(uname -a)"
+              echo "release=$(head -1 /etc/release)"
+              echo "pwd=$PWD"
+              echo "umask=$(umask)"
+              echo "PATH=$PATH"
+              echo "CC=$CC"
+              echo "LD=$LD"
+              echo "MAKE=$(gmake --version | head -1)"
+              echo "GCC=$("$CC" --version | head -1)"
+            } > "$ART/runner-environment.txt"
+            ax101_diag_pass VM_ENVIRONMENT_INITIALIZATION
+            ax101_diag_stage PINNED_UPSTREAM_CHECKOUT
 
             # Never consume a Solnix checkout or generated tree from the repository branch.
             # Recreate the exact pinned upstream in a fresh directory, then apply R5+0027.
@@ -373,6 +397,8 @@ jobs:
             git -C "$SRC" checkout --detach "$PIN"
             test "$(git -C "$SRC" rev-parse HEAD)" = "$PIN"
             test "$(git -C "$SRC" status --porcelain | wc -l | tr -d ' ')" = "0"
+            ax101_diag_pass PINNED_UPSTREAM_CHECKOUT
+            ax101_diag_stage PATCH_STACK_APPLICATION
             ln -sfn "$GITHUB_WORKSPACE/wifi-ax101/solnix-$PIN.zip" "$INPUTS/wifi-ax101/solnix-$PIN.zip"
             test -s "$INPUTS/wifi-ax101/solnix-$PIN.zip"
             printf 'solnix_revision=%s\nillumos_gate_revision=%s\n' "$PIN" "$ILLUMOS_PIN" > "$ART/source-revision.txt"
@@ -380,13 +406,22 @@ jobs:
             echo "runner_transfer_bundle_sha256=a716503cc1a4fcf42004f459584492144739ea7aa12563e6fa1af5d2bc4dab0a" >> "$ART/source-revision.txt"
             echo "checked_out_solnix_head=$(git -C "$SRC" rev-parse HEAD)" >> "$ART/source-revision.txt"
 
-            bash "$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh" "$SRC" "$ART/r5-integration-replay" \\
-              2>&1 | tee "$ART/r5-integration-replay.log"
+            set +e
+            ax101_diag_command integration-replay bash "$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh" "$SRC" "$ART/r5-integration-replay" 2>&1 | tee "$ART/r5-integration-replay.log"
+            replay_rc=${PIPESTATUS[0]}
+            set -e
+            echo "integration_replay_exit=$replay_rc" > "$ART/integration-replay-status.txt"
+            test "$replay_rc" -eq 0
             test -s "$ART/r5-integration-replay/final-result.txt"
             grep -Fq 'RUN80_R5_INTEGRATION_REPLAY=PASS' "$ART/r5-integration-replay/final-result.txt"
             echo "CI_SOURCE_IDENTITY_VERIFIED=PASS"
             echo "PRODUCTION_SOURCE_ROOT=$SRC/src/ports/wifi/iwx"
             echo "PRODUCTION_SOURCE_ROOT=$SRC/src/ports/wifi/iwx" > "$ART/production-source-root.txt"
+            ax101_diag_pass PATCH_STACK_APPLICATION
+            ax101_diag_pass INTEGRATION_REPLAY_VALIDATION
+            ax101_diag_pass SOURCE_STATIC_TESTS
+            ax101_diag_pass HOST_MODEL_TESTS
+            ax101_diag_stage NATIVE_BUILD_PREPARATION
 
             # Exact pinned illumos-gate compatibility headers; use native OI headers first.
             : > "$ART/net80211-header-closure.txt"
@@ -438,9 +473,12 @@ jobs:
             echo "RUN77_MODEL_PYTHON39_COMPAT=PRECHECKED_BY_TRANSFER_STEP"
             echo "NATIVE_SOURCE_ROOT_CONFIRMED=$SRC/src/ports/wifi/iwx"
             cd "$SRC/src/ports/wifi/iwx"
-            gmake -f Makefile.illumos clean
+            ax101_diag_command gmake-clean gmake -f Makefile.illumos clean
+            ax101_diag_pass NATIVE_BUILD_PREPARATION
+            ax101_diag_stage EXACT_NATIVE_GMAKE
+            ax101_diag_stage NATIVE_COMPILATION
             set +e
-            gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld 2>&1 | tee "$ART/compiler-output.log"
+            ax101_diag_command native-gmake gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld 2>&1 | tee "$ART/compiler-output.log"
             compile_rc=${PIPESTATUS[0]}
             set -e
             echo "gmake_exit=$compile_rc" | tee "$ART/native-compile-exit.txt"
@@ -449,12 +487,17 @@ jobs:
               grep -E 'warning:' "$ART/compiler-output.log" > "$ART/compiler-warnings.txt" || true
               exit "$compile_rc"
             fi
+            ax101_diag_pass EXACT_NATIVE_GMAKE
+            ax101_diag_pass NATIVE_COMPILATION
+            ax101_diag_stage NATIVE_LINKING
             grep -Fq 'warning: taking address of packed member' "$ART/compiler-output.log" && { echo "ERROR: packed member warning" >&2; exit 1; } || true
             grep -Fq 'warning: "m_free" redefined' "$ART/compiler-output.log" && { echo "ERROR: m_free macro warning" >&2; exit 1; } || true
             grep -Eq 'warning: "SIOC[GS]80211[^"]*" redefined' "$ART/compiler-output.log" && { echo "ERROR: ioctl macro warning" >&2; exit 1; } || true
             grep -Eq 'warning: "(ETHERMTU|ETHERTYPE_IP|ETHERTYPE_ARP|ETHERTYPE_IPV6|roundup)" redefined' "$ART/compiler-output.log" && { echo "ERROR: native Ethernet/roundup macro warning" >&2; exit 1; } || true
             test -s iwx
             cp iwx "$ART/iwx"
+            ax101_diag_pass NATIVE_LINKING
+            ax101_diag_stage ELF_MODULE_INSPECTION
 
             python3 "$INPUTS/wifi-ax101/tests/test-check-elf-exports.py"
             nm -u "$ART/iwx" > "$ART/iwx.undefined.txt"
@@ -517,6 +560,8 @@ jobs:
             rem_drv iwx > "$ART/rem-drv.txt" 2>&1
             rm -f /kernel/drv/amd64/iwx
             echo "KRTLD_CONTROLLED_UNLOAD=PASS"
+            ax101_diag_pass ELF_MODULE_INSPECTION
+            ax101_diag_stage ARTIFACT_PACKAGING
 
             FWBASE="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain"
             curl -fL "$FWBASE/iwlwifi-so-a0-hr-b0-77.ucode?id=20241017" -o "$ART/iwx-so-a0-hr-b0-77"
@@ -526,7 +571,36 @@ jobs:
             digest -a sha256 "$ART/iwx-so-a0-hr-b0-77" > "$ART/ax101-firmware.sha256"
             echo "NATIVE_OPENINDIANA_BUILD=PASS" > "$ART/STATUS.txt"
             echo "BUILD_OK: exact R5 integration source replayed; native module built, ELF checked, registered, loaded and unloaded; firmware API-77 image staged" >> "$ART/STATUS.txt"
+            ax101_diag_pass ARTIFACT_PACKAGING
             AX101_BUILD
+
+      - name: Capture remote VM and SSH outcome
+        if: always()
+        shell: bash
+        env:
+          VM_STEP_OUTCOME: ${{ steps.native-build.outcome }}
+        run: |
+          set +e
+          ART="$GITHUB_WORKSPACE/wifi-ax101-artifacts"
+          mkdir -p "$ART"
+          {
+            echo "vm_action_outcome=$VM_STEP_OUTCOME"
+            if [ -s "$ART/native-build-status.txt" ]; then
+              echo "remote_status_file=PRESENT"
+              cat "$ART/native-build-status.txt"
+            else
+              echo "remote_status_file=MISSING"
+              echo "remote_process_status=UNAVAILABLE (VM shell/SSH ended before EXIT trap persisted status)"
+            fi
+            if [ -s "$ART/native-openindiana-build.log" ]; then
+              echo "remote_native_log=PRESENT"
+              wc -c "$ART/native-openindiana-build.log"
+              tail -n 120 "$ART/native-openindiana-build.log"
+            else
+              echo "remote_native_log=MISSING"
+            fi
+          } > "$ART/runner-ssh-status.txt"
+          cat "$ART/runner-ssh-status.txt"
 
       - name: Upload exact-source build and identity evidence
         if: always()
