@@ -246,16 +246,14 @@ jobs:
           # metadata; restore candidate directory modes and exclude only root .git.
           TREE_PATCH="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch"
           TREE_CHECKER="$INPUTS/wifi-ax101/tests/verify-integration-tree.py"
-          TREE_CHECKER_TEST="$INPUTS/wifi-ax101/tests/test-verify-integration-tree.py"
-          INTEGRATION_WRAPPER="$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh"
-          EXPECTED_TREE_PATCH_BLOB="6a5f6e61e2f618e357f85e391752819c389df5d5"
+          EXPECTED_TREE_PATCH_BLOB="bf219286720cbcce5fca6155ca96f7943b44d070"
           test -s "$TREE_PATCH"
           ACTUAL_TREE_PATCH_BLOB=$(git -C "$GITHUB_WORKSPACE" rev-parse "$GITHUB_SHA:r5-integration-transfer/ci-overlays/0004-exact-tree-ignore-git-and-restore-dir-modes.patch")
           test "$ACTUAL_TREE_PATCH_BLOB" = "$EXPECTED_TREE_PATCH_BLOB"
           patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$TREE_PATCH"
           patch --batch --forward --fuzz=0 -d "$INPUTS" -p1 < "$TREE_PATCH"
-          sha256sum "$TREE_PATCH" "$TREE_CHECKER" "$TREE_CHECKER_TEST" "$INTEGRATION_WRAPPER" > "$ART/exact-tree-overlay-files.sha256"
-          python3 "$TREE_CHECKER_TEST" "$TREE_CHECKER" | tee "$ART/exact-tree-checker-tests-runner.log"
+          sha256sum "$TREE_PATCH" "$TREE_CHECKER" > "$ART/exact-tree-overlay-files.sha256"
+          python3 "$GITHUB_WORKSPACE/wifi-ax101/ci/test_verify_integration_tree.py" "$TREE_CHECKER" | tee "$ART/exact-tree-checker-tests-runner.log"
           {
             echo "CI_ONLY_EXACT_TREE_OVERLAY=0004-exact-tree-ignore-git-and-restore-dir-modes.patch"
             echo "CI_EXACT_TREE_PATCH_GIT_BLOB=$EXPECTED_TREE_PATCH_BLOB"
