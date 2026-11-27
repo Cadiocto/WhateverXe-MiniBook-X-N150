@@ -286,7 +286,7 @@ jobs:
           }
           for rel, want in expected.items():
               data = (root / rel).read_bytes().replace(bytes([13, 10]), bytes([10]))
-              blob = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\\0" + data).hexdigest()
+              blob = hashlib.sha1(b"blob " + str(len(data)).encode() + bytes([0]) + data).hexdigest()
               if blob != want:
                   raise SystemExit(f"pinned illumos header mismatch: {rel}: {blob} != {want}")
               print(f"PINNED_HEADER_LF_BLOB=PASS {rel} {blob}")
