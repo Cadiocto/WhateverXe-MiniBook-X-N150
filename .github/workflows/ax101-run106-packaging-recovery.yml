@@ -92,7 +92,8 @@ jobs:
             --builder-commit "25a7144f849eec4c6c31303b41dfd2593ef59cfd" \
             --iso-sha256 "c5cd9572219f49975c333ac8339b18989e5477ab2e81844b0b84c3ae776a6e1a"
 
-          # The verifier checks operational executable modes, while preserving source-only hook snapshots.
+          # Both the packager and independent verifier restrict executable-bit checks
+          # to operational scripts, not evidence-only snapshots of the source hooks.
           python3 run106-support/verify-offline-bundle.py \
             "$GITHUB_WORKSPACE/source-run106/AX101-OpenIndiana-RUN106-OFFLINE.zip"
           cat "$GITHUB_WORKSPACE/source-run106/RUN106-ARTIFACT-SHA256SUMS.txt"
