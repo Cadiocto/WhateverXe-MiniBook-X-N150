@@ -165,6 +165,32 @@ jobs:
             echo "CI_TEST_HARNESS_OVERLAY=PASS"
           } | tee "$ART/ci-portability-overlay.txt"
 
+          # Keep R5 base replay checks, but defer full-candidate equivalence until
+          # additive 0027 is applied by the integration wrapper.
+          ORDER_PATCH="$GITHUB_WORKSPACE/r5-integration-transfer/ci-overlays/0002-defer-final-tree-check-until-after-0027.patch"
+          EXPECTED_ORDER_PATCH_SHA="c93a9a5e9002005fe0e55e1ab2a3e030dca01ebacf5abb1d802e77b9530fcca8"
+          BASE_REPLAY_SCRIPT="$INPUTS/wifi-ax101/apply-run80-stack.sh"
+          INTEGRATION_REPLAY_SCRIPT="$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh"
+          EXPECTED_BASE_BEFORE="0a7f1575802c48e5b302edc0655efba4e059b5e8044660a01217e22d7830872f"
+          EXPECTED_INTEGRATION_BEFORE="d1c7d6d205b4c2268c1a987822d97c6ea1562d76d15f0972b10c83e907679dbd"
+          EXPECTED_BASE_AFTER="e5c494cba7a6108c676f67f6eb6cba8ee3eb193dc6b15454985771f201288266"
+          EXPECTED_INTEGRATION_AFTER="d53e37168f7a44c3ec2e5d63d45f985458be9615fecfdff57ec91384feff97f9"
+          test -s "$ORDER_PATCH"
+          printf '%s  %s\\n' "$EXPECTED_ORDER_PATCH_SHA" "$ORDER_PATCH" | sha256sum -c -
+          test "$(sha256sum "$BASE_REPLAY_SCRIPT" | awk '{print $1}')" = "$EXPECTED_BASE_BEFORE"
+          test "$(sha256sum "$INTEGRATION_REPLAY_SCRIPT" | awk '{print $1}')" = "$EXPECTED_INTEGRATION_BEFORE"
+          patch --batch --dry-run --fuzz=0 -d "$INPUTS" -p1 < "$ORDER_PATCH"
+          patch --batch --forward --fuzz=0 -d "$INPUTS" -p1 < "$ORDER_PATCH"
+          test "$(sha256sum "$BASE_REPLAY_SCRIPT" | awk '{print $1}')" = "$EXPECTED_BASE_AFTER"
+          test "$(sha256sum "$INTEGRATION_REPLAY_SCRIPT" | awk '{print $1}')" = "$EXPECTED_INTEGRATION_AFTER"
+          {
+            echo "CI_ONLY_REPLAY_ORDER_OVERLAY=0002-defer-final-tree-check-until-after-0027.patch"
+            echo "CI_REPLAY_ORDER_PATCH_SHA256=$EXPECTED_ORDER_PATCH_SHA"
+            echo "BASE_REPLAY_SCRIPT_SHA256=$EXPECTED_BASE_AFTER"
+            echo "INTEGRATION_REPLAY_SCRIPT_SHA256=$EXPECTED_INTEGRATION_AFTER"
+            echo "CI_REPLAY_ORDER_OVERLAY=PASS"
+          } | tee "$ART/ci-replay-order-overlay.txt"
+
           CANDIDATE_MANIFEST="$INPUTS/INTEGRATION-CANDIDATE-MANIFEST.tsv"
           test -s "$CANDIDATE_MANIFEST"
           test "$(wc -l < "$CANDIDATE_MANIFEST" | tr -d ' ')" = "4503"

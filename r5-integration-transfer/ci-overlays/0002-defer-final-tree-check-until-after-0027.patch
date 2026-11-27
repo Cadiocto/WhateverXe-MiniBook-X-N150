@@ -1,0 +1,46 @@
+--- a/wifi-ax101/apply-run80-stack.sh
++++ b/wifi-ax101/apply-run80-stack.sh
+@@ -213,9 +213,16 @@
+ 
+ python3 "$HERE/tests/rx-ownership-r5.py" "$SRC" \
+   | tee "$ART/r5-rx-ownership.log"
+-python3 "$HERE/tests/verify-r5-replay.py" \
+-  "$HERE/../solnix-$PIN/src/ports/wifi" "$WIFI" \
+-  | tee "$ART/r5-clean-replay-comparison.log"
++if [[ "${RUN80_R5_INTEGRATION_DEFER_TREE_COMPARE:-0}" == "1" ]]; then
++  # The integration runner applies additive patch 0027 after this R5 baseline
++  # replay. The full candidate-tree comparison must run after 0027, not here.
++  echo 'R5_BASE_TREE_COMPARE=DEFERRED_TO_POST_0027_INTEGRATION_GATE' \
++    | tee "$ART/r5-clean-replay-comparison.log"
++else
++  python3 "$HERE/tests/verify-r5-replay.py" \
++    "$HERE/../solnix-$PIN/src/ports/wifi" "$WIFI" \
++    | tee "$ART/r5-clean-replay-comparison.log"
++fi
+ 
+ echo 'RUN80_PATCH_STACK=PASS (manual apply only; no Git metadata/commit/network; 0001-0024)' \
+   | tee "$ART/patch-stack-result.txt"
+--- a/wifi-ax101/apply-run80-r5-integration-stack.sh
++++ b/wifi-ax101/apply-run80-r5-integration-stack.sh
+@@ -10,7 +10,8 @@
+ TESTS="$SRC/src/ports/wifi/iwx/tests"
+ mkdir -p "$ART"
+ # Reproduce and validate R5 first. This runs the original 0001-0024 replay and its regression suite.
+-bash "$HERE/apply-run80-stack.sh" "$SRC" "$ART/r5-base"
++RUN80_R5_INTEGRATION_DEFER_TREE_COMPARE=1 \
++  bash "$HERE/apply-run80-stack.sh" "$SRC" "$ART/r5-base"
+ # Apply the one additive integration patch to that exact R5 replay.
+ git -C "$SRC" apply --check --whitespace=nowarn "$HERE/patches/0027-run80-r5-active-iwx-integration.patch" \
+   > "$ART/0027-check.log" 2>&1
+@@ -45,6 +46,11 @@
+   > "$ART/run77-contract-model.log" 2>&1
+ # The replay must be byte/mode/symlink identical to the integration candidate source manifest.
+ find "$SRC" -type d -name __pycache__ -prune -exec rm -rf {} +
++# Compare only after additive 0027: the expected snapshot is the complete
++# Integration candidate, not the intermediate R5 0001-0024 replay.
++python3 "$HERE/tests/verify-r5-replay.py" \
++  "$HERE/../solnix-$PIN/src/ports/wifi" "$WIFI" \
++  | tee "$ART/integration-source-equivalence.log"
+ python3 "$HERE/tests/verify-integration-tree.py" --source-root "$SRC" \
+   --manifest "$HERE/INTEGRATION-EXPECTED-TREE.tsv" | tee "$ART/exact-tree-compare.log"
+ echo 'RUN80_R5_INTEGRATION_REPLAY=PASS (base patches 0001-0024 + additive 0027)' | tee "$ART/final-result.txt"
