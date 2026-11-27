@@ -162,6 +162,7 @@ def main() -> None:
                 "module dynamic dependency on misc/mac was not observed")
         reloc = read(evidence("iwx.relocations.txt"))
         textrel_present = "TEXTREL" in dynamic
+        require(textrel_present, "verified RUN106 module must retain its observed TEXTREL disclosure")
         (art / "textrel-status.txt").write_text(
             "ELF_TEXTREL_PRESENT=" + ("YES" if textrel_present else "NO") + "\n")
 
@@ -182,15 +183,17 @@ def main() -> None:
         evidence_names = [
             "target-kernel-preflight-before-tools.txt", "toolchain-preflight.txt",
             "target-kernel-identity.txt", "runner-environment.txt", "source-revision.txt",
-            "compiler-output.log", "native-compile-exit.txt", "iwx.file.txt",
+            "compiler-output.log", "native-compile-exit.txt", "native-build-status.txt",
+            "iwx.sha256", "ax101-firmware.sha256", "iwx.file.txt",
             "iwx.elf-header.txt", "iwx.dynamic-acceptance.txt", "iwx.relocations.txt",
             "iwx.undefined.txt", "elf-symbol-reconciliation.txt",
             "elf-relocation-policy.txt", "iwx-krtld-modload.txt",
             "iwx-krtld-modload-status.txt", "iwx-modunload.txt",
-            "iwx-modunload-status.txt", "modinfo-after-modload.txt",
-            "modinfo-after-modunload.txt", "run87-mbuf-regression.log",
-            "run87-dma-regression.log", "connect-wifi-tests.txt",
-            "net80211-header-closure.txt", "STATUS.txt"
+            "iwx-modunload-status.txt", "iwx-module-id.txt", "iwx-modunload-dmesg-delta.txt",
+            "modinfo-after-modload.txt", "modinfo-after-modunload.txt",
+            "run87-mbuf-regression.log", "run87-dma-regression.log",
+            "connect-wifi-tests.txt", "net80211-header-closure.txt",
+            "integration-replay-status.txt", "STATUS.txt"
         ]
         for name in evidence_names:
             src = guest / name
@@ -205,6 +208,8 @@ def main() -> None:
         shutil.copy2(art / "evidence/vm_postBuild.original.sh", package / "evidence/vm_postBuild.original.sh")
         shutil.copy2(art / "evidence/vm_postBuild.modified.sh", package / "evidence/vm_postBuild.modified.sh")
         shutil.copy2(evidence("BUILD-IDENTITY.txt"), package / "evidence/BUILD-IDENTITY.txt")
+        shutil.copy2(evidence("r5-integration-replay/final-result.txt"),
+                     package / "evidence/r5-integration-replay-final-result.txt")
         shutil.copy2(guest_tar, package / "evidence/guest-artifacts.tar.gz")
 
         mbuf_log = read(evidence("run87-mbuf-regression.log"))
