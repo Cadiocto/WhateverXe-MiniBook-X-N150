@@ -439,20 +439,20 @@ jobs:
     # Triggered only by an explicitly labelled packaging-only commit.
     # It downloads the immutable failed-run artifact and its original job log,
     # verifies the postBuild/ISO provenance handoff, then runs the ZIP packager.
-    if: \${{ contains(github.event.head_commit.message || '', '[packaging-only]') }}
+    if: ${{ contains(github.event.head_commit.message || '', '[packaging-only]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout packaging recovery tools
         uses: actions/checkout@v4
         with:
-          ref: \${{ github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Download original RUN106 artifact and original GitHub job log
         shell: bash
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -Eeuo pipefail
           mkdir -p source-run106 source-run106-logs
