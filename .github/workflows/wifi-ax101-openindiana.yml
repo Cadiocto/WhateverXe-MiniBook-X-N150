@@ -458,7 +458,7 @@ jobs:
               src="$INPUTS/wifi-ax101/compat/$rel"
               test -s "$src"
               raw_blob=$(git -C "$GITHUB_WORKSPACE" hash-object "$src")
-              actual_blob=$(tr -d '\\r' < "$src" | git -C "$GITHUB_WORKSPACE" hash-object --stdin)
+              actual_blob=$(tr -d '\015' < "$src" | git -C "$GITHUB_WORKSPACE" hash-object --stdin)
               printf '%s\\t%s\\t%s\\n' "$rel" "$raw_blob" "$actual_blob" >> "$ART/compat-header-blob-normalization.txt"
               test "$actual_blob" = "$expected_blob"
               native="/usr/include/$rel"
@@ -470,9 +470,9 @@ jobs:
                 printf '%s\t%s\tnative\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
               else
                 mkdir -p "$(dirname "$dst")"
-                tr -d '\\r' < "$src" > "$dst"
+                tr -d '\015' < "$src" > "$dst"
                 chmod 0644 "$dst"
-                tr -d '\\r' < "$src" | cmp -s - "$dst"
+                tr -d '\015' < "$src" | cmp -s - "$dst"
                 digest -a sha256 "$dst" > "$ART/header-$safe.sha256"
                 printf '%s\t%s\tstaged-pinned-illumos-gate\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
               fi
