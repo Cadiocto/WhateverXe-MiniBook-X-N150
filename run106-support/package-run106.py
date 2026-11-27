@@ -198,8 +198,16 @@ def main() -> None:
             target.chmod(0o755)
         (package / "connect-wifi.py").chmod(0o755)
         shutil.copy2(repo / "run106-support/offline/README.md", package / "README.md")
-        source_archive = repo / "wifi-ax101/scanfix-implementation.tar.gz"
-        require(source_archive.is_file(), "scan-fix source/test archive is missing from the validation branch")
+        source_parts_dir = repo / "wifi-ax101/scanfix-archive-parts"
+        source_parts = sorted(source_parts_dir.glob("*.b64"))
+        require([p.name for p in source_parts] == [f"{i:02d}.b64" for i in range(8)],
+                "scan-fix source archive parts are incomplete")
+        source_bytes = __import__("base64").b64decode(
+            "".join(p.read_text().strip() for p in source_parts), validate=True)
+        source_archive = tmp / "scanfix-implementation.tar.gz"
+        source_archive.write_bytes(source_bytes)
+        require(sha256(source_archive) == "288328192b312e06baece8893ed7dca447869500019d3d6770694f7f81b85b38",
+                "scan-fix source archive SHA-256 mismatch")
         (package / "source").mkdir()
         shutil.copy2(source_archive, package / "source/scanfix-implementation.tar.gz")
         with tarfile.open(source_archive, "r:gz") as sf:

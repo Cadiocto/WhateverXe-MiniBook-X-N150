@@ -380,7 +380,7 @@ jobs:
           test "$(git -C "$BUILDER" rev-parse HEAD)" = "25a7144f849eec4c6c31303b41dfd2593ef59cfd"
           cd "$BUILDER"
           python3 build.py conf/run106.conf
-      - name: Capture target guest evidence and package RUN106
+      - name: Capture target guest evidence and package RUN107 SCANFIX
         if: always()
         shell: bash
         env:
@@ -427,11 +427,11 @@ jobs:
           } > "$ART/RUN106-FAILURE-SUMMARY.txt"
           exit 0
 
-      - name: Upload RUN106 evidence and offline bundle
+      - name: Upload RUN107 scan-fix evidence and offline bundle
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: AX101-OpenIndiana-RUN106-${{ github.run_id }}
+          name: AX101-OpenIndiana-RUN107-SCANFIX-${{ github.run_id }}
           path: wifi-ax101-artifacts/
           if-no-files-found: warn
           retention-days: 30

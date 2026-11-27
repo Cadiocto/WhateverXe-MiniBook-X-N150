@@ -154,10 +154,29 @@ ax101_diag_pass GENERATOR_REPLAY
 # RUN107 scan-discovery fix: apply only after the exact RUN106/RUN87 generated
 # sources exist. The tarball contains the reviewed additive 0028 patch, tests,
 # DTrace program and one-shot physical validation script.
+SCANFIX_ARCHIVE="$WIFI/scanfix-implementation.tar.gz"
+SCANFIX_PARTS="$WIFI/scanfix-archive-parts"
+test -d "$SCANFIX_PARTS"
+python3 - "$SCANFIX_PARTS" "$SCANFIX_ARCHIVE" <<'PY'
+import base64, hashlib, pathlib, sys
+parts_dir, output = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+parts = sorted(parts_dir.glob("*.b64"))
+expected_names = [f"{i:02d}.b64" for i in range(8)]
+if [p.name for p in parts] != expected_names:
+    raise SystemExit("scanfix archive parts incomplete or out of order")
+encoded = "".join(p.read_text().strip() for p in parts)
+payload = base64.b64decode(encoded, validate=True)
+actual = hashlib.sha256(payload).hexdigest()
+expected = "288328192b312e06baece8893ed7dca447869500019d3d6770694f7f81b85b38"
+if actual != expected:
+    raise SystemExit(f"scanfix source archive SHA-256 mismatch: {actual}")
+output.write_bytes(payload)
+print(f"SCANFIX_SOURCE_ARCHIVE_SHA256={actual}")
+PY
 SCANFIX_ROOT="$WIFI/scanfix-implementation"
 rm -rf "$SCANFIX_ROOT"
 mkdir -p "$SCANFIX_ROOT"
-tar -xzf "$WIFI/scanfix-implementation.tar.gz" -C "$SCANFIX_ROOT"
+tar -xzf "$SCANFIX_ARCHIVE" -C "$SCANFIX_ROOT"
 SCANFIX_ROOT="$SCANFIX_ROOT/scanfix-implementation"
 SCANFIX_PATCH="$SCANFIX_ROOT/patches/0028-ax101-scan-notification-rx-fix.patch"
 test -s "$SCANFIX_PATCH"

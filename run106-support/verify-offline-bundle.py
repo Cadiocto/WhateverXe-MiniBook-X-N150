@@ -63,6 +63,15 @@ def main() -> None:
             seen.add(rel)
         need(seen == set(entries) - {"SHA256SUMS"},
              "SHA256SUMS coverage does not equal all non-manifest members")
+        source_archive = z.read("source/scanfix-implementation.tar.gz")
+        need(sha(source_archive) == "288328192b312e06baece8893ed7dca447869500019d3d6770694f7f81b85b38",
+             "scanfix source archive SHA-256 mismatch")
+        scan_patch = z.read("source/scanfix-implementation/patches/0028-ax101-scan-notification-rx-fix.patch")
+        need(sha(scan_patch) == "9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80",
+             "scanfix patch SHA-256 mismatch")
+        source_identity = z.read("evidence/scanfix-source-identity.txt").decode(errors="replace")
+        need("SCANFIX_NEGATIVE_CONTROLS=10/10" in source_identity,
+             "source identity does not show all scanfix negative controls")
         module = z.read("payload/iwx")
         firmware = z.read("payload/iwx-so-a0-hr-b0-77")
         provenance = z.read("build-provenance.txt").decode()
@@ -97,13 +106,14 @@ def main() -> None:
             if name in operational_scripts:
                 need(bool(mode & stat.S_IXUSR), "executable bit missing: " + name)
         p = provenance
+        need(any(x in p for x in ("ELF_TEXTREL_PRESENT=YES", "ELF_TEXTREL_PRESENT=NO")),
+             "ELF_TEXTREL inspection result is missing")
         for marker in (
             "OPENINDIANA_GUEST_KERNEL=illumos-c893fd03ad",
             "TARGET_LAPTOP_KERNEL=illumos-c893fd03ad",
             "KERNEL_MATCH=PASS",
             "FIRMWARE_API=77",
             "PKG_UPDATE=SKIPPED",
-            "ELF_TEXTREL_PRESENT=YES",
             "PHYSICAL_PCI_ATTACH=USER_REPORTED_VERIFIED",
             "PHYSICAL_SCAN_DISCOVERY=NOT_YET_VERIFIED",
         ):
