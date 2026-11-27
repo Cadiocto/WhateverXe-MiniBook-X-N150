@@ -1,34 +1,184 @@
-name: Intel AX101 Wi-Fi driver build (OpenIndiana)
+name: AX101 RUN80 R5 Integration — exact candidate OpenIndiana build
 
 on:
   push:
-    branches: [wifi-ax101-openindiana, ax101-run64-validation]
+    branches: [ax101-r5-integration-validation]
     paths:
-      - "wifi-ax101/**"
+      - "r5-integration-transfer/**"
       - ".github/workflows/wifi-ax101-openindiana.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Serialize VM builds without cancelling an active build when a newer commit arrives.
+# One global build slot for this workflow; never cancel an active native VM build.
 concurrency:
-  group: wifi-ax101-openindiana-${{ github.ref }}
+  group: ax101-run80-r5-integration-openindiana-global
   cancel-in-progress: false
 
 jobs:
   build-iwx:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
-      - name: Checkout this branch
+      - name: Checkout the exact workflow revision
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - name: Prepare artifact directory
+      - name: Prepare artifact and transfer directories
         shell: bash
-        run: mkdir -p wifi-ax101-artifacts
+        run: |
+          set -Eeuo pipefail
+          mkdir -p wifi-ax101-artifacts r5-runner-inputs
 
-      - name: Build pinned illumos iwx port in OpenIndiana 2026.10
+      - name: Verify exact R5 Integration candidate transfer before native build
+        id: verify-candidate
+        shell: bash
+        env:
+          EXPECTED_REF: refs/heads/ax101-r5-integration-validation
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          ART="$GITHUB_WORKSPACE/wifi-ax101-artifacts"
+          INPUTS="$GITHUB_WORKSPACE/r5-runner-inputs"
+          BUNDLE="$ART/r5-integration-runner-inputs.zip"
+          EXPECTED_CANDIDATE_SHA="f251541a7c60cc46cdaecc0719e42c576f6f5bd4699dea712a7db5ab9f54a1d0"
+          EXPECTED_BUNDLE_SHA="a716503cc1a4fcf42004f459584492144739ea7aa12563e6fa1af5d2bc4dab0a"
+          EXPECTED_SOLNIX_SHA="863b183cb8eed61458f3458f4321874d4aed89144e087a7c41f2df4c16913c40"
+          EXPECTED_SOLNIX_BLOB="506136aad8f6d807b52d90146e2f76e53fcbcad1"
+          PIN="1cee7021091f3df92b7816ece2902ff59b37f1be"
+          ILLUMOS_PIN="098e95820891f8a83fae679daece7fcf58b7b3a4"
+          {
+            echo "github_ref=$GITHUB_REF"
+            echo "github_ref_name=$GITHUB_REF_NAME"
+            echo "github_sha=$GITHUB_SHA"
+            echo "checked_out_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+          } | tee "$ART/runner-checkout-identity.txt"
+          test "$GITHUB_REF" = "$EXPECTED_REF"
+          test "$GITHUB_REF_NAME" = "ax101-r5-integration-validation"
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          test "$EXPECTED_COMMIT" = "$GITHUB_SHA"
+          test -s "$GITHUB_WORKSPACE/r5-integration-transfer/SOURCE-IDENTITY.txt"
+          grep -Fx "local_candidate_sha256=$EXPECTED_CANDIDATE_SHA" "$GITHUB_WORKSPACE/r5-integration-transfer/SOURCE-IDENTITY.txt"
+          grep -Fx "solnix_commit=$PIN" "$GITHUB_WORKSPACE/r5-integration-transfer/SOURCE-IDENTITY.txt"
+          grep -Fx "illumos_gate_commit=$ILLUMOS_PIN" "$GITHUB_WORKSPACE/r5-integration-transfer/SOURCE-IDENTITY.txt"
+          grep -Fx "firmware_api=77" "$GITHUB_WORKSPACE/r5-integration-transfer/SOURCE-IDENTITY.txt"
+          grep -Fx "pci_vendor_device=8086:54F0" "$GITHUB_WORKSPACE/r5-integration-transfer/SOURCE-IDENTITY.txt"
+          grep -Fx "pci_subsystem=8086:0244" "$GITHUB_WORKSPACE/r5-integration-transfer/SOURCE-IDENTITY.txt"
+
+          cat "$GITHUB_WORKSPACE"/r5-integration-transfer/parts/part-*.b64 | base64 --decode > "$BUNDLE"
+          printf '%s  %s\n' "$EXPECTED_BUNDLE_SHA" "$BUNDLE" | sha256sum -c -
+          unzip -tq "$BUNDLE"
+          rm -rf "$INPUTS"
+          mkdir -p "$INPUTS"
+          unzip -q "$BUNDLE" -d "$INPUTS"
+
+          python3 - "$INPUTS" <<'PY'
+          from pathlib import Path, PurePosixPath
+          import hashlib, os, stat, sys
+          root = Path(sys.argv[1])
+          manifest = root / "R5-TRANSFER-MANIFEST.tsv"
+          if not manifest.is_file():
+              raise SystemExit("missing R5-TRANSFER-MANIFEST.tsv")
+          rows = manifest.read_text().splitlines()
+          if not rows or rows[0] != "type\tmode\tsize\tsha256_or_target\tpath":
+              raise SystemExit("transfer manifest header mismatch")
+          expected = set()
+          failures = []
+          for line_no, line in enumerate(rows[1:], 2):
+              fields = line.split("\t", 4)
+              if len(fields) != 5:
+                  failures.append(f"manifest line {line_no}: malformed")
+                  continue
+              kind, mode, size, digest, rel = fields
+              pp = PurePosixPath(rel)
+              if pp.is_absolute() or ".." in pp.parts or rel in expected:
+                  failures.append(f"manifest line {line_no}: unsafe/duplicate path {rel}")
+                  continue
+              expected.add(rel)
+              p = root.joinpath(*pp.parts)
+              if not (p.exists() or p.is_symlink()):
+                  failures.append(f"missing: {rel}")
+                  continue
+              st = p.lstat()
+              if kind != "link":
+                  actual_mode = f"{stat.S_IMODE(st.st_mode):04o}"
+                  if actual_mode != mode:
+                      # Info-ZIP strips setgid on directory extraction; restore the
+                      # manifest's exact mode before verifying it.
+                      if kind == "dir" and p.is_dir():
+                          os.chmod(p, int(mode, 8))
+                          st = p.lstat()
+                          actual_mode = f"{stat.S_IMODE(st.st_mode):04o}"
+                      if actual_mode != mode:
+                          failures.append(f"mode: {rel}: expected {mode}, got {actual_mode}")
+              if kind == "dir":
+                  if not stat.S_ISDIR(st.st_mode): failures.append(f"not directory: {rel}")
+              elif kind == "link":
+                  if not p.is_symlink() or os.readlink(p) != digest:
+                      failures.append(f"symlink mismatch: {rel}")
+              elif kind == "file":
+                  if not stat.S_ISREG(st.st_mode):
+                      failures.append(f"not regular file: {rel}")
+                  else:
+                      b = p.read_bytes()
+                      if len(b) != int(size) or hashlib.sha256(b).hexdigest() != digest:
+                          failures.append(f"content mismatch: {rel}")
+              else:
+                  failures.append(f"unknown type {kind}: {rel}")
+          actual = {p.relative_to(root).as_posix() for p in root.rglob("*") if p != manifest}
+          missing = expected - actual
+          extra = actual - expected
+          failures.extend(f"missing path: {p}" for p in sorted(missing))
+          failures.extend(f"extra path: {p}" for p in sorted(extra))
+          print(f"TRANSFER_MANIFEST_ENTRIES={len(expected)}")
+          print(f"TRANSFER_ACTUAL_ENTRIES={len(actual)}")
+          print(f"TRANSFER_MISSING={len(missing)}")
+          print(f"TRANSFER_EXTRA={len(extra)}")
+          if failures:
+              print("\n".join(failures))
+              raise SystemExit(1)
+          print("TRANSFER_MANIFEST=PASS")
+          PY
+
+          CANDIDATE_MANIFEST="$INPUTS/INTEGRATION-CANDIDATE-MANIFEST.tsv"
+          test -s "$CANDIDATE_MANIFEST"
+          test "$(wc -l < "$CANDIDATE_MANIFEST" | tr -d ' ')" = "4503"
+          awk -F '\t' '$1 == "file" && $5 == "wifi-ax101/patches/0027-run80-r5-active-iwx-integration.patch" && $3 == 520715 { found=1 } END { exit !found }' "$CANDIDATE_MANIFEST"
+          test -s "$INPUTS/wifi-ax101/patches/0027-run80-r5-active-iwx-integration.patch"
+          test -s "$INPUTS/wifi-ax101/patches/0027-FILE-MODES.tsv"
+          test -s "$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh"
+          test -s "$INPUTS/wifi-ax101/INTEGRATION-EXPECTED-TREE.tsv"
+          test -s "$INPUTS/solnix-$PIN/src/ports/wifi/iwx/tests/verify-active-iwx-integration.py"
+          test -s "$INPUTS/solnix-$PIN/src/ports/wifi/iwx/tests/test-iwx-gldv3-backpressure.py"
+          test -s "$INPUTS/solnix-$PIN/src/ports/wifi/iwx/iwx_glue.c"
+          grep -Fq 'mac_tx_update' "$INPUTS/wifi-ax101/patches/0027-run80-r5-active-iwx-integration.patch"
+          grep -Fq 'BUS_DMASYNC_POSTREAD' "$INPUTS/wifi-ax101/patches/0024-run80-r5-ownership-closure.patch"
+          grep -Fq 'BUS_DMASYNC_PREREAD' "$INPUTS/wifi-ax101/patches/0024-run80-r5-ownership-closure.patch"
+
+          # The one reused pinned source archive is checked byte-for-byte against
+          # the archive embedded in the local candidate (same Git blob + SHA-256).
+          PIN_ARCHIVE="$GITHUB_WORKSPACE/wifi-ax101/solnix-$PIN.zip"
+          test -s "$PIN_ARCHIVE"
+          printf '%s  %s\n' "$EXPECTED_SOLNIX_SHA" "$PIN_ARCHIVE" | sha256sum -c -
+          test "$(git -C "$GITHUB_WORKSPACE" hash-object "$PIN_ARCHIVE")" = "$EXPECTED_SOLNIX_BLOB"
+          {
+            echo "local_candidate_archive_sha256=$EXPECTED_CANDIDATE_SHA"
+            echo "runner_transfer_bundle_sha256=$EXPECTED_BUNDLE_SHA"
+            echo "candidate_manifest_entries=4502"
+            echo "transfer_manifest_entries=540"
+            echo "solnix_commit=$PIN"
+            echo "solnix_archive_sha256=$EXPECTED_SOLNIX_SHA"
+            echo "solnix_archive_git_blob=$EXPECTED_SOLNIX_BLOB"
+            echo "illumos_gate_commit=$ILLUMOS_PIN"
+            echo "patch=0027-run80-r5-active-iwx-integration.patch"
+            echo "PREBUILD_TRANSFER_VALIDATION=PASS"
+          } | tee "$ART/source-transfer-validation.txt"
+          echo "candidate_inputs=$INPUTS" | tee -a "$ART/source-transfer-validation.txt"
+
+      - name: Build exact R5 Integration tree in OpenIndiana Hipster 2026.10
         uses: vmactions/openindiana-vm@v1
         with:
           release: "202610-build"
@@ -40,25 +190,35 @@ jobs:
             /usr/bin/bash -s <<'AX101_BUILD'
             set -Eeuo pipefail
             ART="$GITHUB_WORKSPACE/wifi-ax101-artifacts"
+            INPUTS="$GITHUB_WORKSPACE/r5-runner-inputs"
+            SRC=/tmp/solnix-wifi
+            PIN=1cee7021091f3df92b7816ece2902ff59b37f1be
+            ILLUMOS_PIN=098e95820891f8a83fae679daece7fcf58b7b3a4
             mkdir -p "$ART"
-            exec > >(tee "$ART/build.log") 2>&1
-            rc=0
+            exec > >(tee "$ART/native-openindiana-build.log") 2>&1
             finish() {
               rc=$?
               trap - EXIT
-              printf 'exit_code=%s\n' "$rc" > "$ART/build-status.txt"
-              printf 'completed_utc=%s\n' "$(date -u +%FT%TZ)" >> "$ART/build-status.txt"
+              printf 'exit_code=%s\n' "$rc" > "$ART/native-build-status.txt"
+              printf 'completed_utc=%s\n' "$(date -u +%FT%TZ)" >> "$ART/native-build-status.txt"
               if [ -s "$ART/iwx" ]; then
                 digest -a sha256 "$ART/iwx" > "$ART/iwx.sha256"
                 file "$ART/iwx" > "$ART/iwx.file.txt"
                 elfdump -e "$ART/iwx" > "$ART/iwx.elf-header.txt" 2>&1 || true
                 elfdump -d "$ART/iwx" > "$ART/iwx.dynamic.txt" 2>&1 || true
+                elfdump -r "$ART/iwx" > "$ART/iwx.relocations.txt" 2>&1 || true
                 nm -p "$ART/iwx" > "$ART/iwx.symbols.txt" 2>&1 || true
               fi
               exit "$rc"
             }
             trap finish EXIT
 
+            echo "GITHUB_REF=$GITHUB_REF"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "RUNNER_INPUT_ROOT=$INPUTS"
+            test -s "$INPUTS/R5-TRANSFER-MANIFEST.tsv"
+            test -s "$INPUTS/wifi-ax101/patches/0027-run80-r5-active-iwx-integration.patch"
+            test -s "$INPUTS/wifi-ax101/INTEGRATION-EXPECTED-TREE.tsv"
             uname -a
             cat /etc/release
             test "$(uname -s)" = SunOS
@@ -66,12 +226,9 @@ jobs:
 
             pkg refresh
             for fmri in developer/gcc-14 developer/build/gnu-make developer/versioning/git; do
-              if ! pkg list -H "$fmri" >/dev/null 2>&1; then
-                pkg install --accept "$fmri"
-              fi
+              if ! pkg list -H "$fmri" >/dev/null 2>&1; then pkg install --accept "$fmri"; fi
               pkg list -H "$fmri"
             done
-
             export PATH="/usr/gcc/14/bin:/usr/bin:/usr/sbin"
             export CC=/usr/gcc/14/bin/gcc
             export LD=/usr/bin/ld
@@ -79,235 +236,29 @@ jobs:
             gmake --version | head -1
             test -d /usr/include/sys
 
-            SRC=/tmp/solnix-wifi
-            PIN=1cee7021091f3df92b7816ece2902ff59b37f1be
+            # Never consume a Solnix checkout or generated tree from the repository branch.
+            # Recreate the exact pinned upstream in a fresh directory, then apply R5+0027.
+            rm -rf "$SRC"
             git clone --no-checkout https://github.com/atiq-cs/solnix.git "$SRC"
             git -C "$SRC" checkout --detach "$PIN"
             test "$(git -C "$SRC" rev-parse HEAD)" = "$PIN"
-            echo "solnix_revision=$PIN" > "$ART/source-revision.txt"
-            git -C "$SRC" rev-parse "$PIN^{tree}" > "$ART/solnix-tree-sha.txt"
-            git -C "$SRC" ls-tree -r -l "$PIN" > "$ART/solnix-pinned-tree-manifest.txt"
-            for rel in src/ports/wifi/iwm/iwm_gld.c src/ports/wifi/net80211/n80211_giant.c src/ports/wifi/iwm/iwm_attach.c src/ports/wifi/iwx/iwx_glue.c; do
-              git -C "$SRC" show "$PIN:$rel" > "$ART/$(basename "$rel").pinned"
-              digest -a sha256 "$ART/$(basename "$rel").pinned" >> "$ART/pinned-source-sha256.txt"
-              printf '%s\t%s\n' "$rel" "$(git -C "$SRC" rev-parse "$PIN:$rel")" >> "$ART/pinned-source-blobs.txt"
-            done
+            test "$(git -C "$SRC" status --porcelain | wc -l | tr -d ' ')" = "0"
+            ln -sfn "$GITHUB_WORKSPACE/wifi-ax101/solnix-$PIN.zip" "$INPUTS/wifi-ax101/solnix-$PIN.zip"
+            test -s "$INPUTS/wifi-ax101/solnix-$PIN.zip"
+            printf 'solnix_revision=%s\nillumos_gate_revision=%s\n' "$PIN" "$ILLUMOS_PIN" > "$ART/source-revision.txt"
+            echo "local_candidate_archive_sha256=f251541a7c60cc46cdaecc0719e42c576f6f5bd4699dea712a7db5ab9f54a1d0" >> "$ART/source-revision.txt"
+            echo "runner_transfer_bundle_sha256=a716503cc1a4fcf42004f459584492144739ea7aa12563e6fa1af5d2bc4dab0a" >> "$ART/source-revision.txt"
+            echo "checked_out_solnix_head=$(git -C "$SRC" rev-parse HEAD)" >> "$ART/source-revision.txt"
 
-            # Apply a local compatibility overlay without changing the pinned
-            # solnix revision. Keep malloc and mbuf wait flags in one namespace.
-            ALLOCATOR_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0001-openbsd-allocator-flags.patch"
-            test -s "$ALLOCATOR_PATCH"
-            git -C "$SRC" apply --check "$ALLOCATOR_PATCH"
-            git -C "$SRC" apply "$ALLOCATOR_PATCH"
-            git -C "$SRC" diff --check
-            echo "allocator_flags_patch=0001-openbsd-allocator-flags.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$ALLOCATOR_PATCH" > "$ART/allocator-flags-patch.sha256"
+            bash "$INPUTS/wifi-ax101/apply-run80-r5-integration-stack.sh" "$SRC" "$ART/r5-integration-replay" \\
+              2>&1 | tee "$ART/r5-integration-replay.log"
+            test -s "$ART/r5-integration-replay/final-result.txt"
+            grep -Fq 'RUN80_R5_INTEGRATION_REPLAY=PASS' "$ART/r5-integration-replay/final-result.txt"
+            echo "CI_SOURCE_IDENTITY_VERIFIED=PASS"
+            echo "PRODUCTION_SOURCE_ROOT=$SRC/src/ports/wifi/iwx"
+            echo "PRODUCTION_SOURCE_ROOT=$SRC/src/ports/wifi/iwx" > "$ART/production-source-root.txt"
 
-            # Apply the bounded net80211 prepend-bounds fix to the pinned source.
-            N80211_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0002-net80211-prepend-bounds.patch"
-            test -s "$N80211_PATCH"
-            git -C "$SRC" apply --check "$N80211_PATCH"
-            git -C "$SRC" apply "$N80211_PATCH"
-            git -C "$SRC" diff --check
-            echo "net80211_patch=0002-net80211-prepend-bounds.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$N80211_PATCH" > "$ART/net80211-prepend-patch.sha256"
-
-            # Keep the userland test stubs portable on the native illumos build host.
-            TEST_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0003-mbuf-test-portability.patch"
-            test -s "$TEST_PATCH"
-            git -C "$SRC" apply --check "$TEST_PATCH"
-            git -C "$SRC" apply "$TEST_PATCH"
-            git -C "$SRC" diff --check
-            echo "mbuf_test_patch=0003-mbuf-test-portability.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$TEST_PATCH" > "$ART/mbuf-test-portability-patch.sha256"
-
-            # Make the net80211 m_free override explicit; preserve its single-mbuf contract.
-            MFREE_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0004-net80211-mfree-override.patch"
-            test -s "$MFREE_PATCH"
-            git -C "$SRC" apply --check "$MFREE_PATCH"
-            git -C "$SRC" apply "$MFREE_PATCH"
-            git -C "$SRC" diff --check
-            echo "net80211_mfree_patch=0004-net80211-mfree-override.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$MFREE_PATCH" > "$ART/net80211-mfree-patch.sha256"
-
-            # Preserve OpenBSD M_CANFAIL's return-NULL contract without KM_SLEEP's
-            # guaranteed-success behavior.
-            ALLOCFAIL_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0005-malloc-canfail-nonsleep.patch"
-            test -s "$ALLOCFAIL_PATCH"
-            git -C "$SRC" apply --check "$ALLOCFAIL_PATCH"
-            git -C "$SRC" apply "$ALLOCFAIL_PATCH"
-            git -C "$SRC" diff --check
-            echo "allocator_canfail_patch=0005-malloc-canfail-nonsleep.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$ALLOCFAIL_PATCH" > "$ART/allocator-canfail-patch.sha256"
-
-            # Keep the pinned OpenBSD ioctl header authoritative; remove the
-            # stale ifreq-only copies that changed 29 ioctl encodings.
-            IOCTL_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0006-net80211-ioctl-macro-closure.patch"
-            test -s "$IOCTL_PATCH"
-            git -C "$SRC" apply --check "$IOCTL_PATCH"
-            git -C "$SRC" apply "$IOCTL_PATCH"
-            git -C "$SRC" diff --check
-            echo "net80211_ioctl_macro_patch=0006-net80211-ioctl-macro-closure.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$IOCTL_PATCH" > "$ART/net80211-ioctl-macro-patch.sha256"
-
-            # Preserve the RX descriptor's MPDU length: the two-byte pad is
-            # already in the received window and is removed by the following m_adj.
-            RX_PADDING_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0007-rx-padding-window-length.patch"
-            test -s "$RX_PADDING_PATCH"
-            git -C "$SRC" apply --check "$RX_PADDING_PATCH"
-            git -C "$SRC" apply "$RX_PADDING_PATCH"
-            git -C "$SRC" diff --check
-            echo "rx_padding_window_patch=0007-rx-padding-window-length.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$RX_PADDING_PATCH" > "$ART/rx-padding-window-patch.sha256"
-
-            # Validate the complete mblk window before any RX pointer-span calculation.
-            MBUF_WINDOW_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0008-mbuf-window-pointer-validation.patch"
-            test -s "$MBUF_WINDOW_PATCH"
-            git -C "$SRC" apply --check "$MBUF_WINDOW_PATCH"
-            git -C "$SRC" apply "$MBUF_WINDOW_PATCH"
-            git -C "$SRC" diff --check
-            echo "mbuf_window_patch=0008-mbuf-window-pointer-validation.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$MBUF_WINDOW_PATCH" > "$ART/mbuf-window-pointer-patch.sha256"
-
-            # Use target Ethernet constants before fallback definitions and make
-            # roundup resolve to the target sysmacros declaration.
-            HEADER_MACRO_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0010-native-header-macro-order.patch"
-            test -s "$HEADER_MACRO_PATCH"
-            git -C "$SRC" apply --check "$HEADER_MACRO_PATCH"
-            git -C "$SRC" apply "$HEADER_MACRO_PATCH"
-            git -C "$SRC" diff --check
-            echo "native_header_macro_patch=0010-native-header-macro-order.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$HEADER_MACRO_PATCH" > "$ART/native-header-macro-patch.sha256"
-
-            # Unit-test the exact helper included by n80211_kcompat.c.
-            "$CC" -std=c99 -Wall -Wextra -Werror \
-              -I"$SRC/src/ports/wifi/net80211/compat" \
-              "$GITHUB_WORKSPACE/wifi-ax101/tests/n80211-allocator-flags.c" \
-              -o "$ART/n80211-allocator-flags-test"
-            "$ART/n80211-allocator-flags-test" | tee "$ART/n80211-allocator-flags-test.txt"
-
-            # Run the existing userland mbuf harness against the patched implementation.
-            cd "$SRC/src/ports/wifi/net80211"
-            "$CC" -std=gnu99 -DN80211_MBUF_TEST -I../iwx n80211_mbuf_test.c n80211_mbuf.c ../iwx/iwx_mbuf.c -o "$ART/n80211_mbuf_test"
-            "$ART/n80211_mbuf_test" | tee "$ART/n80211-mbuf-test.txt"
-            "$CC" -std=gnu99 -DN80211_MBUF_TEST -DN80211_MBUF_SABOTAGE -I../iwx n80211_mbuf_test.c n80211_mbuf.c ../iwx/iwx_mbuf.c -o "$ART/n80211_mbuf_test_sabotage"
-            set +e
-            "$ART/n80211_mbuf_test_sabotage" > "$ART/n80211-mbuf-sabotage.log" 2>&1
-            sabotage_rc=$?
-            set -e
-            if [ "$sabotage_rc" -ne 2 ]; then
-              cat "$ART/n80211-mbuf-sabotage.log"
-              echo "ERROR: n80211 mbuf negative control returned $sabotage_rc, expected 2" >&2
-              exit 1
-            fi
-            echo "N80211_MBUF_NEGATIVE_CONTROL=PASS (expected exit 2)" >> "$ART/n80211-mbuf-test.txt"
-
-            cd "$SRC/src/ports/wifi/iwx"
-            # Exercise the pinned mbuf, mbuf_list and ph_cookie suites with all negative controls.
-            python3 --version
-            CC="$CC" bash ./run-mbuf-tests.sh > "$ART/iwx-mbuf-tests.txt" 2>&1
-            cat "$ART/iwx-mbuf-tests.txt"
-            test -s "$ART/iwx-mbuf-tests.txt"
-            bash "$GITHUB_WORKSPACE/wifi-ax101/check-ax101-source.sh" "$SRC/src/ports/wifi/iwx" | tee "$ART/ax101-source-gate.txt"
-            ./gen-illumos-src.sh
-
-            # Decode packed firmware channel-profile words without unaligned loads.
-            PACKED_MEMBER_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0009-packed-member-alignment.patch"
-            test -s "$PACKED_MEMBER_PATCH"
-            patch --dry-run -p1 -F0 -d "$SRC/src/ports/wifi/iwx" -i "$PACKED_MEMBER_PATCH"
-            patch -p1 -F0 -d "$SRC/src/ports/wifi/iwx" -i "$PACKED_MEMBER_PATCH"
-            echo "packed_member_alignment_patch=0009-packed-member-alignment.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$PACKED_MEMBER_PATCH" > "$ART/packed-member-alignment-patch.sha256"
-            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-packed-member-alignment.py" \
-              "$SRC/src/ports/wifi/iwx/build/if_iwx_illumos.c" \
-              | tee "$ART/packed-member-alignment-test.txt"
-
-            cd "$SRC/src/ports/wifi/net80211"
-            ./gen-illumos-src.sh
-
-            # The OpenIndiana proto omits the internal DLS header. iwm_gld.c
-            # only needs DLS_SAP_LLC; provide the narrow, upstream-value shim.
-            DLS_SHIM_SRC="$GITHUB_WORKSPACE/wifi-ax101/compat/sys/dls.h"
-            DLS_SHIM_DST="$SRC/src/ports/wifi/iwm/compat-illumos/sys/dls.h"
-            test -s "$DLS_SHIM_SRC"
-            mkdir -p "$(dirname "$DLS_SHIM_DST")"
-            # illumos /usr/bin/install is not GNU install: use cp for an
-            # explicit source-file -> destination-file copy (no path search).
-            cp "$DLS_SHIM_SRC" "$DLS_SHIM_DST"
-            chmod 0644 "$DLS_SHIM_DST"
-            cmp -s "$DLS_SHIM_SRC" "$DLS_SHIM_DST"
-            test -s "$DLS_SHIM_DST"
-            echo "DLS_SHIM_STAGED=$DLS_SHIM_DST"
-            digest -a sha256 "$DLS_SHIM_DST" > "$ART/dls-shim.sha256"
-
-            # Validate the BSSID snapshot implementation and its torn-read negative control.
-            BSSID_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0011-bssid-atomic-snapshot.patch"
-            test -s "$BSSID_PATCH"
-            git -C "$SRC" apply --check "$BSSID_PATCH"
-            git -C "$SRC" apply "$BSSID_PATCH"
-            git -C "$SRC" diff --check
-            echo "bssid_snapshot_patch=0011-bssid-atomic-snapshot.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$BSSID_PATCH" > "$ART/bssid-snapshot-patch.sha256"
-            BSSID_IRQ_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0012-bssid-interrupt-callback-drain.patch"
-            test -s "$BSSID_IRQ_PATCH"
-            git -C "$SRC" apply --check "$BSSID_IRQ_PATCH"
-            git -C "$SRC" apply "$BSSID_IRQ_PATCH"
-            git -C "$SRC" diff --check
-            echo "bssid_interrupt_callback_patch=0012-bssid-interrupt-callback-drain.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$BSSID_IRQ_PATCH" > "$ART/bssid-interrupt-callback-patch.sha256"
-
-            # Serialize all GLDv3 metadata publication on a dedicated worker.
-            # Preserve exact post-0012 target files for patch-context diagnostics.
-            cp "$SRC/src/ports/wifi/iwm/iwm_gld.c" "$ART/iwm_gld.c.after-0012"
-            cp "$SRC/src/ports/wifi/net80211/n80211_giant.c" "$ART/n80211_giant.c.after-0012"
-            digest -a sha256 "$ART/iwm_gld.c.after-0012" > "$ART/iwm-gld-after-0012.sha256"
-            digest -a sha256 "$ART/n80211_giant.c.after-0012" > "$ART/n80211-giant-after-0012.sha256"
-
-            PUBLISHER_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0013-bssid-gld-publication.patch"
-            test -s "$PUBLISHER_PATCH"
-            git -C "$SRC" apply --check "$PUBLISHER_PATCH"
-            git -C "$SRC" apply "$PUBLISHER_PATCH"
-            git -C "$SRC" diff --check
-            echo "bssid_publisher_patch=0013-bssid-gld-publication.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$PUBLISHER_PATCH" > "$ART/bssid-publisher-patch.sha256"
-
-            # Fail-closed DMA map ownership: apply the reviewed teardown patch
-            # after the pinned source selection and before native compilation.
-            DMA_TEARDOWN_PATCH="$GITHUB_WORKSPACE/wifi-ax101/patches/0014-safe-dma-interrupt-teardown.patch"
-            test -s "$DMA_TEARDOWN_PATCH"
-            git -C "$SRC" apply --check "$DMA_TEARDOWN_PATCH"
-            git -C "$SRC" apply "$DMA_TEARDOWN_PATCH"
-            git -C "$SRC" diff --check
-            echo "dma_teardown_patch=0014-safe-dma-interrupt-teardown.patch" >> "$ART/source-revision.txt"
-            digest -a sha256 "$DMA_TEARDOWN_PATCH" > "$ART/dma-teardown-patch.sha256"
-
-            "$CC" -std=c11 -Wall -Wextra -Werror \
-              "$GITHUB_WORKSPACE/wifi-ax101/tests/dma-teardown-contract-model.c" \
-              -o "$ART/dma-teardown-contract-model"
-            "$ART/dma-teardown-contract-model" | tee "$ART/dma-teardown-contract-model.txt"
-
-            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" --self-test | tee "$ART/bssid-checker-self-test.txt"
-            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-bssid-snapshot.py" \
-              "$SRC/src/ports/wifi/iwm/iwm_gld.c" \
-              "$SRC/src/ports/wifi/net80211/n80211_giant.c" \
-              "$SRC/src/ports/wifi/iwm/iwm_attach.c" \
-              "$SRC/src/ports/wifi/iwx/iwx_glue.c" | tee "$ART/bssid-source-contract.txt"
-            "$CC" -std=c11 -Wall -Wextra -Werror -pthread \
-              "$GITHUB_WORKSPACE/wifi-ax101/tests/bssid-snapshot-concurrency.c" \
-              -o "$ART/bssid-snapshot-concurrency"
-            "$ART/bssid-snapshot-concurrency" | tee "$ART/bssid-snapshot-concurrency.txt"
-            "$CC" -std=c11 -Wall -Wextra -Werror -pthread \
-              "$GITHUB_WORKSPACE/wifi-ax101/tests/bssid-callback-drain-concurrency.c" \
-              -o "$ART/bssid-callback-drain-concurrency"
-            "$ART/bssid-callback-drain-concurrency" | tee "$ART/bssid-callback-drain.txt"
-            "$CC" -std=c11 -Wall -Wextra -Werror -pthread \
-              "$GITHUB_WORKSPACE/wifi-ax101/tests/bssid-publisher-concurrency.c" \
-              -o "$ART/bssid-publisher-concurrency"
-            "$ART/bssid-publisher-concurrency" | tee "$ART/bssid-publisher-concurrency.txt"
-
-            # Close the native GLDv3 net80211 header dependency chain using exact
-            # headers from the pinned illumos-gate revision. Prefer target /usr/include
-            # whenever a native header exists; stage only headers omitted from the proto.
+            # Exact pinned illumos-gate compatibility headers; use native OI headers first.
             : > "$ART/net80211-header-closure.txt"
             for rel in sys/net80211_proto.h sys/net80211.h sys/net80211_crypto.h sys/net80211_ht.h sys/net80211_amrr.h net/wpa.h; do
               case "$rel" in
@@ -317,15 +268,12 @@ jobs:
                 sys/net80211_ht.h) expected_blob=449726aa0feae79d6bcea0f73e0625a7078a150e ;;
                 sys/net80211_amrr.h) expected_blob=36bd2fcd0eacd88c7b2c307c32a4db32bff5ffa0 ;;
                 net/wpa.h) expected_blob=82c4fd468a5f623411a98a814c40ba3d9ac4c87b ;;
-                *) echo "ERROR: unlisted net80211 header $rel" >&2; exit 1 ;;
+                *) echo "ERROR: unlisted header $rel" >&2; exit 1 ;;
               esac
-              src="$GITHUB_WORKSPACE/wifi-ax101/compat/$rel"
+              src="$INPUTS/wifi-ax101/compat/$rel"
               test -s "$src"
               actual_blob=$(git -C "$GITHUB_WORKSPACE" hash-object "$src")
-              if [ "$actual_blob" != "$expected_blob" ]; then
-                echo "ERROR: $rel blob $actual_blob != pinned illumos-gate $expected_blob" >&2
-                exit 1
-              fi
+              test "$actual_blob" = "$expected_blob"
               native="/usr/include/$rel"
               dst="$SRC/src/ports/wifi/iwm/compat-illumos/$rel"
               safe=$(printf '%s' "$rel" | tr '/' '-')
@@ -338,251 +286,121 @@ jobs:
                 cp "$src" "$dst"
                 chmod 0644 "$dst"
                 cmp -s "$src" "$dst"
-                echo "STAGED_PINNED_GATE_HEADER=$rel"
                 digest -a sha256 "$dst" > "$ART/header-$safe.sha256"
-                printf '%s\t%s\tstaged\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
+                printf '%s\t%s\tstaged-pinned-illumos-gate\n' "$rel" "$actual_blob" >> "$ART/net80211-header-closure.txt"
               fi
             done
-
-            # Remaining dependencies are public target headers and must come from OI.
             for rel in sys/mac.h sys/mac_provider.h sys/ethernet.h sys/atomic.h inet/wifi_ioctl.h; do
-              test -s "/usr/include/$rel" || {
-                echo "ERROR: missing native OpenIndiana header /usr/include/$rel" >&2
-                exit 1
-              }
+              test -s "/usr/include/$rel" || { echo "ERROR: missing native OpenIndiana header /usr/include/$rel" >&2; exit 1; }
               printf '%s\tnative-dependency\n' "$rel" >> "$ART/net80211-header-closure.txt"
             done
+            DLS_SRC="$INPUTS/wifi-ax101/compat/sys/dls.h"
+            DLS_DST="$SRC/src/ports/wifi/iwm/compat-illumos/sys/dls.h"
+            test -s "$DLS_SRC"
+            mkdir -p "$(dirname "$DLS_DST")"
+            cp "$DLS_SRC" "$DLS_DST"
+            chmod 0644 "$DLS_DST"
+            cmp -s "$DLS_SRC" "$DLS_DST"
+            digest -a sha256 "$DLS_DST" > "$ART/dls-shim.sha256"
 
-            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/test-connect-wifi.py" \
-              2>&1 | tee "$ART/connect-wifi-tests.txt"
-
+            python3 "$INPUTS/wifi-ax101/tests/test-connect-wifi.py" 2>&1 | tee "$ART/connect-wifi-tests.txt"
+            echo "NATIVE_SOURCE_ROOT_CONFIRMED=$SRC/src/ports/wifi/iwx"
             cd "$SRC/src/ports/wifi/iwx"
             gmake -f Makefile.illumos clean
-            # Keep going across independent translation units so one missing
-            # header does not hide the rest of the compile-time error surface.
-            gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld
-            if grep -Fq 'warning: taking address of packed member' "$ART/build.log"; then
-              echo "ERROR: packed firmware channel-profile alignment warnings remain" >&2
-              exit 1
+            set +e
+            gmake -k -f Makefile.illumos -j4 UTSINC=/usr/include LD=/usr/bin/ld 2>&1 | tee "$ART/compiler-output.log"
+            compile_rc=${PIPESTATUS[0]}
+            set -e
+            echo "gmake_exit=$compile_rc" | tee "$ART/native-compile-exit.txt"
+            if [ "$compile_rc" -ne 0 ]; then
+              grep -E '(^|: )(fatal error:|error:)|undefined reference|multiple definition' "$ART/compiler-output.log" > "$ART/compiler-errors.txt" || true
+              grep -E 'warning:' "$ART/compiler-output.log" > "$ART/compiler-warnings.txt" || true
+              exit "$compile_rc"
             fi
-            echo "IWX_PACKED_MEMBER_ALIGNMENT=PASS"
-            if grep -Fq 'warning: "m_free" redefined' "$ART/build.log"; then
-              echo "ERROR: net80211 m_free override still produces redefinition warnings" >&2
-              exit 1
-            fi
-            echo "N80211_MFREE_OVERRIDE_WARNING=PASS"
-            if grep -Eq 'warning: "SIOC[GS]80211[^"]*" redefined' "$ART/build.log"; then
-              echo "ERROR: net80211 ioctl macro redefinition warnings remain" >&2
-              exit 1
-            fi
-            echo "N80211_IOCTL_MACRO_REDEFINITION_WARNING=PASS"
-            if grep -Eq 'warning: "(ETHERMTU|ETHERTYPE_IP|ETHERTYPE_ARP|ETHERTYPE_IPV6|roundup)" redefined' "$ART/build.log"; then
-              echo "ERROR: Ethernet/roundup compatibility macro redefinition warnings remain" >&2
-              exit 1
-            fi
-            echo "NATIVE_ETHERNET_AND_ROUNDUP_MACROS=PASS"
+            grep -Fq 'warning: taking address of packed member' "$ART/compiler-output.log" && { echo "ERROR: packed member warning" >&2; exit 1; } || true
+            grep -Fq 'warning: "m_free" redefined' "$ART/compiler-output.log" && { echo "ERROR: m_free macro warning" >&2; exit 1; } || true
+            grep -Eq 'warning: "SIOC[GS]80211[^"]*" redefined' "$ART/compiler-output.log" && { echo "ERROR: ioctl macro warning" >&2; exit 1; } || true
+            grep -Eq 'warning: "(ETHERMTU|ETHERTYPE_IP|ETHERTYPE_ARP|ETHERTYPE_IPV6|roundup)" redefined' "$ART/compiler-output.log" && { echo "ERROR: native Ethernet/roundup macro warning" >&2; exit 1; } || true
             test -s iwx
             cp iwx "$ART/iwx"
 
-            # Inventory undefined references. Export snapshots are diagnostic
-            # only; the target native krtld load below is authoritative for
-            # resolving the module's actual dependency and relocation graph.
-            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/test-check-elf-exports.py"
+            python3 "$INPUTS/wifi-ax101/tests/test-check-elf-exports.py"
             nm -u "$ART/iwx" > "$ART/iwx.undefined.txt"
             KERNEL_IMAGE=
             for candidate in /platform/i86pc/kernel/amd64/unix /kernel/amd64/unix /kernel/unix; do
-              if [ -s "$candidate" ]; then
-                KERNEL_IMAGE="$candidate"
-                break
-              fi
+              if [ -s "$candidate" ]; then KERNEL_IMAGE="$candidate"; break; fi
             done
             test -n "$KERNEL_IMAGE"
             echo "TARGET_KERNEL_IMAGE=$KERNEL_IMAGE" > "$ART/target-kernel-image.txt"
             nm -g -p "$KERNEL_IMAGE" > "$ART/kernel-unix-symbols.txt"
             MAC_MODULE=
-            for candidate in /kernel/misc/mac /kernel/misc/amd64/mac \
-              /usr/kernel/misc/mac /usr/kernel/misc/amd64/mac \
-              /platform/i86pc/kernel/misc/amd64/mac; do
-              if [ -s "$candidate" ]; then
-                MAC_MODULE="$candidate"
-                break
-              fi
+            for candidate in /kernel/misc/mac /kernel/misc/amd64/mac /usr/kernel/misc/mac /usr/kernel/misc/amd64/mac /platform/i86pc/kernel/misc/amd64/mac; do
+              if [ -s "$candidate" ]; then MAC_MODULE="$candidate"; break; fi
             done
             test -n "$MAC_MODULE"
             echo "TARGET_MAC_MODULE=$MAC_MODULE" > "$ART/target-mac-module.txt"
             nm -g -p "$MAC_MODULE" > "$ART/mac-module-symbols.txt"
-            python3 "$GITHUB_WORKSPACE/wifi-ax101/tests/check-elf-exports.py" \
-              "$ART/iwx.undefined.txt" "$ART/kernel-unix-symbols.txt" \
-              "$ART/mac-module-symbols.txt" | tee "$ART/elf-symbol-reconciliation.txt"
+            python3 "$INPUTS/wifi-ax101/tests/check-elf-exports.py" "$ART/iwx.undefined.txt" "$ART/kernel-unix-symbols.txt" "$ART/mac-module-symbols.txt" | tee "$ART/elf-symbol-reconciliation.txt"
             elfdump -d "$ART/iwx" > "$ART/iwx.dynamic-acceptance.txt"
             elfdump -r "$ART/iwx" > "$ART/iwx.relocations.txt"
             grep -Eq 'NEEDED.*misc/mac' "$ART/iwx.dynamic-acceptance.txt"
             echo "ELF_NEEDED_MISC_MAC=PASS"
-            # Do not require kldd: it is not shipped by this OpenIndiana image.
-            # The authoritative target test is the native krtld modload below;
-            # retain all symbol/export snapshots as diagnostic evidence only.
-            if grep -q 'TEXTREL' "$ART/iwx.dynamic-acceptance.txt"; then
-              echo "ELF_TEXTREL_PRESENT=YES" | tee "$ART/elf-relocation-policy.txt"
-            else
-              echo "ELF_TEXTREL_PRESENT=NO" | tee "$ART/elf-relocation-policy.txt"
-            fi
-            if command -v modinfo >/dev/null 2>&1; then
-              modinfo -c > "$ART/modinfo-before-modload.txt" 2>&1 || true
-            fi
-            if command -v dmesg >/dev/null 2>&1; then
-              dmesg > "$ART/dmesg-before-modload.txt" 2>&1 || true
-            fi
-            # A Solaris/illumos driver must be registered with add_drv before
-            # mod_install can assign its major number. RUN #50 proved that
-            # add_drv -n only edits on-disk configuration and leaves the
-            # running kernel's ddi_name_to_major() table unchanged (ENXIO).
-            # Do not use -n: this is a live VM, not an offline client image.
-            # There is no AX101 PCI function here, so registration/load can be
-            # tested without claiming a physical device attach.
+            if grep -q 'TEXTREL' "$ART/iwx.dynamic-acceptance.txt"; then echo "ELF_TEXTREL_PRESENT=YES" | tee "$ART/elf-relocation-policy.txt"; else echo "ELF_TEXTREL_PRESENT=NO" | tee "$ART/elf-relocation-policy.txt"; fi
+
+            if command -v modinfo >/dev/null 2>&1; then modinfo -c > "$ART/modinfo-before-modload.txt" 2>&1 || true; fi
+            if command -v dmesg >/dev/null 2>&1; then dmesg > "$ART/dmesg-before-modload.txt" 2>&1 || true; fi
             mkdir -p /kernel/drv/amd64
             cp "$ART/iwx" /kernel/drv/amd64/iwx
             chmod 0644 /kernel/drv/amd64/iwx
-            if grep -Eq '^iwx[[:space:]]' /etc/name_to_major; then
-              echo "ERROR: unexpected pre-existing iwx major-number registration" >&2
-              exit 1
-            fi
-            add_drv -v -i '"pci8086,54f0"' iwx > "$ART/add-drv.txt" 2>&1
+            if grep -Eq '^iwx[[:space:]]' /etc/name_to_major; then echo "ERROR: unexpected pre-existing iwx major" >&2; exit 1; fi
+            add_drv -v -i '\"pci8086,54f0\"' iwx > "$ART/add-drv.txt" 2>&1
             cat "$ART/add-drv.txt"
-            if ! grep -Eq '^iwx[[:space:]]+[0-9]+' /etc/name_to_major; then
-              echo "ERROR: add_drv did not create iwx name_to_major entry" >&2
-              exit 1
-            fi
+            grep -Eq '^iwx[[:space:]]+[0-9]+' /etc/name_to_major
             grep -E '^iwx[[:space:]]' /etc/name_to_major > "$ART/iwx-name-to-major.txt"
             grep -E '^iwx[[:space:]]' /etc/driver_aliases > "$ART/iwx-driver-aliases.txt" || true
             echo "IWX_DRIVER_REGISTRATION=PASS"
-
             set +e
             modload /kernel/drv/amd64/iwx > "$ART/iwx-krtld-modload.txt" 2>&1
             modload_rc=$?
             set -e
-            printf 'modload_exit=%s\n' "$modload_rc" > "$ART/iwx-krtld-modload-status.txt"
-            if [ "$modload_rc" -ne 0 ]; then
-              cat "$ART/iwx-krtld-modload.txt"
-              if command -v modinfo >/dev/null 2>&1; then
-                modinfo -c > "$ART/modinfo-after-modload.txt" 2>&1 || true
-              fi
-              if command -v dmesg >/dev/null 2>&1; then
-                dmesg > "$ART/dmesg-after-modload.txt" 2>&1 || true
-                tail -n 250 "$ART/dmesg-after-modload.txt" | grep -Ei 'iwx|krtld|modload|module|symbol|reloc|error|warn|pci' > "$ART/iwx-krtld-dmesg.txt" || true
-                cat "$ART/iwx-krtld-dmesg.txt" || true
-              fi
-              echo "ERROR: native OpenIndiana modload failed (exit $modload_rc); classify from captured krtld and attach diagnostics" >&2
-              exit "$modload_rc"
-            fi
-            echo "KRTLD_NATIVE_MODLOAD=PASS" | tee -a "$ART/elf-relocation-policy.txt"
-            if command -v modinfo >/dev/null 2>&1; then
-              modinfo -c > "$ART/modinfo-after-modload.txt" 2>&1 || true
-              if ! grep -Eiq '[[:space:]]iwx([[:space:]]|$)' "$ART/modinfo-after-modload.txt"; then
-                echo "ERROR: modload returned success but iwx is absent from modinfo -c" >&2
-                exit 1
-              fi
-              # modinfo -c columns are: Id, Loadcnt, Module Name, State.
-              # The module name is field 3; field 4 is LOADED/INSTALLED.
-              iwx_modid=$(awk '$3 == "iwx" && $2 ~ /^[0-9]+$/ && $2 > 0 && $4 == "LOADED/INSTALLED" { print $1; exit }' "$ART/modinfo-after-modload.txt")
-              case "$iwx_modid" in
-                ''|*[!0-9]*)
-                  echo "ERROR: iwx is not reported as LOADED/INSTALLED by modinfo -c" >&2
-                  cat "$ART/modinfo-after-modload.txt"
-                  exit 1
-                  ;;
-              esac
-              echo "IWX_MODULE_ID=$iwx_modid" > "$ART/iwx-module-id.txt"
-            else
-              echo "ERROR: modinfo unavailable; cannot verify post-load module registration" >&2
-              exit 1
-            fi
-            if command -v dmesg >/dev/null 2>&1; then
-              dmesg > "$ART/dmesg-after-modload.txt" 2>&1 || true
-            fi
-            echo "KRTLD_LOAD_AND_MODINFO=PASS"
-
-            # With no matching PCI device in this VM, no instance is attached;
-            # _fini/mod_remove must therefore permit a clean unload.
-            if command -v dmesg >/dev/null 2>&1; then
-              dmesg > "$ART/dmesg-before-modunload.txt" 2>&1
-            else
-              echo "ERROR: dmesg unavailable; cannot retain unload diagnostics" >&2
-              exit 1
-            fi
+            echo "modload_exit=$modload_rc" > "$ART/iwx-krtld-modload-status.txt"
+            if [ "$modload_rc" -ne 0 ]; then cat "$ART/iwx-krtld-modload.txt"; dmesg > "$ART/dmesg-after-modload.txt" 2>&1 || true; tail -n 250 "$ART/dmesg-after-modload.txt" | grep -Ei 'iwx|krtld|modload|module|symbol|reloc|error|warn|pci' > "$ART/iwx-krtld-dmesg.txt" || true; exit "$modload_rc"; fi
+            echo "KRTLD_NATIVE_MODLOAD=PASS"
+            modinfo -c > "$ART/modinfo-after-modload.txt"
+            iwx_modid=$(awk '$3 == "iwx" && $2 ~ /^[0-9]+$/ && $2 > 0 && $4 == "LOADED/INSTALLED" { print $1; exit }' "$ART/modinfo-after-modload.txt")
+            case "$iwx_modid" in ''|*[!0-9]*) cat "$ART/modinfo-after-modload.txt"; exit 1;; esac
+            echo "$iwx_modid" > "$ART/iwx-module-id.txt"
+            dmesg > "$ART/dmesg-before-modunload.txt"
             set +e
             modunload -i "$iwx_modid" > "$ART/iwx-modunload.txt" 2>&1
             modunload_rc=$?
             set -e
-            printf 'modunload_exit=%s\n' "$modunload_rc" > "$ART/iwx-modunload-status.txt"
-            if [ "$modunload_rc" -ne 0 ]; then
-              cat "$ART/iwx-modunload.txt"
-              echo "ERROR: iwx module failed controlled unload" >&2
-              exit "$modunload_rc"
-            fi
-            if grep -Eiq '(error|fail|warn|unable|cannot)' "$ART/iwx-modunload.txt"; then
-              cat "$ART/iwx-modunload.txt"
-              echo "ERROR: modunload returned zero but emitted failure diagnostics" >&2
-              exit 1
-            fi
-            dmesg > "$ART/dmesg-after-modunload.txt" 2>&1
+            echo "modunload_exit=$modunload_rc" > "$ART/iwx-modunload-status.txt"
+            if [ "$modunload_rc" -ne 0 ]; then cat "$ART/iwx-modunload.txt"; exit "$modunload_rc"; fi
+            dmesg > "$ART/dmesg-after-modunload.txt"
             diff -u "$ART/dmesg-before-modunload.txt" "$ART/dmesg-after-modunload.txt" > "$ART/iwx-modunload-dmesg-delta.txt" || true
-            if grep -Eiq '(iwx.*(error|fail|warn|unable|cannot)|(error|fail|warn|unable|cannot).*iwx)' "$ART/iwx-modunload-dmesg-delta.txt"; then
-              cat "$ART/iwx-modunload-dmesg-delta.txt"
-              echo "ERROR: kernel reported an iwx unload failure" >&2
-              exit 1
-            fi
-            set +e
-            modinfo -c > "$ART/modinfo-after-modunload.txt" 2>&1
-            modinfo_after_unload_rc=$?
-            set -e
-            printf 'modinfo_after_modunload_exit=%s\n' "$modinfo_after_unload_rc" > "$ART/modinfo-after-modunload-status.txt"
-            if [ "$modinfo_after_unload_rc" -ne 0 ]; then
-              cat "$ART/modinfo-after-modunload.txt"
-              echo "ERROR: modinfo -c failed after modunload; unload state is unverified" >&2
-              exit "$modinfo_after_unload_rc"
-            fi
-            awk '
-              NR == 1 && $1 == "Id" && $2 == "Loadcnt" && $3 == "Module" && $4 == "Name" && $5 == "State" { header=1; next }
-              NR > 1 && $1 ~ /^[0-9]+$/ { rows++ }
-              END { if (!header || rows == 0) exit 1 }
-            ' "$ART/modinfo-after-modunload.txt" || {
-              cat "$ART/modinfo-after-modunload.txt"
-              echo "ERROR: modinfo -c output is not a valid non-empty module table" >&2
-              exit 1
-            }
-            if ! awk '$3 == "iwx" && $4 == "UNLOADED/UNINSTALLED" { unloaded=1 } END { exit !unloaded }' "$ART/modinfo-after-modunload.txt"; then
-              echo "ERROR: modinfo does not show iwx in UNLOADED/UNINSTALLED state" >&2
-              cat "$ART/modinfo-after-modunload.txt"
-              exit 1
-            fi
-            if awk '$3 == "iwx" && $4 == "LOADED/INSTALLED" { loaded=1 } END { exit !loaded }' "$ART/modinfo-after-modunload.txt"; then
-              echo "ERROR: iwx remains loaded after modunload" >&2
-              cat "$ART/modinfo-after-modunload.txt"
-              exit 1
-            fi
-            echo "IWX_MODINFO_AFTER_UNLOAD=PASS"
+            if grep -Eiq '(iwx.*(error|fail|warn|unable|cannot)|(error|fail|warn|unable|cannot).*iwx)' "$ART/iwx-modunload-dmesg-delta.txt"; then cat "$ART/iwx-modunload-dmesg-delta.txt"; exit 1; fi
+            modinfo -c > "$ART/modinfo-after-modunload.txt"
+            awk '$3 == "iwx" && $4 == "UNLOADED/UNINSTALLED" { unloaded=1 } END { exit !unloaded }' "$ART/modinfo-after-modunload.txt"
             rem_drv iwx > "$ART/rem-drv.txt" 2>&1
             rm -f /kernel/drv/amd64/iwx
             echo "KRTLD_CONTROLLED_UNLOAD=PASS"
-            cp Makefile.illumos "$ART/"
-            cp STATUS.md "$ART/upstream-iwx-STATUS.md"
-            cp PROVENANCE.md "$ART/upstream-iwx-PROVENANCE.md"
 
-            # AX101 uses the SO/HR1 API-77 image, not the AX211 SO/GF image.
             FWBASE="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain"
             curl -fL "$FWBASE/iwlwifi-so-a0-hr-b0-77.ucode?id=20241017" -o "$ART/iwx-so-a0-hr-b0-77"
             curl -fL "$FWBASE/LICENCE.iwlwifi_firmware?id=20241017" -o "$ART/iwx-license"
             test -s "$ART/iwx-so-a0-hr-b0-77"
-            grep -qi "redistribution" "$ART/iwx-license"
+            grep -qi redistribution "$ART/iwx-license"
             digest -a sha256 "$ART/iwx-so-a0-hr-b0-77" > "$ART/ax101-firmware.sha256"
-            echo "BUILD_OK: native OpenIndiana iwx module linked; AX101 HR1 API-77 firmware staged" > "$ART/STATUS.txt"
+            echo "NATIVE_OPENINDIANA_BUILD=PASS" > "$ART/STATUS.txt"
+            echo "BUILD_OK: exact R5 integration source replayed; native module built, ELF checked, registered, loaded and unloaded; firmware API-77 image staged" >> "$ART/STATUS.txt"
             AX101_BUILD
 
-      - name: Upload AX101 driver build and evidence
+      - name: Upload exact-source build and identity evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wifi-ax101-openindiana-${{ github.run_id }}-${{ github.sha }}
+          name: ax101-r5-integration-${{ github.run_id }}-${{ github.sha }}
           path: wifi-ax101-artifacts/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30

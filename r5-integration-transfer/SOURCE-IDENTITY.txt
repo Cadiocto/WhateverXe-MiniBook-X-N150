@@ -1,0 +1,17 @@
+AX101 RUN80 R5 INTEGRATION — RUNNER SOURCE IDENTITY
+local_candidate_archive=ax101-run80-r5-integration-candidate.zip
+local_candidate_sha256=f251541a7c60cc46cdaecc0719e42c576f6f5bd4699dea712a7db5ab9f54a1d0
+candidate_embedded_manifest=INTEGRATION-CANDIDATE-MANIFEST.tsv
+candidate_embedded_manifest_entries=4502
+runner_transfer_bundle=r5-integration-runner-inputs.zip
+runner_transfer_manifest=R5-TRANSFER-MANIFEST.tsv
+runner_transfer_manifest_entries=540
+solnix_commit=1cee7021091f3df92b7816ece2902ff59b37f1be
+solnix_embedded_zip_sha256=863b183cb8eed61458f3458f4321874d4aed89144e087a7c41f2df4c16913c40
+illumos_gate_commit=098e95820891f8a83fae679daece7fcf58b7b3a4
+pci_vendor_device=8086:54F0
+pci_subsystem=8086:0244
+mac_rf=SO/HR1
+firmware_api=77
+firmware_name=iwx-so-a0-hr-b0-77
+additive_patch=0027-run80-r5-active-iwx-integration.patch
