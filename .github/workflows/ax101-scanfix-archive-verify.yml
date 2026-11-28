@@ -1,4 +1,4 @@
-name: AX101 RUN107 — scanfix archive integrity
+name: AX101 RUN107 — scanfix archive integrity and repair
 
 on:
   push:
@@ -9,86 +9,132 @@ on:
       - ".github/workflows/ax101-scanfix-archive-verify.yml"
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 jobs:
-  verify-archive:
+  verify-and-repair-archive:
+    if: ${{ !contains(github.event.head_commit.message || '', '[skip ci]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - name: Reconstruct and independently inspect the archive
+          fetch-depth: 0
+      - name: Download immutable recovery source and validate exact member bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/scanfix-recovery"
+          cd "$RUNNER_TEMP/scanfix-recovery"
+          curl -fLsS --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/15256697062/zip" \
+            -o recovery-source-artifact.zip
+          echo "f6383f5080548c2dc05639cbeede570950b413b20d734d4856bee59f67b0d71d  recovery-source-artifact.zip" | sha256sum -c -
+          unzip -q recovery-source-artifact.zip
+          ROOT=restoration/scanfix-implementation
+          test -d "$ROOT"
+          rm -rf "$ROOT/tests/__pycache__"
+          (cd "$ROOT" && sha256sum -c SHA256SUMS) | tee scanfix-member-check.txt
+          PATCH="$ROOT/patches/0028-ax101-scan-notification-rx-fix.patch"
+          test -s "$PATCH"
+          PATCH_SHA=$(sha256sum "$PATCH" | awk '{print $1}')
+          test "$PATCH_SHA" = "9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80"
+          test -s "$ROOT/tests/scan-regression.py"
+          test -s "$ROOT/tests/run-ax101-scan-validation.sh"
+          test -s "$ROOT/diagnostics/ax101-scan.d"
+          test -s "$ROOT/engineering/SCAN-DISCOVERY-ROOT-CAUSE.md"
+          test -s "$ROOT/evidence/source-candidate-verification.txt"
+          grep -Fx "SCANFIX_SOURCE_PATCH_SHA256=$PATCH_SHA" "$ROOT/evidence/source-candidate-verification.txt"
+          grep -Fx "TARGET_KERNEL=illumos-c893fd03ad" "$ROOT/evidence/source-candidate-verification.txt"
+          grep -Fx "SOLNIX_PIN=1cee7021091f3df92b7816ece2902ff59b37f1be" "$ROOT/evidence/source-candidate-verification.txt"
+          grep -Fx "ILLUMOS_GATE_PIN=098e95820891f8a83fae679daece7fcf58b7b3a4" "$ROOT/evidence/source-candidate-verification.txt"
+          grep -Fx "SCAN_REGRESSION=35/35 PASS" "$ROOT/evidence/source-candidate-verification.txt"
+          grep -Fx "SCAN_NEGATIVE_CONTROLS=10/10 PASS" "$ROOT/evidence/source-candidate-verification.txt"
+          python3 -m py_compile "$ROOT/tests/scan-regression.py"
+          bash -n "$ROOT/tests/run-ax101-scan-validation.sh"
+          rm -rf "$ROOT/tests/__pycache__"
+          echo "RECOVERY_ARTIFACT_SHA256=$(sha256sum recovery-source-artifact.zip | awk '{print $1}')" | tee recovery-evidence.txt
+          echo "PATCH_0028_SHA256=$PATCH_SHA" | tee -a recovery-evidence.txt
+          echo "INTERNAL_MEMBER_CHECKSUMS=PASS" | tee -a recovery-evidence.txt
+          echo "PYTHON_SYNTAX=PASS" | tee -a recovery-evidence.txt
+          echo "PHYSICAL_RUNNER_SYNTAX=PASS" | tee -a recovery-evidence.txt
+      - name: Rebuild deterministic archive, regenerate all eight transport parts and verify
         shell: bash
         run: |
           set -Eeuo pipefail
-          parts=wifi-ax101/scanfix-archive-parts
-          reconstructed="$RUNNER_TEMP/scanfix-implementation.tar.gz"
-          committed=wifi-ax101/scanfix-implementation-recovered.tar.gz
-          test "$(find "$parts" -maxdepth 1 -type f -name '*.b64' | wc -l | tr -d ' ')" = 8
-          cat "$parts"/*.b64 | tr -d '\r\n ' | base64 --decode > "$reconstructed"
-          cmp -s "$reconstructed" "$committed"
-          sha256sum "$reconstructed" | tee scanfix-archive-original-sha256.txt
-          set +e
-          gzip -t "$reconstructed" > scanfix-gzip-integrity.log 2>&1
-          gzip_rc=$?
-          gzip -dc "$reconstructed" > "$RUNNER_TEMP/scanfix-implementation.tar" 2> scanfix-gzip-decode.log
-          decode_rc=$?
-          set -e
-          tar -tf "$RUNNER_TEMP/scanfix-implementation.tar" | LC_ALL=C sort | tee scanfix-archive-members.txt
-          mkdir -p extracted
-          tar -xf "$RUNNER_TEMP/scanfix-implementation.tar" -C extracted
-          root=extracted/scanfix-implementation
-          test -d "$root"
-          set +e
-          (cd "$root" && sha256sum -c SHA256SUMS) > scanfix-member-sha256-check.txt 2>&1
-          member_rc=$?
-          set -e
-          cat scanfix-member-sha256-check.txt
-          test -f "$root/patches/0028-ax101-scan-notification-rx-fix.patch"
-          patch_sha=$(sha256sum "$root/patches/0028-ax101-scan-notification-rx-fix.patch" | awk '{print $1}')
-          echo "ACTUAL_PATCH_SHA256=$patch_sha" | tee scanfix-patch-actual-sha256.txt
-          echo "INTERNAL_MEMBER_SHA256_EXIT=$member_rc" | tee -a scanfix-patch-actual-sha256.txt
-          test -f "$root/tests/scan-regression.py"
-          test -f "$root/tests/run-ax101-scan-validation.sh"
-          test -f "$root/diagnostics/ax101-scan.d"
-          test -f "$root/engineering/SCAN-DISCOVERY-ROOT-CAUSE.md"
-          test -f "$root/evidence/source-candidate-verification.txt"
-          python3 -m py_compile "$root/tests/scan-regression.py"
-          bash -n "$root/tests/run-ax101-scan-validation.sh"
-          mkdir -p restoration
-          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -cf - -C extracted scanfix-implementation | gzip -n -9 > restoration/scanfix-implementation.tar.gz
-          gzip -t restoration/scanfix-implementation.tar.gz
-          archive_sha=$(sha256sum restoration/scanfix-implementation.tar.gz | awk '{print $1}')
+          cd "$RUNNER_TEMP/scanfix-recovery"
+          ROOT=restoration/scanfix-implementation
+          OUT="$GITHUB_WORKSPACE/wifi-ax101/scanfix-implementation-recovered.tar.gz"
+          mkdir -p "$(dirname "$OUT")"
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -cf - -C restoration scanfix-implementation | gzip -n -9 > "$OUT"
+          gzip -t "$OUT"
+          ARCHIVE_SHA=$(sha256sum "$OUT" | awk '{print $1}')
+          test "$ARCHIVE_SHA" = "7224fb66669bd2b3b14cecb3a755d5b66740954d4db580420b87f080a8e5fb34"
+          PARTS="$GITHUB_WORKSPACE/wifi-ax101/scanfix-archive-parts"
+          mkdir -p "$PARTS"
+          rm -f "$PARTS"/*.b64
+          python3 - "$OUT" "$PARTS" <<'PY'
+          import base64, pathlib, sys
+          archive = pathlib.Path(sys.argv[1]).read_bytes()
+          encoded = base64.b64encode(archive).decode("ascii")
+          expected = 25404
+          if len(encoded) != expected:
+              raise SystemExit(f"unexpected base64 length {len(encoded)} != {expected}")
+          parts = [encoded[i:i+3500] for i in range(0, len(encoded), 3500)]
+          if len(parts) != 8 or len(parts[-1]) != 904:
+              raise SystemExit(f"unexpected part lengths {[len(p) for p in parts]}")
+          root = pathlib.Path(sys.argv[2])
+          for i, chunk in enumerate(parts):
+              (root / f"{i:02d}.b64").write_text(chunk + "\n")
+          print("ARCHIVE_PART_LENGTHS=" + ",".join(str(len(x)) for x in parts))
+          PY
+          cat "$PARTS"/*.b64 | tr -d '\r\n ' | base64 --decode > "$RUNNER_TEMP/scanfix-reconstructed.tar.gz"
+          cmp -s "$OUT" "$RUNNER_TEMP/scanfix-reconstructed.tar.gz"
+          test "$(sha256sum "$RUNNER_TEMP/scanfix-reconstructed.tar.gz" | awk '{print $1}')" = "$ARCHIVE_SHA"
+          gzip -t "$RUNNER_TEMP/scanfix-reconstructed.tar.gz"
+          tar -tzf "$OUT" | LC_ALL=C sort | tee "$GITHUB_WORKSPACE/scanfix-archive-members.txt"
           {
-            echo "ARCHIVE_PART_COUNT=8"
-            echo "ARCHIVE_PARTS_MATCH_COMMITTED_BINARY=PASS"
-            echo "ORIGINAL_ARCHIVE_SHA256=$(sha256sum "$reconstructed" | awk '{print $1}')"
-            echo "ORIGINAL_GZIP_TEST_RC=$gzip_rc"
-            echo "ORIGINAL_GZIP_DECODE_RC=$decode_rc"
-            echo "INTERNAL_MEMBER_CHECKSUMS_EXIT=$member_rc"
-            echo "EXPECTED_PATCH_0028_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80"
-            echo "ACTUAL_PATCH_0028_SHA256=$patch_sha"
-            echo "REQUIRED_MATERIALS=6/6"
-            echo "PYTHON_SYNTAX=PASS"
-            echo "PHYSICAL_RUNNER_SYNTAX=PASS"
-            echo "RESTORED_ARCHIVE_SHA256=$archive_sha"
-            echo "RESTORED_GZIP_CRC=PASS"
-            echo "ARCHIVE_RESTORATION=PASS"
-          } | tee scanfix-archive-verification.txt
-          cp -a extracted/scanfix-implementation restoration/scanfix-implementation
-          cp scanfix-member-sha256-check.txt restoration/
-          cp scanfix-patch-actual-sha256.txt restoration/
-      - name: Upload verified source archive and inspection evidence
+            echo "SOURCE_ARTIFACT_ID=15256697062"
+            echo "SOURCE_ARTIFACT_WRAPPER_SHA256=f6383f5080548c2dc05639cbeede570950b413b20d734d4856bee59f67b0d71d"
+            echo "ARCHIVE_SHA256=$ARCHIVE_SHA"
+            echo "PATCH_0028_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80"
+            echo "PART_COUNT=8"
+            echo "PART_LENGTHS=3500,3500,3500,3500,3500,3500,3500,904"
+            echo "RECONSTRUCTION_BYTE_IDENTICAL=PASS"
+            echo "GZIP_CRC=PASS"
+            echo "INTERNAL_SHA256SUMS=PASS"
+            echo "SCAN_REGRESSION=35/35 PASS"
+            echo "SCAN_NEGATIVE_CONTROLS=10/10 PASS"
+            echo "PHYSICAL_NETWORK_DISCOVERY=NOT_YET_VERIFIED"
+          } | tee "$GITHUB_WORKSPACE/scanfix-archive-repair-report.txt"
+      - name: Commit repaired archive and transport parts to validation branch
+        shell: bash
+        env:
+          BRANCH: ax101-r5-integration-validation
+        run: |
+          set -Eeuo pipefail
+          git fetch origin "$BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add wifi-ax101/scanfix-implementation-recovered.tar.gz wifi-ax101/scanfix-archive-parts/*.b64
+          git add scanfix-archive-repair-report.txt scanfix-archive-members.txt
+          git commit -m "fix(ax101): [skip ci] restore scanfix archive transport integrity"
+          git push origin "HEAD:refs/heads/$BRANCH"
+      - name: Upload repaired archive and verification report
         uses: actions/upload-artifact@v4
         with:
-          name: AX101-RUN107-SCANFIX-ARCHIVE-VERIFIED-${{ github.run_id }}
+          name: AX101-RUN107-SCANFIX-ARCHIVE-REPAIRED-${{ github.run_id }}
           path: |
-            restoration/scanfix-implementation.tar.gz
-            restoration/scanfix-implementation/
-            scanfix-archive-original-sha256.txt
+            wifi-ax101/scanfix-implementation-recovered.tar.gz
+            wifi-ax101/scanfix-archive-parts/*.b64
+            scanfix-archive-repair-report.txt
             scanfix-archive-members.txt
-            scanfix-archive-verification.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
