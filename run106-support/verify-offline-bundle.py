@@ -51,6 +51,7 @@ def main() -> None:
             "source/patches/0029-iwx-init-task-reason-enum-scope.patch",
             "source/tests/check-iwx-init-reason-scope.py",
             "evidence/scan-regression-final.log",
+            "evidence/scanfix-negative-controls.log",
             "evidence/scanfix-source-identity.txt",
             "evidence/run128-init-reason-scope.log",
             "evidence/run128-init-reason-patch.sha256",
@@ -120,6 +121,12 @@ def main() -> None:
              "scan regression result missing from provenance")
         need("SCANFIX_NEGATIVE_CONTROLS=10/10" in provenance,
              "scanfix negative controls missing from provenance")
+        scan_negative = z.read("evidence/scanfix-negative-controls.log").decode(errors="replace")
+        scan_negative_names = [line for line in scan_negative.splitlines()
+                               if line.startswith("test_nc")]
+        need("SCAN_NEGATIVE_CONTROLS=10/10" in scan_negative and
+             "EXIT_CODE=0" in scan_negative and len(scan_negative_names) == 10,
+             "scan negative controls not independently verified 10/10")
         need(module[:4] == b"\x7fELF" and module[4] == 2 and module[5] == 1,
              "module is not ELF64 little-endian")
         need(int.from_bytes(module[18:20], "little") == 62,

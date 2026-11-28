@@ -138,8 +138,8 @@ def main() -> None:
 
         for name in ("run87-mbuf-regression.log", "run87-dma-regression.log",
                      "run107-mbuf-regression.log", "run107-dma-regression.log",
-                     "scan-regression-final.log", "scanfix-source-identity.txt",
-                     "run128-init-reason-scope.log", "run128-init-reason-patch.sha256",
+                     "scan-regression-final.log", "scanfix-negative-controls.log",
+                     "scanfix-source-identity.txt", "run128-init-reason-scope.log", "run128-init-reason-patch.sha256",
                      "run128-init-reason-identity.txt", "run128-generated-iwx-source.sha256",
                      "run128-if_iwx_illumos.c", "run128-if_iwx.illumos.patch",
                      "connect-wifi-tests.txt", "elf-symbol-reconciliation.txt",
@@ -148,10 +148,16 @@ def main() -> None:
             evidence(name)
         scan_tests = read(evidence("scan-regression-final.log"))
         scan_identity = read(evidence("scanfix-source-identity.txt"))
+        scan_negative = read(evidence("scanfix-negative-controls.log"))
+        scan_negative_names = [line for line in scan_negative.splitlines()
+                                if line.startswith("test_nc")]
         require("Ran 35 tests" in scan_tests and "OK" in scan_tests,
                 "scan-fix regression suite is not 35/35 PASS")
+        require("SCAN_NEGATIVE_CONTROLS=10/10" in scan_negative and
+                "EXIT_CODE=0" in scan_negative and len(scan_negative_names) == 10,
+                "scan-fix negative controls not independently counted 10/10")
         require("SCANFIX_NEGATIVE_CONTROLS=10/10" in scan_identity,
-                "scan-fix negative controls are not 10/10 PASS")
+                "scanfix source identity omits scan negative-control result")
         require("SCANFIX_PATCH_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80" in scan_identity,
                 "scan-fix patch identity mismatch")
         reason_scope = read(evidence("run128-init-reason-scope.log"))
@@ -274,7 +280,8 @@ def main() -> None:
             "modinfo-after-modload.txt", "modinfo-after-modunload.txt",
             "run87-mbuf-regression.log", "run87-dma-regression.log",
             "run107-mbuf-regression.log", "run107-dma-regression.log",
-            "scan-regression-final.log", "scanfix-patch.sha256",
+            "scan-regression-final.log", "scanfix-negative-controls.log",
+            "scanfix-patch.sha256",
             "scanfix-source-identity.txt", "run107-if_iwx_illumos.c",
             "run107-if_iwx.illumos.patch", "run107-ieee80211_input.c",
             "run128-init-reason-scope.log", "run128-init-reason-patch.sha256",
@@ -367,6 +374,7 @@ def main() -> None:
             "REGRESSION_TESTS=PASS",
             "SCANFIX_REGRESSION_TESTS=35/35",
             "SCANFIX_NEGATIVE_CONTROLS=10/10",
+            "SCANFIX_NEGATIVE_CONTROL_EVIDENCE=scanfix-negative-controls.log",
             "INIT_REASON_ENUM_SCOPE=PASS",
             "INIT_REASON_ENUMERATOR_COUNT=14",
             "INIT_REASON_NEGATIVE_CONTROLS=3/3",
