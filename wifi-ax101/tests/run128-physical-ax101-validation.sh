@@ -5,7 +5,7 @@ set -Eeuo pipefail
 
 OUT=${1:-/var/tmp/ax101-run128-physical-$(date -u +%Y%m%dT%H%M%SZ)}
 BUNDLE_ROOT=$(cd -- "$(dirname -- "$0")" && pwd)
-DTRACE_SCRIPT="$BUNDLE_ROOT/source/scanfix-implementation/diagnostics/ax101-scan.d"
+DTRACE_SCRIPT="$BUNDLE_ROOT/physical-ax101-scan.d"
 mkdir -p "$OUT"
 
 fail() {
@@ -30,7 +30,7 @@ section_has_rows() {
     awk -v begin="$begin" -v end_marker="$next" '
         index($0, begin) { active = 1; next }
         active && index($0, end_marker) { exit }
-        active && NF { rows++ }
+        active && NF && $0 !~ /^No aggregations/ && $0 !~ /^dtrace:/ { rows++ }
         END { exit(rows > 0 ? 0 : 1) }
     ' "$file"
 }
@@ -52,6 +52,8 @@ command -v kstat >/dev/null 2>&1 || fail "kstat is not installed"
     echo "EXPECTED_PCI=8086:54F0"
     echo "EXPECTED_SUBSYSTEM=8086:0244"
     echo "EXPECTED_FUNCTION=00:14.3"
+    echo "EXPECTED_DTRACE_SCAN_COMPLETE_PROBE=iwx_scan_complete_notification"
+    echo "EXPECTED_SCAN_COMPLETE_OPCODE=IWX_SCAN_COMPLETE_UMAC"
     echo "EXPECTED_CONFIGURATION=iwx_cfg_so_a0_hr_b0"
     echo "EXPECTED_FIRMWARE=iwx-so-a0-hr-b0-77"
     echo "EXPECTED_FIRMWARE_API=77"
@@ -73,6 +75,10 @@ PCI_SUBSYSTEM=NO
 if grep -Eiq 'pci8086,54f0' "$OUT/before-prtconf.log"; then
     PCI_NODE=YES
 fi
+PCI_FUNCTION=NO
+if grep -Eiq 'pci@14,3|pci@0,14,3' "$OUT/before-prtconf.log"; then
+    PCI_FUNCTION=YES
+fi
 if grep -Eiq 'subsystem-vendor-id[[:space:]]*=[[:space:]]*(0x0*8086|0*32902)' "$OUT/before-prtconf.log" &&
    grep -Eiq 'subsystem-id[[:space:]]*=[[:space:]]*(0x0*244|0*580)' "$OUT/before-prtconf.log"; then
     PCI_SUBSYSTEM=YES
@@ -87,20 +93,26 @@ if grep -Eq '(^|[[:space:]])iwx([[:space:]]|$)' "$OUT/before-driver-list.log"; t
     IWX_MOD=YES
 fi
 FIRMWARE_API77=NO
-if grep -Eiq 'iwx-so-a0-hr-b0-77|iwx_cfg_so_a0_hr_b0|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' "$OUT/before-dmesg.log"; then
+if grep -Eiq 'iwx-so-a0-hr-b0-77|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' "$OUT/before-dmesg.log"; then
     FIRMWARE_API77=YES
-    grep -Ei 'iwx-so-a0-hr-b0-77|iwx_cfg_so_a0_hr_b0|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' \
+    grep -Ei 'iwx-so-a0-hr-b0-77|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' \
         "$OUT/before-dmesg.log" > "$OUT/firmware-api77-evidence.txt" || true
 else
-    echo "No explicit API-77/firmware-name line found in dmesg; inspect complete dmesg and driver logs." \
+    echo "No explicit API-77 firmware filename/API line found in dmesg; inspect complete dmesg and driver logs." \
         > "$OUT/firmware-api77-evidence.txt"
+fi
+CONFIG_SO_HR1=NO
+if grep -Fq 'iwx_cfg_so_a0_hr_b0' "$OUT/before-dmesg.log"; then
+    CONFIG_SO_HR1=YES
 fi
 {
     echo "PCI_DEVICE_NODE=$PCI_NODE"
     echo "PCI_SUBSYSTEM=$PCI_SUBSYSTEM"
+    echo "PCI_FUNCTION_00_14_3=$PCI_FUNCTION"
     echo "GLDV3_LINK_IWX0=$IWX_LINK"
     echo "IWX_MODULE_REGISTERED=$IWX_MOD"
     echo "FIRMWARE_API77_EVIDENCE=$FIRMWARE_API77"
+    echo "CONFIG_SO_HR1_EVIDENCE=$CONFIG_SO_HR1"
 } | tee -a "$OUT/result.txt"
 
 # Capture the entire driver/firmware boot log for manual provenance review.
@@ -110,8 +122,8 @@ grep -Ei 'iwx|AX101|54f0|firmware|RF.?Kill|RF_KILL' "$OUT/before-dmesg.log" \
 # DTrace -c starts tracing and the real dladm scan as one command; no sleeps
 # or probe-attach timing race are used. The iwx_scan_complete_notification
 # SDT probe is emitted when IWX_SCAN_COMPLETE_UMAC is handled by the driver.
-echo "SCAN_COMPLETE_PROBE=iwx_scan_complete_notification"
-echo "SCAN_COMPLETE_OPCODE=IWX_SCAN_COMPLETE_UMAC"
+echo "SCAN_COMPLETE_PROBE=iwx_scan_complete_notification" | tee -a "$OUT/result.txt"
+echo "SCAN_COMPLETE_OPCODE=IWX_SCAN_COMPLETE_UMAC" | tee -a "$OUT/result.txt"
 set +e
 dtrace -q -s "$DTRACE_SCRIPT" -c "/usr/sbin/dladm scan-wifi" \
     >"$OUT/scan-dtrace.log" 2>&1
@@ -176,9 +188,11 @@ PY
 SCAN_COMPLETE=NO
 SCAN_RX_IDS=NO
 BSS_TREE=NO
+GLD_WL_SCAN=NO
 GLD_ESS_SNAPSHOT=NO
+RFKILL=NO
 if section_has_rows "$OUT/scan-dtrace.log" \
-    "=== Firmware scan-complete notifications" "=== Firmware scan-iteration notifications"; then
+    "=== Firmware IWX_SCAN_COMPLETE_UMAC notifications" "=== Firmware IWX_SCAN_ITERATION_COMPLETE_UMAC notifications"; then
     SCAN_COMPLETE=YES
 fi
 if section_has_rows "$OUT/scan-dtrace.log" \
@@ -190,8 +204,16 @@ if section_has_rows "$OUT/scan-dtrace.log" \
     BSS_TREE=YES
 fi
 if section_has_rows "$OUT/scan-dtrace.log" \
-    "=== GLDv3 WL_SCAN result" "=== GLDv3 WL_SCAN result"; then
+    "=== GLDv3 WL_SCAN result ===" "=== GLDv3 ESS-list snapshot ==="; then
+    GLD_WL_SCAN=YES
+fi
+if section_has_rows "$OUT/scan-dtrace.log" \
+    "=== GLDv3 ESS-list snapshot ===" "=== END OF DTRACE PHYSICAL CAPTURE ==="; then
     GLD_ESS_SNAPSHOT=YES
+fi
+if section_has_rows "$OUT/scan-dtrace.log" \
+    "=== RFKill raw CSR" "=== Valid RX MPDU lengths"; then
+    RFKILL=YES
 fi
 ESSID_BSSID_COUNT=$(awk -F= '/^ESSID_BSSID_COUNT=/{print $2; exit}' "$OUT/essid-bssid-rows.txt")
 [ -n "$ESSID_BSSID_COUNT" ] || ESSID_BSSID_COUNT=0
@@ -199,6 +221,8 @@ ESSID_BSSID_COUNT=$(awk -F= '/^ESSID_BSSID_COUNT=/{print $2; exit}' "$OUT/essid-
     echo "RX_NOTIFICATION_IDS_OBSERVED=$SCAN_RX_IDS"
     echo "IWX_SCAN_COMPLETE_UMAC_OBSERVED=$SCAN_COMPLETE"
     echo "BSS_TREE_SNAPSHOT_OBSERVED=$BSS_TREE"
+    echo "RFKILL_EVIDENCE_OBSERVED=$RFKILL"
+    echo "GLDV3_WL_SCAN_RESULT_OBSERVED=$GLD_WL_SCAN"
     echo "GLDV3_ESS_SNAPSHOT_OBSERVED=$GLD_ESS_SNAPSHOT"
     echo "IWX_SCAN_COMPLETE_UMAC_OBSERVED=$SCAN_COMPLETE"
     echo "ESSID_BSSID_COUNT=$ESSID_BSSID_COUNT"
@@ -210,9 +234,10 @@ ESSID_BSSID_COUNT=$(awk -F= '/^ESSID_BSSID_COUNT=/{print $2; exit}' "$OUT/essid-
 # A physical discovery PASS requires the complete chain, not merely a
 # successful scan command or a firmware command ACK.
 if [ "$PCI_NODE" = YES ] && [ "$PCI_SUBSYSTEM" = YES ] &&
-   [ "$IWX_LINK" = YES ] && [ "$IWX_MOD" = YES ] &&
-   [ "$FIRMWARE_API77" = YES ] && [ "$SCAN_RX_IDS" = YES ] &&
-   [ "$SCAN_COMPLETE" = YES ] && [ "$BSS_TREE" = YES ] &&
+   [ "$PCI_FUNCTION" = YES ] && [ "$IWX_LINK" = YES ] && [ "$IWX_MOD" = YES ] &&
+   [ "$FIRMWARE_API77" = YES ] && [ "$RFKILL" = YES ] &&
+   [ "$SCAN_RX_IDS" = YES ] && [ "$SCAN_COMPLETE" = YES ] &&
+   [ "$BSS_TREE" = YES ] && [ "$GLD_WL_SCAN" = YES ] &&
    [ "$GLD_ESS_SNAPSHOT" = YES ] && [ "$ESSID_BSSID_COUNT" -gt 0 ]; then
     echo "PHYSICAL_SCAN_DISCOVERY=PASS" | tee -a "$OUT/result.txt"
     echo "Review ESSID/BSSID rows and archive this evidence directory."
