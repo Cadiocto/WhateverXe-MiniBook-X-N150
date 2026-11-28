@@ -206,7 +206,7 @@ def main() -> None:
             "".join(p.read_text().strip() for p in source_parts), validate=True)
         source_archive = tmp / "scanfix-implementation.tar.gz"
         source_archive.write_bytes(source_bytes)
-        require(sha256(source_archive) == "288328192b312e06baece8893ed7dca447869500019d3d6770694f7f81b85b38",
+        require(sha256(source_archive) == "f108bbabc11e37457a4fc4b2a49308ef69f1aba384d933c916582b6267f342c2",
                 "scan-fix source archive SHA-256 mismatch")
         (package / "source").mkdir()
         shutil.copy2(source_archive, package / "source/scanfix-implementation.tar.gz")

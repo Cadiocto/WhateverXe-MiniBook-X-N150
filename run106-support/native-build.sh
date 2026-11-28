@@ -167,7 +167,7 @@ if [p.name for p in parts] != expected_names:
 encoded = "".join(p.read_text().strip() for p in parts)
 payload = base64.b64decode(encoded, validate=True)
 actual = hashlib.sha256(payload).hexdigest()
-expected = "288328192b312e06baece8893ed7dca447869500019d3d6770694f7f81b85b38"
+expected = "f108bbabc11e37457a4fc4b2a49308ef69f1aba384d933c916582b6267f342c2"
 if actual != expected:
     raise SystemExit(f"scanfix source archive SHA-256 mismatch: {actual}")
 output.write_bytes(payload)

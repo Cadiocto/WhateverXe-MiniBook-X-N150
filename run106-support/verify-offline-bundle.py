@@ -64,7 +64,7 @@ def main() -> None:
         need(seen == set(entries) - {"SHA256SUMS"},
              "SHA256SUMS coverage does not equal all non-manifest members")
         source_archive = z.read("source/scanfix-implementation.tar.gz")
-        need(sha(source_archive) == "288328192b312e06baece8893ed7dca447869500019d3d6770694f7f81b85b38",
+        need(sha(source_archive) == "f108bbabc11e37457a4fc4b2a49308ef69f1aba384d933c916582b6267f342c2",
              "scanfix source archive SHA-256 mismatch")
         scan_patch = z.read("source/scanfix-implementation/patches/0028-ax101-scan-notification-rx-fix.patch")
         need(sha(scan_patch) == "9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80",
