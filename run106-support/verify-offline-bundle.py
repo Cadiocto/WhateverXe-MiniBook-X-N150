@@ -46,8 +46,11 @@ def main() -> None:
             "source/scanfix-implementation/tests/scan-regression.py",
             "source/scanfix-implementation/diagnostics/ax101-scan.d",
             "source/scanfix-implementation/tests/run-ax101-scan-validation.sh",
+            "source/patches/0029-iwx-init-task-reason-enum-scope.patch",
             "evidence/scan-regression-final.log",
             "evidence/scanfix-source-identity.txt",
+            "evidence/run128-init-reason-scope.log",
+            "evidence/run128-init-reason-patch.sha256",
         )
         for name in required:
             need(name in entries, "required entry missing: " + name)
@@ -69,7 +72,20 @@ def main() -> None:
         scan_patch = z.read("source/scanfix-implementation/patches/0028-ax101-scan-notification-rx-fix.patch")
         need(sha(scan_patch) == "9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80",
              "scanfix patch SHA-256 mismatch")
+        reason_patch = z.read("source/patches/0029-iwx-init-task-reason-enum-scope.patch")
+        need(sha(reason_patch) == "265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
+             "RUN128 init-reason scope patch SHA-256 mismatch")
+        reason_log = z.read("evidence/run128-init-reason-scope.log").decode(errors="replace")
+        need("INIT_REASON_SCOPE=PASS" in reason_log and
+             "INIT_REASON_SCOPE_NEGATIVE_CONTROLS=3/3 PASS" in reason_log,
+             "RUN128 init-reason scope validation evidence missing or failed")
         source_identity = z.read("evidence/scanfix-source-identity.txt").decode(errors="replace")
+        need("INIT_REASON_ENUM_SCOPE=PASS" in source_identity and
+             "INIT_REASON_ENUMERATOR_COUNT=14" in source_identity and
+             "INIT_REASON_NEGATIVE_CONTROLS=3/3" in source_identity,
+             "RUN128 enum visibility evidence missing from source identity")
+        need("INIT_REASON_PATCH_0029_SHA256=265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa" in source_identity,
+             "RUN128 patch 0029 hash missing from source identity")
         need("SCANFIX_NEGATIVE_CONTROLS=10/10" in source_identity,
              "source identity does not show all scanfix negative controls")
         module = z.read("payload/iwx")
