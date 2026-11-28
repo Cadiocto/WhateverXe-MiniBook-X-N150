@@ -191,6 +191,20 @@ bash ./gen-illumos-src.sh
 cd "$SRC"
 patch --batch --dry-run --fuzz=0 -p1 < "$SCANFIX_PATCH"
 patch --batch --forward --fuzz=0 -p1 < "$SCANFIX_PATCH"
+
+# RUN128: 0028's recovery reason enum was emitted after iwx_send_cmd(), so
+# CMD_TIMEOUT was not in scope at its first use. Keep 0028 byte-identical and
+# apply this additive, exact relocation before refreshing the canonical
+# illumos generator patch. The --update pass bakes the corrected file-scope
+# declaration order into patches/if_iwx.illumos.patch.
+INIT_REASON_PATCH="$WIFI/patches/0029-iwx-init-task-reason-enum-scope.patch"
+test -s "$INIT_REASON_PATCH"
+digest -a sha256 "$INIT_REASON_PATCH" > "$ART/run128-init-reason-patch.sha256"
+grep -Fq '265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa' "$ART/run128-init-reason-patch.sha256"
+cd "$SRC/src/ports/wifi/iwx"
+patch --batch --dry-run --fuzz=0 -p1 < "$INIT_REASON_PATCH"
+patch --batch --forward --fuzz=0 -p1 < "$INIT_REASON_PATCH"
+cd "$SRC"
 ax101_diag_pass SCANFIX_PATCH_APPLICATION
 
 ax101_diag_stage SCANFIX_GENERATOR_REPLAY
@@ -201,8 +215,18 @@ digest -a sha256 build/if_iwx_illumos.c > "$ART/run107-generated-iwx-source-firs
 bash ./gen-illumos-src.sh
 digest -a sha256 build/if_iwx_illumos.c > "$ART/run107-generated-iwx-source-second.sha256"
 cmp -s "$ART/run107-generated-iwx-source-first.sha256" "$ART/run107-generated-iwx-source-second.sha256"
+python3 "$WIFI/tests/check-iwx-init-reason-scope.py" --self-test build/if_iwx_illumos.c 2>&1 | tee "$ART/run128-init-reason-scope.log"
+grep -Fq 'INIT_REASON_SCOPE_NEGATIVE_CONTROLS=3/3 PASS' "$ART/run128-init-reason-scope.log"
+grep -Fq 'INIT_REASON_SCOPE=PASS' "$ART/run128-init-reason-scope.log"
 cp build/if_iwx_illumos.c "$ART/run107-if_iwx_illumos.c"
+cp build/if_iwx_illumos.c "$ART/run128-if_iwx_illumos.c"
+digest -a sha256 build/if_iwx_illumos.c > "$ART/run128-generated-iwx-source.sha256"
 cp patches/if_iwx.illumos.patch "$ART/run107-if_iwx.illumos.patch"
+cp patches/if_iwx.illumos.patch "$ART/run128-if_iwx.illumos.patch"
+ax101_diag_stage RUN128_INIT_REASON_VALIDATION
+grep -q 'IWX_INIT_REASON_CMD_TIMEOUT' build/if_iwx_illumos.c
+grep -q '^enum iwx_init_task_reason {' build/if_iwx_illumos.c
+ax101_diag_pass RUN128_INIT_REASON_VALIDATION
 cd "$SRC/src/ports/wifi/net80211"
 bash ./gen-illumos-src.sh --update ieee80211_input
 bash ./gen-illumos-src.sh
