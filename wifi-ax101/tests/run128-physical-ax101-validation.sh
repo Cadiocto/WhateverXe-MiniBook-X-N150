@@ -219,7 +219,6 @@ ESSID_BSSID_COUNT=$(awk -F= '/^ESSID_BSSID_COUNT=/{print $2; exit}' "$OUT/essid-
 [ -n "$ESSID_BSSID_COUNT" ] || ESSID_BSSID_COUNT=0
 {
     echo "RX_NOTIFICATION_IDS_OBSERVED=$SCAN_RX_IDS"
-    echo "RX_NOTIFICATION_IDS_OBSERVED=$SCAN_RX_IDS"
     echo "IWX_SCAN_COMPLETE_UMAC_OBSERVED=$SCAN_COMPLETE"
     echo "BSS_TREE_SNAPSHOT_OBSERVED=$BSS_TREE"
     echo "RFKILL_EVIDENCE_OBSERVED=$RFKILL"
@@ -235,7 +234,8 @@ ESSID_BSSID_COUNT=$(awk -F= '/^ESSID_BSSID_COUNT=/{print $2; exit}' "$OUT/essid-
 # successful scan command or a firmware command ACK.
 if [ "$PCI_NODE" = YES ] && [ "$PCI_SUBSYSTEM" = YES ] &&
    [ "$PCI_FUNCTION" = YES ] && [ "$IWX_LINK" = YES ] && [ "$IWX_MOD" = YES ] &&
-   [ "$FIRMWARE_API77" = YES ] && [ "$RFKILL" = YES ] &&
+   [ "$FIRMWARE_API77" = YES ] && [ "$CONFIG_SO_HR1" = YES ] &&
+   [ "$RFKILL" = YES ] &&
    [ "$SCAN_RX_IDS" = YES ] && [ "$SCAN_COMPLETE" = YES ] &&
    [ "$BSS_TREE" = YES ] && [ "$GLD_WL_SCAN" = YES ] &&
    [ "$GLD_ESS_SNAPSHOT" = YES ] && [ "$ESSID_BSSID_COUNT" -gt 0 ]; then

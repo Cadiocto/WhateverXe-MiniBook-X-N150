@@ -83,8 +83,9 @@ def main() -> None:
              "RUN128 init-reason scope checker SHA-256 mismatch")
         physical_script = z.read("physical-ax101-validation.sh").decode(errors="replace")
         for marker in ("illumos-c893fd03ad", "8086:54F0", "8086:0244",
-                       "iwx-so-a0-hr-b0-77", "iwx_scan_complete_notification",
-                       "IWX_SCAN_COMPLETE_UMAC", "GLDV3_ESS_SNAPSHOT_OBSERVED",
+                       "iwx-so-a0-hr-b0-77", "iwx_cfg_so_a0_hr_b0",
+                       "iwx_scan_complete_notification", "IWX_SCAN_COMPLETE_UMAC",
+                       "GLDV3_ESS_SNAPSHOT_OBSERVED",
                        "ESSID_BSSID_COUNT"):
             need(marker in physical_script,
                  "RUN128 physical validation script missing marker: " + marker)

@@ -222,8 +222,9 @@ def main() -> None:
         require(physical_test.is_file(), "RUN128 consolidated physical validation script is missing")
         physical_text = read(physical_test)
         for marker in ("illumos-c893fd03ad", "8086:54F0", "8086:0244",
-                       "iwx-so-a0-hr-b0-77", "iwx_scan_complete_notification",
-                       "IWX_SCAN_COMPLETE_UMAC", "GLDV3_ESS_SNAPSHOT_OBSERVED",
+                       "iwx-so-a0-hr-b0-77", "iwx_cfg_so_a0_hr_b0",
+                       "iwx_scan_complete_notification", "IWX_SCAN_COMPLETE_UMAC",
+                       "GLDV3_ESS_SNAPSHOT_OBSERVED",
                        "ESSID_BSSID_COUNT"):
             require(marker in physical_text, "RUN128 physical validation script is missing marker: " + marker)
         subprocess.run(["bash", "-n", str(physical_test)], check=True)
