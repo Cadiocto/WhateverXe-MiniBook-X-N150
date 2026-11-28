@@ -1,0 +1,14 @@
+scanfix-implementation/
+scanfix-implementation/README.md
+scanfix-implementation/SHA256SUMS
+scanfix-implementation/diagnostics/
+scanfix-implementation/diagnostics/ax101-scan.d
+scanfix-implementation/engineering/
+scanfix-implementation/engineering/SCAN-DISCOVERY-ROOT-CAUSE.md
+scanfix-implementation/evidence/
+scanfix-implementation/evidence/source-candidate-verification.txt
+scanfix-implementation/patches/
+scanfix-implementation/patches/0028-ax101-scan-notification-rx-fix.patch
+scanfix-implementation/tests/
+scanfix-implementation/tests/run-ax101-scan-validation.sh
+scanfix-implementation/tests/scan-regression.py
