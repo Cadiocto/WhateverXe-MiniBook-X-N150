@@ -76,11 +76,10 @@ def check_source(source: str) -> None:
     if not (block_end < function.start() < first_use.start()):
         raise ContractError(
             "init-task reason enum must precede the first iwx_send_cmd use")
-    signature = ("static void\\n"
+    signature = ("static void\n"
                  "iwx_schedule_init_task(struct iwx_softc *sc, uint32_t reason)")
     if signature not in source:
         raise ContractError(
-            "iwx_schedule_init_task must retain its uint32_t reason argument")
             "iwx_schedule_init_task must retain its uint32_t reason argument")
 
 
