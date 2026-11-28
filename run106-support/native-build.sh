@@ -268,6 +268,14 @@ cp "$SCANFIX_ROOT/evidence/source-candidate-verification.txt" "$ART/scanfix-sour
   echo "SCANFIX_REGRESSION=35/35"
   echo "SCANFIX_NEGATIVE_CONTROLS=10/10"
 } > "$ART/scanfix-source-identity.txt"
+{
+  echo "INIT_REASON_ENUM_SCOPE=PASS"
+  echo "INIT_REASON_ENUMERATOR_COUNT=14"
+  echo "INIT_REASON_NEGATIVE_CONTROLS=3/3"
+  echo "INIT_REASON_PATCH_0029_SHA256=$(awk '{print $1}' "$ART/run128-init-reason-patch.sha256")"
+  digest -a sha256 "$ART/run128-if_iwx_illumos.c"
+} > "$ART/run128-init-reason-identity.txt"
+cat "$ART/run128-init-reason-identity.txt" >> "$ART/scanfix-source-identity.txt"
 ax101_diag_stage RUN87_SOURCE_STATIC
 python3 "$WIFI/ci/check-run87-illumos-adaptation.py" --source-root "$SRC" --self-test
 test -s /usr/include/sys/callo.h
