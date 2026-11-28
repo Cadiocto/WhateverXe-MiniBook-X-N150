@@ -184,15 +184,17 @@ rows = []
 for line in source:
     if not line.strip() or line.split() == header:
         continue
-    fields = line.split()
     matches = list(mac.finditer(line))
     if not matches:
         continue
-    bssid = matches[-1].group(0)
-    before = line[:matches[-1].start()].split()
-    if len(fields) <= bssid_col or len(fields) <= essid_col:
+    # dladm prints LINK, ESSID (possibly containing spaces), then BSSID.
+    bssid_match = matches[0]
+    bssid = bssid_match.group(0)
+    prefix = line[:bssid_match.start()].strip()
+    prefix_fields = prefix.split(maxsplit=1)
+    if len(prefix_fields) < 2:
         continue
-    essid = fields[essid_col]
+    essid = prefix_fields[1].strip()
     if essid in ("--", "-", "<unknown>", "ESSID"):
         continue
     rows.append((essid, bssid, line))
