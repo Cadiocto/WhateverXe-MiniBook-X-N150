@@ -101,9 +101,9 @@ if grep -Eq '(^|[[:space:]])iwx([[:space:]]|$)' "$OUT/before-driver-list.log"; t
     IWX_MOD=YES
 fi
 FIRMWARE_API77=NO
-if grep -Eiq 'iwx-so-a0-hr-b0-77|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' "$OUT/before-dmesg.log"; then
+if grep -Eiq 'iwx-so-a0-hr-b0-77|fw[[:space:]]+77\.|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' "$OUT/before-dmesg.log"; then
     FIRMWARE_API77=YES
-    grep -Ei 'iwx-so-a0-hr-b0-77|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' \
+    grep -Ei 'iwx-so-a0-hr-b0-77|fw[[:space:]]+77\.|firmware[^[:cntrl:]]*(API[ =:]*)?77|API[ =:]77' \
         "$OUT/before-dmesg.log" > "$OUT/firmware-api77-evidence.txt" || true
 else
     echo "No explicit API-77 firmware filename/API line found in dmesg; inspect complete dmesg and driver logs." \
@@ -136,16 +136,20 @@ grep -Ei 'iwx|AX101|54f0|firmware|RF.?Kill|RF_KILL' "$OUT/before-dmesg.log" \
     > "$OUT/driver-boot-excerpt.txt" || true
 
 # DTrace -c starts tracing and the real dladm scan as one command; no sleeps
-# or probe-attach timing race are used. The iwx_scan_complete_notification
-# SDT probe is emitted when IWX_SCAN_COMPLETE_UMAC is handled by the driver.
+# or probe-attach timing race are used. Keep child dladm output separate from
+# DTrace aggregations so the actual ESSID/BSSID rows are directly inspectable.
 echo "SCAN_COMPLETE_PROBE=iwx_scan_complete_notification" | tee -a "$OUT/result.txt"
 echo "SCAN_COMPLETE_OPCODE=IWX_SCAN_COMPLETE_UMAC" | tee -a "$OUT/result.txt"
+printf '#!/usr/bin/bash\n/usr/sbin/dladm scan-wifi > %q 2>&1\nSCAN_RC=$?\necho "DLADM_SCAN_EXIT=$SCAN_RC" >> %q\nexit "$SCAN_RC"\n' \
+    "$OUT/scan-wifi.log" "$OUT/scan-wifi.log" > "$OUT/run-dladm-scan.sh"
+chmod 0755 "$OUT/run-dladm-scan.sh"
 set +e
-dtrace -q -s "$DTRACE_SCRIPT" -c "/usr/sbin/dladm scan-wifi" \
-    >"$OUT/scan-dtrace.log" 2>&1
+dtrace -q -o "$OUT/scan-dtrace.log" -s "$DTRACE_SCRIPT" -c "$OUT/run-dladm-scan.sh"
 DTRACE_SCAN_RC=$?
 set -e
 echo "DTRACE_SCAN_EXIT=$DTRACE_SCAN_RC" | tee -a "$OUT/result.txt"
+grep -F "DLADM_SCAN_EXIT=0" "$OUT/scan-wifi.log" >/dev/null ||
+    fail "dladm scan-wifi failed; see scan-wifi.log"
 [ "$DTRACE_SCAN_RC" -eq 0 ] || fail "DTrace scan command failed; see scan-dtrace.log"
 
 capture after-wifi /usr/sbin/dladm show-wifi
@@ -156,7 +160,7 @@ capture after-dmesg /usr/bin/dmesg
 
 # Preserve actual ESSID/BSSID rows. The raw dladm output remains authoritative
 # if a platform release uses a different column layout.
-python3 - "$OUT/after-wifi.log" "$OUT/essid-bssid-rows.txt" <<'PY'
+python3 - "$OUT/scan-wifi.log" "$OUT/essid-bssid-rows.txt" <<'PY'
 import re
 import sys
 from pathlib import Path
