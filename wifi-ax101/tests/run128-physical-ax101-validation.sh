@@ -27,9 +27,9 @@ section_has_rows() {
     file=$1
     begin=$2
     next=$3
-    awk -v begin="$begin" -v next="$next" '
+    awk -v begin="$begin" -v end_marker="$next" '
         index($0, begin) { active = 1; next }
-        active && index($0, next) { exit }
+        active && index($0, end_marker) { exit }
         active && NF { rows++ }
         END { exit(rows > 0 ? 0 : 1) }
     ' "$file"
