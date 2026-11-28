@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -234,8 +236,14 @@ def main() -> None:
         require(reason_patch.is_file() and sha256(reason_patch) ==
                 "265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
                 "RUN128 init-reason scope patch is missing or has the wrong SHA-256")
+        reason_checker = repo / "wifi-ax101/tests/check-iwx-init-reason-scope.py"
+        require(reason_checker.is_file() and sha256(reason_checker) ==
+                "e109282fbbfdafc980eb41e697477562db3606d710709566d6d5afb1e83c0491",
+                "RUN128 init-reason scope checker is missing or has the wrong SHA-256")
         (package / "source/patches").mkdir(parents=True, exist_ok=True)
+        (package / "source/tests").mkdir(parents=True, exist_ok=True)
         shutil.copy2(reason_patch, package / "source/patches/0029-iwx-init-task-reason-enum-scope.patch")
+        shutil.copy2(reason_checker, package / "source/tests/check-iwx-init-reason-scope.py")
 
         evidence_names = [
             "target-kernel-preflight-before-tools.txt", "toolchain-preflight.txt",
@@ -292,7 +300,7 @@ def main() -> None:
 
         compiler = read(guest / "runner-environment.txt")
         provenance = [
-            "AX101_RUN=RUN107_SCANFIX",
+            "AX101_RUN=RUN128",
             "SOURCE_REPOSITORY=Cadiocto/WhateverXe-MiniBook-X-N150",
             "SOURCE_BRANCH=" + args.branch,
             "SOURCE_COMMIT=" + args.commit,
@@ -303,6 +311,8 @@ def main() -> None:
             "BASELINE_RUN106_GITHUB_ARTIFACT_ID=15229533467",
             "BASELINE_RUN106_GITHUB_ARTIFACT_SHA256=107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11",
             "SCANFIX_PATCH_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80",
+            "INIT_REASON_PATCH_0029_SHA256=265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
+            "INIT_REASON_CHECKER_SHA256=e109282fbbfdafc980eb41e697477562db3606d710709566d6d5afb1e83c0491",
             "POSTBUILD_HOOK_EXECUTED=PASS",
             "PKG_UPDATE=SKIPPED",
             "RUN106_BASELINE_EVIDENCE_REUSED=YES",
@@ -345,6 +355,7 @@ def main() -> None:
             "INIT_REASON_ENUMERATOR_COUNT=14",
             "INIT_REASON_NEGATIVE_CONTROLS=3/3",
             "INIT_REASON_PATCH_0029_SHA256=265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
+            "INIT_REASON_CHECKER_SHA256=e109282fbbfdafc980eb41e697477562db3606d710709566d6d5afb1e83c0491",
             "MBUF_NEGATIVE_CONTROLS=20/20",
             "DMA_NEGATIVE_CONTROLS=3/3",
             "GITHUB_ACTIONS_RUN_ID=" + args.run_id,
@@ -376,6 +387,11 @@ def main() -> None:
             "hardware": {"vendor_device": "8086:54F0", "subsystem": "8086:0244"},
             "firmware": {"api": 77, "filename": "iwx-so-a0-hr-b0-77", "sha256": FIRMWARE_SHA},
             "module": {"sha256": sha256(module), "elf_class": "ELF64", "machine": "EM_X86_64"},
+            "patch_stack": [
+                "RUN80 base patches 0001-0024 plus R5 integration 0027",
+                "0028 scan discovery fix sha256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80",
+                "0029 init reason enum scope sha256=265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
+            ],
             "source_github_artifact_id": 15229533467,
             "source_github_artifact_sha256": "107ce8e4c2381d5c91dece0d0b2ea29539c49389d177af605882ee2a20880f11",
             "postbuild_kernel_preservation_verified": True,
@@ -431,6 +447,13 @@ def main() -> None:
                 mode = (zi.external_attr >> 16) & 0o777
                 if zi.filename in operational_scripts:
                     require(mode & 0o111, "executable bit missing in ZIP: " + zi.filename)
+        verify_result = subprocess.run(
+            [sys.executable, str(repo / "run106-support/verify-offline-bundle.py"), str(out)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+        verify_text = verify_result.stdout + "exit_code=" + str(verify_result.returncode) + "\n"
+        (art / "RUN128-OFFLINE-VERIFY.txt").write_text(verify_text)
+        require(verify_result.returncode == 0,
+                "independent offline-bundle verification failed: " + verify_text)
         (art / "RUN128-ARTIFACT-SHA256SUMS.txt").write_text(
             "MODULE_SHA256=" + sha256(module) + "\n" +
             "FIRMWARE_SHA256=" + FIRMWARE_SHA + "\n" +
@@ -451,6 +474,7 @@ def main() -> None:
         print("OFFLINE_BUNDLE=" + str(out))
         print("OFFLINE_BUNDLE_SHA256=" + sha256(out))
         print("OFFLINE_BUNDLE_SIZE=" + str(out.stat().st_size))
+        print("OFFLINE_BUNDLE_VERIFY=PASS")
 
 if __name__ == "__main__":
     main()

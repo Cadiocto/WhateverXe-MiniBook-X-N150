@@ -47,6 +47,7 @@ def main() -> None:
             "source/scanfix-implementation/diagnostics/ax101-scan.d",
             "source/scanfix-implementation/tests/run-ax101-scan-validation.sh",
             "source/patches/0029-iwx-init-task-reason-enum-scope.patch",
+            "source/tests/check-iwx-init-reason-scope.py",
             "evidence/scan-regression-final.log",
             "evidence/scanfix-source-identity.txt",
             "evidence/run128-init-reason-scope.log",
@@ -75,6 +76,9 @@ def main() -> None:
         reason_patch = z.read("source/patches/0029-iwx-init-task-reason-enum-scope.patch")
         need(sha(reason_patch) == "265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
              "RUN128 init-reason scope patch SHA-256 mismatch")
+        reason_checker = z.read("source/tests/check-iwx-init-reason-scope.py")
+        need(sha(reason_checker) == "e109282fbbfdafc980eb41e697477562db3606d710709566d6d5afb1e83c0491",
+             "RUN128 init-reason scope checker SHA-256 mismatch")
         reason_log = z.read("evidence/run128-init-reason-scope.log").decode(errors="replace")
         need("INIT_REASON_SCOPE=PASS" in reason_log and
              "INIT_REASON_SCOPE_NEGATIVE_CONTROLS=3/3 PASS" in reason_log,
