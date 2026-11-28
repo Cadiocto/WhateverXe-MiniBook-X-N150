@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 
 OUT=${1:-/var/tmp/ax101-run128-physical-$(date -u +%Y%m%dT%H%M%SZ)}
-BUNDLE_ROOT=$(cd -- "$(dirname -- "$0")/../.." && pwd)
+BUNDLE_ROOT=$(cd -- "$(dirname -- "$0")" && pwd)
 DTRACE_SCRIPT="$BUNDLE_ROOT/source/scanfix-implementation/diagnostics/ax101-scan.d"
 mkdir -p "$OUT"
 
