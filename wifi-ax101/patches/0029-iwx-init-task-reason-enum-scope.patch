@@ -1,0 +1,57 @@
+--- a/build/if_iwx_illumos.c
++++ b/build/if_iwx_illumos.c
+@@ -441,10 +441,26 @@
+ int	iwx_mld_mac_ctxt_cmd(struct iwx_softc *, struct iwx_node *, uint32_t,
+ 	    int);
+ int	iwx_clear_statistics(struct iwx_softc *);
+ void	iwx_add_task(struct iwx_softc *, struct taskq *, struct task *);
+ void	iwx_del_task(struct iwx_softc *, struct taskq *, struct task *);
++enum iwx_init_task_reason {
++	IWX_INIT_REASON_CMD_TIMEOUT = 1,
++	IWX_INIT_REASON_BGSCAN_TASK,
++	IWX_INIT_REASON_NEWSTATE,
++	IWX_INIT_REASON_WATCHDOG,
++	IWX_INIT_REASON_CT_KILL,
++	IWX_INIT_REASON_CHANNEL_SWITCH,
++	IWX_INIT_REASON_RX_ERROR,
++	IWX_INIT_REASON_MSI_RF_KILL,
++	IWX_INIT_REASON_MSI_SW_ERROR,
++	IWX_INIT_REASON_MSI_HW_ERROR,
++	IWX_INIT_REASON_MSIX_TOP_FATAL,
++	IWX_INIT_REASON_MSIX_SW_ERROR,
++	IWX_INIT_REASON_MSIX_RF_KILL,
++	IWX_INIT_REASON_MSIX_HW_ERROR
++};
+ static void	iwx_schedule_init_task(struct iwx_softc *, uint32_t);
+ int	iwx_initiate_scan(struct iwx_softc *, int);
+ int	iwx_scan(struct iwx_softc *);
+ int	iwx_bgscan(struct ieee80211com *);
+ void	iwx_bgscan_done(struct ieee80211com *,
+@@ -8743,27 +8759,10 @@
+ 
+ 	return 0;
+ }
+ 
+ /* init_task is not in task_refs; the custom systq queue/active state drains it. */
+-enum iwx_init_task_reason {
+-	IWX_INIT_REASON_CMD_TIMEOUT = 1,
+-	IWX_INIT_REASON_BGSCAN_TASK,
+-	IWX_INIT_REASON_NEWSTATE,
+-	IWX_INIT_REASON_WATCHDOG,
+-	IWX_INIT_REASON_CT_KILL,
+-	IWX_INIT_REASON_CHANNEL_SWITCH,
+-	IWX_INIT_REASON_RX_ERROR,
+-	IWX_INIT_REASON_MSI_RF_KILL,
+-	IWX_INIT_REASON_MSI_SW_ERROR,
+-	IWX_INIT_REASON_MSI_HW_ERROR,
+-	IWX_INIT_REASON_MSIX_TOP_FATAL,
+-	IWX_INIT_REASON_MSIX_SW_ERROR,
+-	IWX_INIT_REASON_MSIX_RF_KILL,
+-	IWX_INIT_REASON_MSIX_HW_ERROR
+-};
+-
+ static void
+ iwx_schedule_init_task(struct iwx_softc *sc, uint32_t reason)
+ {
+ 	struct ifnet *ifp = IC2IFP(&sc->sc_ic);
+ 	int added;
