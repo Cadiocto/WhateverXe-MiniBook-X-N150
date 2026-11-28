@@ -40,6 +40,25 @@ jobs:
           ROOT=restoration/scanfix-implementation
           test -d "$ROOT"
           rm -rf "$ROOT/tests/__pycache__"
+          PATCH="$ROOT/patches/0028-ax101-scan-notification-rx-fix.patch"
+          python3 - "$PATCH" <<'PY'
+          from pathlib import Path
+          import hashlib, sys
+          patch = Path(sys.argv[1])
+          data = patch.read_bytes()
+          corrupt = b"@@ -119=/,7 +12130,7"
+          repaired = b"@@ -11969,7 +12130,7"
+          expected = "9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80"
+          if hashlib.sha256(data).hexdigest() != expected:
+              if data.count(corrupt) != 1:
+                  raise SystemExit("scan patch corruption pattern is not the exact reviewed 2-byte defect")
+              data = data.replace(corrupt, repaired, 1)
+              patch.write_bytes(data)
+          actual = hashlib.sha256(patch.read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"patch SHA-256 mismatch after exact repair: {actual}")
+          print(f"PATCH_0028_SHA256={actual}")
+          PY
           (cd "$ROOT" && sha256sum -c SHA256SUMS) | tee scanfix-member-check.txt
           PATCH="$ROOT/patches/0028-ax101-scan-notification-rx-fix.patch"
           test -s "$PATCH"
@@ -59,6 +78,9 @@ jobs:
           python3 -m py_compile "$ROOT/tests/scan-regression.py"
           bash -n "$ROOT/tests/run-ax101-scan-validation.sh"
           rm -rf "$ROOT/tests/__pycache__"
+          find "$ROOT" -type d -exec chmod 0755 {} +
+          find "$ROOT" -type f -exec chmod 0644 {} +
+          chmod 0755 "$ROOT/tests/run-ax101-scan-validation.sh" "$ROOT/tests/scan-regression.py"
           echo "RECOVERY_ARTIFACT_SHA256=$(sha256sum recovery-source-artifact.zip | awk '{print $1}')" | tee recovery-evidence.txt
           echo "PATCH_0028_SHA256=$PATCH_SHA" | tee -a recovery-evidence.txt
           echo "INTERNAL_MEMBER_CHECKSUMS=PASS" | tee -a recovery-evidence.txt
@@ -75,7 +97,7 @@ jobs:
           tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -cf - -C restoration scanfix-implementation | gzip -n -9 > "$OUT"
           gzip -t "$OUT"
           ARCHIVE_SHA=$(sha256sum "$OUT" | awk '{print $1}')
-          test "$ARCHIVE_SHA" = "7224fb66669bd2b3b14cecb3a755d5b66740954d4db580420b87f080a8e5fb34"
+          test "$ARCHIVE_SHA" = "f108bbabc11e37457a4fc4b2a49308ef69f1aba384d933c916582b6267f342c2"
           PARTS="$GITHUB_WORKSPACE/wifi-ax101/scanfix-archive-parts"
           mkdir -p "$PARTS"
           rm -f "$PARTS"/*.b64
@@ -83,11 +105,11 @@ jobs:
           import base64, pathlib, sys
           archive = pathlib.Path(sys.argv[1]).read_bytes()
           encoded = base64.b64encode(archive).decode("ascii")
-          expected = 25404
+          expected = 25392
           if len(encoded) != expected:
               raise SystemExit(f"unexpected base64 length {len(encoded)} != {expected}")
           parts = [encoded[i:i+3500] for i in range(0, len(encoded), 3500)]
-          if len(parts) != 8 or len(parts[-1]) != 904:
+          if len(parts) != 8 or len(parts[-1]) != 892:
               raise SystemExit(f"unexpected part lengths {[len(p) for p in parts]}")
           root = pathlib.Path(sys.argv[2])
           for i, chunk in enumerate(parts):
@@ -105,7 +127,7 @@ jobs:
             echo "ARCHIVE_SHA256=$ARCHIVE_SHA"
             echo "PATCH_0028_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80"
             echo "PART_COUNT=8"
-            echo "PART_LENGTHS=3500,3500,3500,3500,3500,3500,3500,904"
+            echo "PART_LENGTHS=3500,3500,3500,3500,3500,3500,3500,892"
             echo "RECONSTRUCTION_BYTE_IDENTICAL=PASS"
             echo "GZIP_CRC=PASS"
             echo "INTERNAL_SHA256SUMS=PASS"
