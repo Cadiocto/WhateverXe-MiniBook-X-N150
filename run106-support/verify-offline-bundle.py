@@ -36,6 +36,7 @@ def main() -> None:
             "rollback.sh",
             "connect-wifi.py",
             "physical-ax101-validation.sh",
+            "physical-ax101-scan.d",
             "build-provenance.txt",
             "manifest.json",
             "SHA256SUMS",
@@ -83,9 +84,13 @@ def main() -> None:
         physical_script = z.read("physical-ax101-validation.sh").decode(errors="replace")
         for marker in ("illumos-c893fd03ad", "8086:54F0", "8086:0244",
                        "iwx-so-a0-hr-b0-77", "iwx_scan_complete_notification",
-                       "GLDV3_ESS_SNAPSHOT_OBSERVED", "ESSID_BSSID_COUNT"):
+                       "IWX_SCAN_COMPLETE_UMAC", "GLDV3_ESS_SNAPSHOT_OBSERVED",
+                       "ESSID_BSSID_COUNT"):
             need(marker in physical_script,
                  "RUN128 physical validation script missing marker: " + marker)
+        physical_dtrace = z.read("physical-ax101-scan.d")
+        need(sha(physical_dtrace) == "9365a852999e29b55e973f871738bf31dbe6dabb77b7171af36e68b545089a14",
+             "RUN128 physical DTrace program SHA-256 mismatch")
         reason_log = z.read("evidence/run128-init-reason-scope.log").decode(errors="replace")
         need("INIT_REASON_SCOPE=PASS" in reason_log and
              "INIT_REASON_SCOPE_NEGATIVE_CONTROLS=3/3 PASS" in reason_log,

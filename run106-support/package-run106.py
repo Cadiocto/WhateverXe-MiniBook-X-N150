@@ -223,11 +223,16 @@ def main() -> None:
         physical_text = read(physical_test)
         for marker in ("illumos-c893fd03ad", "8086:54F0", "8086:0244",
                        "iwx-so-a0-hr-b0-77", "iwx_scan_complete_notification",
-                       "GLDV3_ESS_SNAPSHOT_OBSERVED", "ESSID_BSSID_COUNT"):
+                       "IWX_SCAN_COMPLETE_UMAC", "GLDV3_ESS_SNAPSHOT_OBSERVED",
+                       "ESSID_BSSID_COUNT"):
             require(marker in physical_text, "RUN128 physical validation script is missing marker: " + marker)
         subprocess.run(["bash", "-n", str(physical_test)], check=True)
+        physical_dtrace = repo / "wifi-ax101/tests/run128-physical-ax101-scan.d"
+        require(physical_dtrace.is_file() and sha256(physical_dtrace) == "9365a852999e29b55e973f871738bf31dbe6dabb77b7171af36e68b545089a14",
+                "RUN128 physical DTrace program is missing or has the wrong SHA-256")
         shutil.copy2(physical_test, package / "physical-ax101-validation.sh")
         (package / "physical-ax101-validation.sh").chmod(0o755)
+        shutil.copy2(physical_dtrace, package / "physical-ax101-scan.d")
         source_parts_dir = repo / "wifi-ax101/scanfix-archive-parts"
         source_parts = sorted(source_parts_dir.glob("*.b64"))
         require([p.name for p in source_parts] == [f"{i:02d}.b64" for i in range(8)],
