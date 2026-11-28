@@ -73,7 +73,7 @@ def check_source(source: str) -> None:
         source)
     if first_use is None:
         raise ContractError("no reason-tagged recovery call was found")
-    if not (start < function.start() < first_use.start() < block_end):
+    if not (block_end < function.start() < first_use.start()):
         raise ContractError(
             "init-task reason enum must precede the first iwx_send_cmd use")
     if "static void\niwx_schedule_init_task(struct iwx_softc *sc, "
