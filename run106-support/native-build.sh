@@ -244,7 +244,14 @@ python3 -m py_compile "$SCANFIX_ROOT/tests/scan-regression.py"
 AX101_SOURCE_ROOT="$SRC/src/ports/wifi" python3 "$SCANFIX_ROOT/tests/scan-regression.py" 2>&1 | tee "$ART/scan-regression-final.log"
 grep -Fq 'Ran 35 tests' "$ART/scan-regression-final.log"
 grep -Fq 'OK' "$ART/scan-regression-final.log"
-scan_nc_count=$(grep -Ec '^test_nc[0-9]{2}_.*\.\.\. ok
+scan_nc_count=$(grep -Ec '^test_nc[0-9]{2}_.*[.][.][.] ok$' "$ART/scan-regression-final.log" || true)
+test "$scan_nc_count" -eq 10
+{
+  echo "SCAN_NEGATIVE_CONTROLS=$scan_nc_count/10"
+  grep -E '^test_nc[0-9]{2}_.*[.][.][.] ok$' "$ART/scan-regression-final.log"
+  echo "EXIT_CODE=0"
+} | tee "$ART/scanfix-negative-controls.log"
+ax101_diag_pass SCANFIX_HOST_REGRESSION
 
 # Re-run existing ownership/DMA suites against the scanfix-mutated tree.
 ax101_diag_command run107-mbuf-regression env CC="$CC" bash "$SRC/src/ports/wifi/iwx/run-mbuf-tests.sh" 2>&1 | tee "$ART/run107-mbuf-regression.log"
