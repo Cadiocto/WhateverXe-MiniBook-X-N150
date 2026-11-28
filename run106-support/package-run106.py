@@ -137,6 +137,9 @@ def main() -> None:
         for name in ("run87-mbuf-regression.log", "run87-dma-regression.log",
                      "run107-mbuf-regression.log", "run107-dma-regression.log",
                      "scan-regression-final.log", "scanfix-source-identity.txt",
+                     "run128-init-reason-scope.log", "run128-init-reason-patch.sha256",
+                     "run128-init-reason-identity.txt", "run128-generated-iwx-source.sha256",
+                     "run128-if_iwx_illumos.c", "run128-if_iwx.illumos.patch",
                      "connect-wifi-tests.txt", "elf-symbol-reconciliation.txt",
                      "iwx.dynamic-acceptance.txt", "iwx.relocations.txt",
                      "iwx.elf-header.txt", "compiler-output.log"):
@@ -149,6 +152,21 @@ def main() -> None:
                 "scan-fix negative controls are not 10/10 PASS")
         require("SCANFIX_PATCH_SHA256=9d469589bc5397efa89199a5c2fa86654a62956ab6ff4e0c33807e52b8e91f80" in scan_identity,
                 "scan-fix patch identity mismatch")
+        reason_scope = read(evidence("run128-init-reason-scope.log"))
+        reason_identity = read(evidence("run128-init-reason-identity.txt"))
+        reason_patch_record = read(evidence("run128-init-reason-patch.sha256")).split()
+        require("INIT_REASON_SCOPE=PASS" in reason_scope and
+                "INIT_REASON_SCOPE_NEGATIVE_CONTROLS=3/3 PASS" in reason_scope,
+                "RUN128 init-reason visibility or negative-control suite failed")
+        require("INIT_REASON_ENUM_SCOPE=PASS" in reason_identity and
+                "INIT_REASON_ENUMERATOR_COUNT=14" in reason_identity and
+                "INIT_REASON_NEGATIVE_CONTROLS=3/3" in reason_identity,
+                "RUN128 init-reason identity evidence is incomplete")
+        require(bool(reason_patch_record) and
+                reason_patch_record[0] == "265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
+                "RUN128 patch 0029 SHA-256 mismatch")
+        require("INIT_REASON_PATCH_0029_SHA256=" + reason_patch_record[0] in scan_identity,
+                "scanfix source identity omits RUN128 patch 0029")
         require("TARGET_KERNEL=illumos-c893fd03ad" in scan_identity,
                 "scan-fix source evidence does not name the exact target kernel")
 
@@ -212,6 +230,12 @@ def main() -> None:
         shutil.copy2(source_archive, package / "source/scanfix-implementation.tar.gz")
         with tarfile.open(source_archive, "r:gz") as sf:
             sf.extractall(package / "source", filter="data")
+        reason_patch = repo / "wifi-ax101/patches/0029-iwx-init-task-reason-enum-scope.patch"
+        require(reason_patch.is_file() and sha256(reason_patch) ==
+                "265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
+                "RUN128 init-reason scope patch is missing or has the wrong SHA-256")
+        (package / "source/patches").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(reason_patch, package / "source/patches/0029-iwx-init-task-reason-enum-scope.patch")
 
         evidence_names = [
             "target-kernel-preflight-before-tools.txt", "toolchain-preflight.txt",
@@ -229,6 +253,9 @@ def main() -> None:
             "scan-regression-final.log", "scanfix-patch.sha256",
             "scanfix-source-identity.txt", "run107-if_iwx_illumos.c",
             "run107-if_iwx.illumos.patch", "run107-ieee80211_input.c",
+            "run128-init-reason-scope.log", "run128-init-reason-patch.sha256",
+            "run128-init-reason-identity.txt", "run128-generated-iwx-source.sha256",
+            "run128-if_iwx_illumos.c", "run128-if_iwx.illumos.patch",
             "run107-ieee80211_input.illumos.patch",
             "connect-wifi-tests.txt", "net80211-header-closure.txt",
             "integration-replay-status.txt", "STATUS.txt"
@@ -314,6 +341,10 @@ def main() -> None:
             "REGRESSION_TESTS=PASS",
             "SCANFIX_REGRESSION_TESTS=35/35",
             "SCANFIX_NEGATIVE_CONTROLS=10/10",
+            "INIT_REASON_ENUM_SCOPE=PASS",
+            "INIT_REASON_ENUMERATOR_COUNT=14",
+            "INIT_REASON_NEGATIVE_CONTROLS=3/3",
+            "INIT_REASON_PATCH_0029_SHA256=265e25c861f17823113889e340a12321968a26e7d6023455c7aa28b473ce17aa",
             "MBUF_NEGATIVE_CONTROLS=20/20",
             "DMA_NEGATIVE_CONTROLS=3/3",
             "GITHUB_ACTIONS_RUN_ID=" + args.run_id,
@@ -340,7 +371,7 @@ def main() -> None:
                 "mode": "0755" if (p.stat().st_mode & 0o111) else "0644"
             })
         manifest = {
-            "bundle": "AX101-OpenIndiana-RUN107-SCANFIX-OFFLINE.zip",
+            "bundle": "AX101-OpenIndiana-RUN128-OFFLINE.zip",
             "target_kernel": TARGET,
             "hardware": {"vendor_device": "8086:54F0", "subsystem": "8086:0244"},
             "firmware": {"api": 77, "filename": "iwx-so-a0-hr-b0-77", "sha256": FIRMWARE_SHA},
@@ -371,7 +402,7 @@ def main() -> None:
             for pattern in secret_patterns:
                 require(pattern.search(data) is None, "possible secret detected in " + p.relative_to(package).as_posix())
 
-        out = art / "AX101-OpenIndiana-RUN107-SCANFIX-OFFLINE.zip"
+        out = art / "AX101-OpenIndiana-RUN128-OFFLINE.zip"
         if out.exists():
             out.unlink()
         with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
@@ -400,7 +431,7 @@ def main() -> None:
                 mode = (zi.external_attr >> 16) & 0o777
                 if zi.filename in operational_scripts:
                     require(mode & 0o111, "executable bit missing in ZIP: " + zi.filename)
-        (art / "RUN107-SCANFIX-ARTIFACT-SHA256SUMS.txt").write_text(
+        (art / "RUN128-ARTIFACT-SHA256SUMS.txt").write_text(
             "MODULE_SHA256=" + sha256(module) + "\n" +
             "FIRMWARE_SHA256=" + FIRMWARE_SHA + "\n" +
             "OFFLINE_ZIP_SHA256=" + sha256(out) + "\n"
@@ -412,6 +443,8 @@ def main() -> None:
         print("MODLOAD=PASS")
         print("MODUNLOAD=PASS")
         print("REGRESSION_TESTS=PASS")
+        print("INIT_REASON_ENUM_SCOPE=PASS")
+        print("INIT_REASON_NEGATIVE_CONTROLS=3/3")
         print("ELF_TEXTREL_PRESENT=" + ("YES" if textrel_present else "NO"))
         print("MODULE_SHA256=" + sha256(module))
         print("FIRMWARE_SHA256=" + FIRMWARE_SHA)
