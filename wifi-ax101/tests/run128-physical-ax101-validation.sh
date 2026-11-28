@@ -75,13 +75,21 @@ PCI_SUBSYSTEM=NO
 if grep -Eiq 'pci8086,54f0' "$OUT/before-prtconf.log"; then
     PCI_NODE=YES
 fi
-PCI_FUNCTION=NO
-if grep -Eiq 'pci@14,3|pci@0,14,3' "$OUT/before-prtconf.log"; then
-    PCI_FUNCTION=YES
-fi
-if grep -Eiq 'subsystem-vendor-id[[:space:]]*=[[:space:]]*(0x0*8086|0*32902)' "$OUT/before-prtconf.log" &&
-   grep -Eiq 'subsystem-id[[:space:]]*=[[:space:]]*(0x0*244|0*580)' "$OUT/before-prtconf.log"; then
+# OpenIndiana prtconf -pv prints property names and values on separate lines.
+if awk '
+    /name=\047subsystem-vendor-id\047/ {
+        if (getline > 0 && tolower($0) ~ /value=0*8086([[:space:]]|$)/) vendor=1
+    }
+    /name=\047subsystem-id\047/ {
+        if (getline > 0 && tolower($0) ~ /value=0*244([[:space:]]|$)/) device=1
+    }
+    END { exit !(vendor && device) }
+' "$OUT/before-prtconf.log"; then
     PCI_SUBSYSTEM=YES
+fi
+PCI_FUNCTION=NO
+if grep -Eiq 'pci8086,244@14,3|unit-address=[^[:cntrl:]]*14,3|pci@0,0/pci8086,244@14,3' "$OUT/before-prtconf.log"; then
+    PCI_FUNCTION=YES
 fi
 IWX_LINK=NO
 if grep -Eq '(^|[[:space:]])iwx0([[:space:]]|$)' "$OUT/before-phys.log" ||
@@ -102,8 +110,16 @@ else
         > "$OUT/firmware-api77-evidence.txt"
 fi
 CONFIG_SO_HR1=NO
-if grep -Fq 'iwx_cfg_so_a0_hr_b0' "$OUT/before-dmesg.log"; then
+if [ -s "$BUNDLE_ROOT/build-provenance.txt" ] &&
+   grep -Fxq 'IWX_CONFIGURATION=iwx_cfg_so_a0_hr_b0' "$BUNDLE_ROOT/build-provenance.txt"; then
     CONFIG_SO_HR1=YES
+fi
+if [ "$CONFIG_SO_HR1" = YES ]; then
+    grep -Fx 'IWX_CONFIGURATION=iwx_cfg_so_a0_hr_b0' "$BUNDLE_ROOT/build-provenance.txt" \
+        > "$OUT/configuration-so-hr1-evidence.txt"
+else
+    echo "Expected iwx_cfg_so_a0_hr_b0 missing from bundle build provenance." \
+        > "$OUT/configuration-so-hr1-evidence.txt"
 fi
 {
     echo "PCI_DEVICE_NODE=$PCI_NODE"
