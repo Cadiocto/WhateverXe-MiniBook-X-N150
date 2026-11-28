@@ -35,6 +35,7 @@ def main() -> None:
             "diagnose-ax101.sh",
             "rollback.sh",
             "connect-wifi.py",
+            "physical-ax101-validation.sh",
             "build-provenance.txt",
             "manifest.json",
             "SHA256SUMS",
@@ -79,6 +80,12 @@ def main() -> None:
         reason_checker = z.read("source/tests/check-iwx-init-reason-scope.py")
         need(sha(reason_checker) == "e109282fbbfdafc980eb41e697477562db3606d710709566d6d5afb1e83c0491",
              "RUN128 init-reason scope checker SHA-256 mismatch")
+        physical_script = z.read("physical-ax101-validation.sh").decode(errors="replace")
+        for marker in ("illumos-c893fd03ad", "8086:54F0", "8086:0244",
+                       "iwx-so-a0-hr-b0-77", "iwx_scan_complete_notification",
+                       "GLDV3_ESS_SNAPSHOT_OBSERVED", "ESSID_BSSID_COUNT"):
+            need(marker in physical_script,
+                 "RUN128 physical validation script missing marker: " + marker)
         reason_log = z.read("evidence/run128-init-reason-scope.log").decode(errors="replace")
         need("INIT_REASON_SCOPE=PASS" in reason_log and
              "INIT_REASON_SCOPE_NEGATIVE_CONTROLS=3/3 PASS" in reason_log,
@@ -119,7 +126,7 @@ def main() -> None:
         operational_scripts = {
             "verify-bundle.sh", "preflight.sh", "install-manual.sh",
             "register-driver.sh", "diagnose-ax101.sh", "rollback.sh",
-            "connect-wifi.py"
+            "connect-wifi.py", "physical-ax101-validation.sh"
         }
         for name, zi in entries.items():
             mode = (zi.external_attr >> 16) & 0o777
@@ -146,6 +153,7 @@ def main() -> None:
     print("ELF_FORMAT=PASS")
     print("KERNEL_PROVENANCE=PASS")
     print("ROLLBACK_SCRIPT_INCLUDED=PASS")
+    print("PHYSICAL_VALIDATION_SCRIPT=PASS")
     print("SCANFIX_SOURCE_AND_TESTS=PASS")
     print("SCANFIX_REGRESSION=35/35 PASS")
     print("OFFLINE_BUNDLE_VERIFY=PASS")

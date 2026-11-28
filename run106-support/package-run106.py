@@ -218,6 +218,16 @@ def main() -> None:
             target.chmod(0o755)
         (package / "connect-wifi.py").chmod(0o755)
         shutil.copy2(repo / "run106-support/offline/README.md", package / "README.md")
+        physical_test = repo / "wifi-ax101/tests/run128-physical-ax101-validation.sh"
+        require(physical_test.is_file(), "RUN128 consolidated physical validation script is missing")
+        physical_text = read(physical_test)
+        for marker in ("illumos-c893fd03ad", "8086:54F0", "8086:0244",
+                       "iwx-so-a0-hr-b0-77", "iwx_scan_complete_notification",
+                       "GLDV3_ESS_SNAPSHOT_OBSERVED", "ESSID_BSSID_COUNT"):
+            require(marker in physical_text, "RUN128 physical validation script is missing marker: " + marker)
+        subprocess.run(["bash", "-n", str(physical_test)], check=True)
+        shutil.copy2(physical_test, package / "physical-ax101-validation.sh")
+        (package / "physical-ax101-validation.sh").chmod(0o755)
         source_parts_dir = repo / "wifi-ax101/scanfix-archive-parts"
         source_parts = sorted(source_parts_dir.glob("*.b64"))
         require([p.name for p in source_parts] == [f"{i:02d}.b64" for i in range(8)],
@@ -441,7 +451,7 @@ def main() -> None:
             operational_scripts = {
                 "verify-bundle.sh", "preflight.sh", "install-manual.sh",
                 "register-driver.sh", "diagnose-ax101.sh", "rollback.sh",
-                "connect-wifi.py"
+                "connect-wifi.py", "physical-ax101-validation.sh"
             }
             for zi in zf.infolist():
                 mode = (zi.external_attr >> 16) & 0o777
