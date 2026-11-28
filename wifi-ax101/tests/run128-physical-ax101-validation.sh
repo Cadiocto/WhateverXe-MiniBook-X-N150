@@ -108,7 +108,10 @@ grep -Ei 'iwx|AX101|54f0|firmware|RF.?Kill|RF_KILL' "$OUT/before-dmesg.log" \
     > "$OUT/driver-boot-excerpt.txt" || true
 
 # DTrace -c starts tracing and the real dladm scan as one command; no sleeps
-# or probe-attach timing race are used.
+# or probe-attach timing race are used. The iwx_scan_complete_notification
+# SDT probe is emitted when IWX_SCAN_COMPLETE_UMAC is handled by the driver.
+echo "SCAN_COMPLETE_PROBE=iwx_scan_complete_notification"
+echo "SCAN_COMPLETE_OPCODE=IWX_SCAN_COMPLETE_UMAC"
 set +e
 dtrace -q -s "$DTRACE_SCRIPT" -c "/usr/sbin/dladm scan-wifi" \
     >"$OUT/scan-dtrace.log" 2>&1
@@ -197,6 +200,7 @@ ESSID_BSSID_COUNT=$(awk -F= '/^ESSID_BSSID_COUNT=/{print $2; exit}' "$OUT/essid-
     echo "IWX_SCAN_COMPLETE_UMAC_OBSERVED=$SCAN_COMPLETE"
     echo "BSS_TREE_SNAPSHOT_OBSERVED=$BSS_TREE"
     echo "GLDV3_ESS_SNAPSHOT_OBSERVED=$GLD_ESS_SNAPSHOT"
+    echo "IWX_SCAN_COMPLETE_UMAC_OBSERVED=$SCAN_COMPLETE"
     echo "ESSID_BSSID_COUNT=$ESSID_BSSID_COUNT"
     echo "PHYSICAL_ASSOCIATION=NOT_TESTED"
     echo "DHCP_DNS_INTERNET=NOT_TESTED"
